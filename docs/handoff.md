@@ -1,6 +1,6 @@
 # Handoff
 
-Date: 2026-04-25
+Date: 2026-04-26
 
 ## What This Repo Now Is
 
@@ -9,13 +9,17 @@ Atticus Harness is a safe standalone legal AI factory control plane. It has dura
 ## Current Safety State
 
 - OpenClaw is not started by the harness.
-- Live legal workers are blocked by adapter/launcher boundaries.
+- Live legal workers are blocked unless the OpenRouter-only live gates pass.
 - A local-only `run-local` path exists for safe harness exercising; it uses `local_stub`, requires an active lease, writes only task-local JSON, records candidate output, and never writes canonical artifacts.
+- A direct OpenRouter worker path exists, but it requires `ATTICUS_ENABLE_LIVE_OPENROUTER=1`, `OPENROUTER_API_KEY`, OpenRouter-only provider policy, fallback disabled, active leases, budget gates, and reducer-only candidate handoff.
+- Live resume is planning-only: `provider-probe` and `live-resume` may inspect readiness and write leases, but they do not launch workers. `live-resume` requires either `--probe` or object-shaped `--probe-result-json`, and lease writing requires literal `ok: true` plus matching provider/model metadata.
 - External legal actions are blocked by policy.
 - Legacy workspace/archive imports are candidate-only or rough-note-only.
-- Provider fallback fails closed.
+- Provider fallback fails closed. OpenRouter responses must report provider/model metadata and valid usage token scalars before accounting; malformed post-dispatch responses still record provider/budget telemetry, fail the lease and attempt, block the task, and commit the audit.
 - Worker outputs need valid leases; late outputs are quarantined.
-- Budget gates are checked before local execution and provider/budget telemetry is recorded.
+- Budget gates are checked before local or OpenRouter execution and provider/budget telemetry is recorded. Pre-dispatch failures do not create provider spend records.
+- Scheduler gate metadata now fails closed on corrupted-but-valid JSON shapes; readiness reports these tasks as blocked instead of crashing or leasing them.
+- Legacy foundation reconciliation must certify source inventory, extraction coverage, evidence registry, production mapping, and chronology citations before later-stage live work is resumed.
 
 ## Verification Commands
 
@@ -34,7 +38,10 @@ atticus import-candidates --workspace /home/alba/.openclaw/workspace-atticus-leg
 atticus provider-policy --provider openrouter --model deepseek/deepseek-v4-pro
 atticus budget --db /tmp/atticus-smoke.sqlite3 --scope-type matter --scope-id atticus
 atticus validate --db /tmp/atticus-smoke.sqlite3 --gate source_inventory --target-type matter --target-id atticus
+atticus reconcile-foundation --db /tmp/atticus-smoke.sqlite3 --dry-run
 atticus schedule --db /tmp/atticus-smoke.sqlite3 --dry-run
+atticus provider-probe --model deepseek/deepseek-v4-pro
+ATTICUS_ENABLE_LIVE_OPENROUTER=1 atticus live-resume --db /tmp/atticus-smoke.sqlite3 --capacity 15 --probe --model deepseek/deepseek-v4-pro
 atticus lease --db /tmp/atticus-smoke.sqlite3 --task-id <task-id> --worker-id atticus-local --write
 atticus run-local --db /tmp/atticus-smoke.sqlite3 --task-id <task-id> --lease-id <lease-id> --worker-id atticus-local --output-dir /tmp/atticus-worker-output --write
 atticus migrate-report --workspace /home/alba/.openclaw/workspace-atticus-legal --db /tmp/atticus-smoke.sqlite3 --dry-run
@@ -43,8 +50,8 @@ atticus doctor --db /tmp/atticus-smoke.sqlite3
 
 ## Next Best Work
 
-1. Add real provider request builders behind mocks, keeping OpenRouter spend gated behind explicit flags.
-2. Add archive ledger importer for old `ledger.sqlite`.
-3. Add file inventory scans.
-4. Add FTS5-backed persistent memory indexes on top of the current citation-aware lexical search.
-5. Add live adapter enablement flags only after local execution, provider policy, and budget gates pass end-to-end review.
+1. Run `reconcile-foundation --write` on the migrated legacy DB, then inspect any failed gate details before live resume.
+2. Use `provider-probe` or `live-resume --probe` immediately before writing live leases; do not reuse stale probe JSON across model/provider changes.
+3. Add archive ledger importer for old `ledger.sqlite`.
+4. Add file inventory scans.
+5. Add FTS5-backed persistent memory indexes on top of the current citation-aware lexical search.

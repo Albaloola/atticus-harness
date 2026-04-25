@@ -37,6 +37,7 @@ def run_validation(
         "hash_validity": validate_hash_validity,
         "extraction_coverage": validate_extraction_coverage,
         "production_mapping": validate_production_mapping_integrity,
+        "evidence_registry": validate_evidence_registry,
         "chronology_citations": validate_chronology_citation_completeness,
         "claim_evidence_support": validate_claim_evidence_support,
         "authority_citation_format": validate_authority_citation_format,
@@ -146,6 +147,29 @@ def validate_production_mapping_integrity(
         if not row["production_id"] or (row["source_id"] is None and row["artifact_id"] is None)
     ]
     return bool(rows) and not broken, {"mapping_count": len(rows), "broken_mappings": broken}
+
+
+def validate_evidence_registry(conn: sqlite3.Connection, *, target_type: str, target_id: str) -> tuple[bool, dict[str, Any]]:
+    if target_type != "matter":
+        return False, {"error": "evidence_registry must target matter"}
+    rows = conn.execute(
+        """
+        SELECT artifact_id, path, trust_status, stale
+        FROM artifacts
+        WHERE matter_scope = ?
+          AND artifact_type IN ('evidence_registry', 'evidence_index', 'production_crosswalk')
+        """,
+        (target_id,),
+    ).fetchall()
+    usable = [
+        row["artifact_id"]
+        for row in rows
+        if not bool(row["stale"]) and row["trust_status"] not in {"rejected", "stale", "unverified_legacy"}
+    ]
+    return bool(usable), {
+        "registry_artifact_count": len(rows),
+        "usable_registry_artifacts": usable,
+    }
 
 
 def validate_chronology_citation_completeness(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -12,8 +13,10 @@ from atticus.config import DEFAULT_DB_PATH
 from atticus.db import repo
 from atticus.graph.certifications import CertificationBlocked, certify_subject
 from atticus.migration.import_old_run import import_candidates
+from atticus.migration.reconcile import reconcile_foundation
 from atticus.migration.report import build_migration_report
 from atticus.providers.budget import budget_status, check_budget
+from atticus.providers.live_readiness import probe_live_openrouter
 from atticus.providers.policy import (
     ProviderActual,
     ProviderRequest,
@@ -24,6 +27,7 @@ from atticus.reducer.reducer import reduce_candidate
 from atticus.retrieval.ask import answer_question
 from atticus.scheduler.gates import evaluate_task_gates
 from atticus.scheduler.lease import LeaseError, acquire_lease, expire_leases
+from atticus.scheduler.live_orchestrator import prepare_live_resume
 from atticus.scheduler.planner import _budget_blockers, select_runnable_tasks
 from atticus.status.inspect import inspect_record
 from atticus.status.report import generate_status
@@ -116,6 +120,27 @@ def build_parser() -> argparse.ArgumentParser:
 
     provider_policy = sub.add_parser("provider-policy", help="check provider/model fallback policy")
     _add_provider_policy_args(provider_policy)
+
+    provider_probe = sub.add_parser("provider-probe", help="make a tiny OpenRouter probe before live resume")
+    provider_probe.add_argument("--provider", default="openrouter")
+    provider_probe.add_argument("--model", required=True)
+    provider_probe.add_argument("--allow-fallback", action="store_true")
+
+    live_resume = sub.add_parser("live-resume", help="prepare safe live OpenRouter leases without launching workers")
+    live_resume.add_argument("--db", required=True)
+    live_resume.add_argument("--capacity", type=int, default=15)
+    live_resume.add_argument("--model", default="deepseek/deepseek-v4-pro", help="OpenRouter model to probe for live resume")
+    live_resume.add_argument("--probe", action="store_true", help="run a live OpenRouter probe before planning")
+    live_resume.add_argument("--probe-result-json", help="preverified provider probe JSON from provider-probe")
+    live_resume.add_argument("--write-leases", action="store_true")
+    live_resume.add_argument("--worker-prefix", default="atticus-openrouter")
+
+    reconcile = sub.add_parser("reconcile-foundation", help="validate/certify foundation before live resume")
+    reconcile.add_argument("--db", required=True)
+    reconcile.add_argument("--matter", default="atticus")
+    reconcile.add_argument("--dry-run", dest="dry_run", action="store_true", default=True)
+    reconcile.add_argument("--write", dest="dry_run", action="store_false")
+    reconcile.add_argument("--validator", default="atticus-cli")
 
     policy = sub.add_parser("policy-check", help="check provider/model fallback policy")
     _add_provider_policy_args(policy)
@@ -344,6 +369,48 @@ def _main(args: argparse.Namespace) -> int:
             decision = check_provider_policy(request, actual=actual)
         print_json(decision.__dict__)
         return 0 if decision.allowed else 2
+
+    if args.command == "provider-probe":
+        result = probe_live_openrouter({"provider": args.provider, "model": args.model, "allow_fallback": args.allow_fallback})
+        print_json(result)
+        return 0 if result.get("ok") is True else 2
+
+    if args.command == "live-resume":
+        env = dict(os.environ)
+        if args.probe_result_json:
+            try:
+                probe_result = json.loads(args.probe_result_json)
+            except json.JSONDecodeError as exc:
+                probe_result = {"ok": False, "reason": f"probe_result_json must be valid JSON: {exc}"}
+        elif args.probe:
+            probe_result = probe_live_openrouter(
+                {"provider": "openrouter", "model": args.model, "allow_fallback": False},
+                env=env,
+            )
+        else:
+            probe_result = {"ok": False, "reason": "live-resume requires --probe or --probe-result-json"}
+        with repo.db_connection(args.db) as conn:
+            plan = prepare_live_resume(
+                conn,
+                capacity=args.capacity,
+                env=env,
+                probe_result=probe_result,
+                write_leases=args.write_leases,
+                worker_prefix=args.worker_prefix,
+            )
+        print_json(plan)
+        return 0 if plan["ready"] else 2
+
+    if args.command == "reconcile-foundation":
+        with repo.db_connection(args.db) as conn:
+            result = reconcile_foundation(
+                conn,
+                matter_scope=args.matter,
+                dry_run=args.dry_run,
+                validator=args.validator,
+            )
+        print_json(result)
+        return 0 if result["ready_for_live_resume"] else 2
 
     if args.command == "human-attention":
         with repo.db_connection(args.db) as conn:

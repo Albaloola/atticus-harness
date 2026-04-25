@@ -59,7 +59,7 @@ def import_candidates(
                         title=f"Validate legacy {candidate.artifact_type}: {Path(candidate.path).name}",
                         artifact_dependencies=[artifact_id],
                         validation_gates=["foundation", "stale_dependency"],
-                        provider_policy={"provider": "deepseek", "model": "deepseek-v4-flash", "estimated_cost_usd": 0.02},
+                        provider_policy={"provider": "openrouter", "model": "deepseek/deepseek-v4-flash", "allow_fallback": False, "estimated_cost_usd": 0.02},
                         cost_limit_usd=0.25,
                     ),
                 )
@@ -67,7 +67,7 @@ def import_candidates(
 
 
 def _validation_stage(artifact_type: str) -> LegalStage:
-    if artifact_type in {"source_inventory"}:
+    if artifact_type in {"source_inventory", "source_index"}:
         return LegalStage.S0_SOURCE_INVENTORY
     if artifact_type in {"extraction_record"}:
         return LegalStage.S1_EXTRACTION

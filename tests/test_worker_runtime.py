@@ -73,9 +73,37 @@ def test_execute_local_work_order_rejects_non_local_adapter(tmp_path):
             )
         candidate_count = conn.execute("SELECT COUNT(*) AS n FROM candidate_outputs").fetchone()["n"]
         canonical_count = conn.execute("SELECT COUNT(*) AS n FROM artifacts WHERE produced_by_task_id = 'unsafe'").fetchone()["n"]
+        lease = conn.execute("SELECT status FROM leases WHERE lease_id = ?", (lease_id,)).fetchone()
+        task = conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'unsafe'").fetchone()
 
     assert candidate_count == 0
     assert canonical_count == 0
+    assert lease["status"] == "failed"
+    assert task["status"] == TaskStatus.BLOCKED
+    assert "safe local execution" in task["blocked_reasons_json"]
+
+
+def test_execute_local_work_order_wrong_worker_fails_lease_and_blocks_task(tmp_path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(conn, TaskSpec(task_id="wrong-worker-local", title="Wrong worker local", task_type="extract"))
+        lease_id = acquire_lease(conn, task_id="wrong-worker-local", worker_id="worker-local")
+        with pytest.raises(WorkerExecutionBlocked, match="belongs to worker"):
+            execute_local_work_order(
+                conn,
+                task_id="wrong-worker-local",
+                lease_id=lease_id,
+                worker_id="impostor-worker",
+                output_dir=tmp_path / "out",
+            )
+        lease = conn.execute("SELECT status FROM leases WHERE lease_id = ?", (lease_id,)).fetchone()
+        task = conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'wrong-worker-local'").fetchone()
+        candidate_count = conn.execute("SELECT COUNT(*) AS n FROM candidate_outputs WHERE task_id = 'wrong-worker-local'").fetchone()["n"]
+
+    assert lease["status"] == "failed"
+    assert task["status"] == TaskStatus.BLOCKED
+    assert "belongs to worker" in task["blocked_reasons_json"]
+    assert candidate_count == 0
 
 
 def test_execute_local_work_order_sanitizes_task_output_paths(tmp_path):
@@ -157,9 +185,71 @@ def test_execute_local_work_order_budget_blocks_before_candidate(tmp_path):
             )
         candidate_count = conn.execute("SELECT COUNT(*) AS n FROM candidate_outputs").fetchone()["n"]
         attention = conn.execute("SELECT reason FROM human_attention ORDER BY attention_id DESC LIMIT 1").fetchone()
+        lease = conn.execute("SELECT status FROM leases WHERE lease_id = ?", (lease_id,)).fetchone()
 
+    assert lease["status"] == "failed"
     assert candidate_count == 0
     assert "budget" in attention["reason"]
+
+
+def test_execute_local_work_order_requires_estimated_cost_when_cost_limit_exists(tmp_path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="missing-local-estimate",
+                title="Missing local estimate",
+                task_type="extract",
+                provider_policy={"provider": "local", "model": "stub"},
+                cost_limit_usd=0.10,
+            ),
+        )
+        lease_id = acquire_lease(conn, task_id="missing-local-estimate", worker_id="worker-local")
+        with pytest.raises(WorkerExecutionBlocked, match="estimated_cost_usd"):
+            execute_local_work_order(
+                conn,
+                task_id="missing-local-estimate",
+                lease_id=lease_id,
+                worker_id="worker-local",
+                output_dir=tmp_path / "out",
+            )
+        task = conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'missing-local-estimate'").fetchone()
+        lease = conn.execute("SELECT status FROM leases WHERE lease_id = ?", (lease_id,)).fetchone()
+        candidate_count = conn.execute("SELECT COUNT(*) AS n FROM candidate_outputs WHERE task_id = 'missing-local-estimate'").fetchone()["n"]
+
+    assert task["status"] == TaskStatus.BLOCKED
+    assert "estimated_cost_usd" in task["blocked_reasons_json"]
+    assert lease["status"] == "failed"
+    assert candidate_count == 0
+
+
+def test_malformed_provider_policy_after_lease_fails_lease_and_blocks_task(tmp_path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(conn, TaskSpec(task_id="bad-policy", title="Bad policy", task_type="extract"))
+        lease_id = acquire_lease(conn, task_id="bad-policy", worker_id="worker-local")
+        conn.execute("PRAGMA ignore_check_constraints = ON")
+        conn.execute("UPDATE tasks SET provider_policy_json = ? WHERE task_id = ?", ("{not valid json", "bad-policy"))
+
+        with pytest.raises(WorkerExecutionBlocked, match="malformed provider policy"):
+            execute_local_work_order(
+                conn,
+                task_id="bad-policy",
+                lease_id=lease_id,
+                worker_id="worker-local",
+                output_dir=tmp_path / "out",
+            )
+        task = conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'bad-policy'").fetchone()
+        lease = conn.execute("SELECT status FROM leases WHERE lease_id = ?", (lease_id,)).fetchone()
+        candidate_count = conn.execute("SELECT COUNT(*) AS n FROM candidate_outputs WHERE task_id = 'bad-policy'").fetchone()["n"]
+        attention = conn.execute("SELECT reason FROM human_attention ORDER BY attention_id DESC LIMIT 1").fetchone()
+
+    assert task["status"] == TaskStatus.BLOCKED
+    assert "malformed provider policy" in task["blocked_reasons_json"]
+    assert lease["status"] == "failed"
+    assert candidate_count == 0
+    assert "malformed provider policy" in attention["reason"]
 
 
 def test_local_execution_can_flow_into_reducer_without_worker_canonical_write(tmp_path):
