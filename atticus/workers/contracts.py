@@ -7,6 +7,7 @@ never canonical legal memory. Reducers are the only canonical writers.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 from typing import Any
 
 
@@ -55,3 +56,11 @@ class WorkOrder:
 
 
 REQUIRED_RESULT_PACKET_KEYS = {"task_id", "summary", "findings", "citations", "proposed_artifacts"}
+_SAFE_COMPONENT_RE = re.compile(r"[^A-Za-z0-9_.-]+")
+
+
+def safe_path_component(value: str) -> str:
+    """Return a deterministic single path component for task-local files."""
+
+    component = _SAFE_COMPONENT_RE.sub("_", value.strip()).strip("._-")
+    return component or "task"

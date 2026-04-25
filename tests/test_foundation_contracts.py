@@ -8,6 +8,7 @@ from atticus.core.policies import LegalStage, TaskStatus, TrustStatus
 from atticus.core.tasks import TaskSpec
 from atticus.db import repo
 from atticus.graph.certifications import CertificationBlocked, certify_subject
+from atticus.graph.evidence import add_authority
 from atticus.graph.staleness import update_source_hash_and_mark_dependents_stale
 from atticus.migration.import_old_run import import_candidates
 from atticus.providers.cost import estimate_cost_usd
@@ -56,6 +57,53 @@ def test_read_only_ask_mode_never_launches_workers(tmp_path):
     with repo.db_connection(db_path) as conn:
         after_events = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
     assert after_events == before_events
+
+
+def test_read_only_ask_prefers_tokenized_match_over_recent_fallback(tmp_path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_artifact(
+            conn,
+            path="/recent/unrelated.txt",
+            artifact_type="note",
+            title="recent unrelated",
+            content="This is recent but irrelevant to the production bundle.",
+            trust_status=TrustStatus.CANDIDATE,
+        )
+        expected = repo.add_artifact(
+            conn,
+            path="/older/production-map.txt",
+            artifact_type="production_crosswalk",
+            title="production map",
+            content="The UOG production bundle maps Bates UOG-001 to the disclosure email.",
+            trust_status=TrustStatus.VALIDATED,
+        )
+
+    answer = answer_question(str(db_path), "which production bundle maps bates UOG-001")
+
+    assert answer.citations
+    assert answer.citations[0].record_id == expected
+    assert "recent/unrelated" not in answer.citations[0].path
+
+
+def test_read_only_ask_returns_authority_records(tmp_path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        authority_id = add_authority(
+            conn,
+            matter_scope="atticus",
+            citation="42 U.S.C. § 1983",
+            authority_type="statute",
+            jurisdiction="US",
+            title="Civil action for deprivation of rights",
+            source_url="https://www.law.cornell.edu/uscode/text/42/1983",
+        )
+
+    answer = answer_question(str(db_path), "42 U.S.C. 1983 deprivation rights")
+
+    assert answer.citations
+    assert answer.citations[0].record_type == "authority"
+    assert answer.citations[0].record_id == authority_id
 
 
 def test_legacy_queued_tasks_cannot_bypass_dependency_gates(tmp_path):

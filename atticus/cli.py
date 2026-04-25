@@ -28,6 +28,7 @@ from atticus.scheduler.planner import _budget_blockers, select_runnable_tasks
 from atticus.status.inspect import inspect_record
 from atticus.status.report import generate_status
 from atticus.validation.gates import run_validation
+from atticus.workers.runtime import execute_local_work_order
 from atticus.workers.work_order import build_work_order
 
 
@@ -89,6 +90,14 @@ def build_parser() -> argparse.ArgumentParser:
     work_order.add_argument("--lease-id")
     work_order.add_argument("--dry-run", dest="dry_run", action="store_true", default=True)
     work_order.add_argument("--write-context", dest="dry_run", action="store_false", help="persist the context pack")
+
+    run_local = sub.add_parser("run-local", help="execute a leased task through the local stub adapter only")
+    run_local.add_argument("--db", required=True)
+    run_local.add_argument("--task-id", required=True)
+    run_local.add_argument("--lease-id", required=True)
+    run_local.add_argument("--worker-id", default="atticus-local")
+    run_local.add_argument("--output-dir", required=True)
+    run_local.add_argument("--write", action="store_true", help="actually record the local candidate output")
 
     reduce = sub.add_parser("reduce", help="reduce a candidate packet through reducer-only canonical path")
     reduce.add_argument("--db", required=True)
@@ -250,6 +259,38 @@ def _main(args: argparse.Namespace) -> int:
                 persist_context=not args.dry_run,
             )
         print_json({"dry_run": args.dry_run, "work_order": order.as_dict()})
+        return 0
+
+    if args.command == "run-local":
+        if not args.write:
+            print_json(
+                {
+                    "dry_run": True,
+                    "blocked": "run-local requires --write to record a candidate output",
+                    "task_id": args.task_id,
+                    "lease_id": args.lease_id,
+                    "adapter": "local_stub",
+                }
+            )
+            return 0
+        with repo.db_connection(args.db) as conn:
+            result = execute_local_work_order(
+                conn,
+                task_id=args.task_id,
+                lease_id=args.lease_id,
+                worker_id=args.worker_id,
+                output_dir=args.output_dir,
+            )
+        print_json(
+            {
+                "dry_run": False,
+                "candidate_id": result.candidate_id,
+                "worker_attempt_id": result.worker_attempt_id,
+                "output_path": str(result.output_path),
+                "provider_run_id": result.provider_run_id,
+                "adapter": result.adapter,
+            }
+        )
         return 0
 
     if args.command == "reduce":

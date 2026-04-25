@@ -133,6 +133,8 @@ def build_context_pack(
 
     canonical = canonicalize_sections(sections)
     estimated = estimate_tokens(canonical)
+    if estimated > token_budget:
+        raise ValueError(f"context pack exceeds token budget: estimated {estimated} > budget {token_budget}")
     fingerprint = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
     context_pack_id = f"ctx-{fingerprint[:24]}"
     pack = ContextPack(context_pack_id, fingerprint, sections, token_budget, estimated)

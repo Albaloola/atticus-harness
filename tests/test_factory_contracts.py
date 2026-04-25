@@ -132,6 +132,31 @@ def test_context_packs_are_deterministic_and_fingerprinted(tmp_path):
     assert first.sections[0]["name"] == "stable_prefix"
 
 
+def test_context_pack_rejects_oversized_budget_before_persisting(tmp_path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        artifact_id = repo.add_artifact(
+            conn,
+            path="/candidate/huge.txt",
+            artifact_type="extraction_record",
+            content="oversized " * 2000,
+        )
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="ctx-too-small",
+                title="Context too small",
+                task_type="extract",
+                artifact_dependencies=[artifact_id],
+            ),
+        )
+        with pytest.raises(ValueError, match="token budget"):
+            build_context_pack(conn, task_id="ctx-too-small", token_budget=100)
+        context_count = conn.execute("SELECT COUNT(*) AS n FROM context_packs").fetchone()["n"]
+
+    assert context_count == 0
+
+
 def test_citation_spans_require_known_records_and_claim_validation(tmp_path):
     db_path = init_db(tmp_path)
     with repo.db_connection(db_path) as conn:
@@ -245,3 +270,41 @@ def test_factory_cli_dry_runs_do_not_launch_or_mutate_execution_state(tmp_path):
 
     assert lease_count == 0
     assert context_count == 0
+
+
+def test_factory_cli_run_local_requires_write_and_then_records_candidate(tmp_path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(conn, TaskSpec(task_id="cli-local", title="CLI local", task_type="extract"))
+        lease_id = acquire_lease(conn, task_id="cli-local", worker_id="atticus-local")
+
+    assert cli_main([
+        "run-local",
+        "--db",
+        str(db_path),
+        "--task-id",
+        "cli-local",
+        "--lease-id",
+        lease_id,
+        "--output-dir",
+        str(tmp_path / "out"),
+    ]) == 0
+    with repo.db_connection(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) AS n FROM candidate_outputs").fetchone()["n"] == 0
+
+    assert cli_main([
+        "run-local",
+        "--db",
+        str(db_path),
+        "--task-id",
+        "cli-local",
+        "--lease-id",
+        lease_id,
+        "--worker-id",
+        "atticus-local",
+        "--output-dir",
+        str(tmp_path / "out"),
+        "--write",
+    ]) == 0
+    with repo.db_connection(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) AS n FROM candidate_outputs WHERE status = 'candidate'").fetchone()["n"] == 1
