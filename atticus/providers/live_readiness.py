@@ -65,6 +65,15 @@ def probe_live_openrouter(
     """Make a tiny OpenRouter JSON probe and fail closed on provider/model drift."""
 
     env = env if env is not None else os.environ
+    if not live_openrouter_enabled(env=env):
+        model = str(provider_policy.get("model") or "")
+        return {
+            "ok": False,
+            "provider": "openrouter",
+            "model": model,
+            "reason": f"{LIVE_ENABLE_ENV}=1 is required before spending on an OpenRouter provider probe",
+            "provider_policy_result": "blocked_before_probe",
+        }
     policy = check_live_provider_policy(provider_policy, env=env)
     model = str(provider_policy.get("model") or "")
     if not policy.allowed:
@@ -114,8 +123,8 @@ def probe_live_openrouter(
     if "usage" in response and not isinstance(usage_raw, Mapping):
         return {
             "ok": False,
-            "provider": str(response.get("provider") or "openrouter"),
-            "model": str(response.get("model") or model),
+            "provider": str(response.get("provider") or "missing"),
+            "model": str(response.get("model") or "missing"),
             "reason": "OpenRouter probe usage metadata must be a JSON object",
             "provider_policy_result": "probe_failed",
         }
@@ -126,7 +135,7 @@ def probe_live_openrouter(
         return {
             "ok": False,
             "provider": str(reported_provider or ""),
-            "model": str(reported_model or model),
+            "model": str(reported_model or ""),
             "reason": "OpenRouter probe response missing provider/model metadata required for fallback detection",
             "provider_policy_result": "probe_failed",
             "usage": usage,

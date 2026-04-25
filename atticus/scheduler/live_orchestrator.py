@@ -9,7 +9,7 @@ from atticus.core.events import utc_now
 from atticus.core.policies import TaskStatus
 from atticus.db import repo
 from atticus.providers.live_readiness import live_readiness_report
-from atticus.scheduler.lease import acquire_lease
+from atticus.scheduler.lease import acquire_lease, expire_leases
 
 
 def prepare_live_resume(
@@ -26,10 +26,12 @@ def prepare_live_resume(
 
     This is intentionally only an orchestration gate. It never starts OpenClaw,
     shells, provider workers, or external legal actions. A successful provider
-    probe is required before any lease is written.
+    probe is required before any lease is written. Stale active leases are
+    expired globally before readiness so old capacity cannot strand tasks.
     """
 
     capacity_requested = max(0, capacity)
+    expired_leases = expire_leases(conn)
     readiness = live_readiness_report(conn, capacity=capacity_requested, env=env)
     plan_readiness = dict(readiness)
     reasons = list(plan_readiness.get("reasons") or [])
@@ -94,6 +96,7 @@ def prepare_live_resume(
         "probe": probe,
         "write_leases": write_leases,
         "leases": leases,
+        "expired_leases": expired_leases,
     }
 
 

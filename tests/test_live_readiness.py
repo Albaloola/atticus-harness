@@ -8,6 +8,7 @@ from atticus.core.policies import LegalStage, TaskStatus
 from atticus.core.tasks import TaskSpec
 from atticus.db import repo
 from atticus.migration.import_old_run import import_candidates
+from atticus.providers import live_readiness
 from atticus.providers.live_readiness import check_live_provider_policy, live_readiness_report, probe_live_openrouter
 from atticus.providers.openrouter import OpenRouterClient, OpenRouterError
 from atticus.scheduler import live_orchestrator
@@ -59,7 +60,7 @@ def test_live_provider_policy_requires_openrouter_key_and_no_fallback():
 
     fallback = check_live_provider_policy(
         {"provider": "openrouter", "model": "deepseek/deepseek-v4-pro", "allow_fallback": True},
-        env={"OPENROUTER_API_KEY": "sk-test"},
+        env={"OPENROUTER_API_KEY": "sk-test", "ATTICUS_ENABLE_LIVE_OPENROUTER": "1"},
     )
     assert not fallback.allowed
     assert any("fallback must be disabled" in reason for reason in fallback.reasons)
@@ -73,10 +74,25 @@ def test_live_provider_policy_requires_openrouter_key_and_no_fallback():
 
     allowed = check_live_provider_policy(
         {"provider": "openrouter", "model": "deepseek/deepseek-v4-pro", "allow_fallback": False},
-        env={"OPENROUTER_API_KEY": "sk-test"},
+        env={"OPENROUTER_API_KEY": "sk-test", "ATTICUS_ENABLE_LIVE_OPENROUTER": "1"},
     )
     assert allowed.allowed
     assert allowed.reasons == []
+
+
+def test_openrouter_probe_requires_live_opt_in_before_client_call(monkeypatch):
+    class ExplodingClient:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("probe client must not be constructed without live opt-in")
+
+    monkeypatch.setattr(live_readiness, "OpenRouterClient", ExplodingClient)
+    result = probe_live_openrouter(
+        {"provider": "openrouter", "model": "deepseek/deepseek-v4-pro", "allow_fallback": False},
+        env={"OPENROUTER_API_KEY": "sk-test"},
+    )
+
+    assert result["ok"] is False
+    assert "ATTICUS_ENABLE_LIVE_OPENROUTER" in result["reason"]
 
 
 def test_live_openrouter_probe_blocks_malformed_response_shapes_without_throwing():
@@ -94,8 +110,9 @@ def test_live_openrouter_probe_blocks_malformed_response_shapes_without_throwing
             }
 
     policy = {"provider": "openrouter", "model": "deepseek/deepseek-v4-pro", "allow_fallback": False}
-    list_result = probe_live_openrouter(policy, client=ListResponseClient(), env={"OPENROUTER_API_KEY": "sk-test"})
-    usage_result = probe_live_openrouter(policy, client=MalformedUsageClient(), env={"OPENROUTER_API_KEY": "sk-test"})
+    env = {"OPENROUTER_API_KEY": "sk-test", "ATTICUS_ENABLE_LIVE_OPENROUTER": "1"}
+    list_result = probe_live_openrouter(policy, client=ListResponseClient(), env=env)
+    usage_result = probe_live_openrouter(policy, client=MalformedUsageClient(), env=env)
 
     assert not list_result["ok"]
     assert "JSON object" in list_result["reason"]
@@ -284,14 +301,15 @@ def test_openrouter_runtime_fails_closed_when_response_metadata_missing(tmp_path
         lease = conn.execute("SELECT status FROM leases WHERE lease_id = ?", (lease_id,)).fetchone()
         task = conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'missing-runtime-metadata'").fetchone()
         candidate_count = conn.execute("SELECT COUNT(*) AS n FROM candidate_outputs WHERE task_id = 'missing-runtime-metadata'").fetchone()["n"]
-        provider_run_count = conn.execute("SELECT COUNT(*) AS n FROM provider_runs WHERE task_id = 'missing-runtime-metadata'").fetchone()["n"]
+        provider_run = conn.execute("SELECT actual_provider, actual_model FROM provider_runs WHERE task_id = 'missing-runtime-metadata'").fetchone()
         budget_entry = conn.execute("SELECT amount_usd FROM budget_entries").fetchone()
 
     assert lease["status"] == "failed"
     assert task["status"] == TaskStatus.BLOCKED
     assert "provider/model metadata" in task["blocked_reasons_json"]
     assert candidate_count == 0
-    assert provider_run_count == 1
+    assert provider_run["actual_provider"] == "missing"
+    assert provider_run["actual_model"] == "missing"
     assert budget_entry["amount_usd"] == 0.02
 
 
@@ -779,7 +797,7 @@ def test_openrouter_probe_fails_closed_on_reported_fallback_model():
     result = probe_live_openrouter(
         {"provider": "openrouter", "model": "deepseek/deepseek-v4-pro", "allow_fallback": False},
         client=client,
-        env={"OPENROUTER_API_KEY": "sk-test"},
+        env={"OPENROUTER_API_KEY": "sk-test", "ATTICUS_ENABLE_LIVE_OPENROUTER": "1"},
     )
 
     assert not result["ok"]
@@ -793,7 +811,7 @@ def test_openrouter_probe_requires_literal_boolean_true():
     result = probe_live_openrouter(
         {"provider": "openrouter", "model": "deepseek/deepseek-v4-pro", "allow_fallback": False},
         client=client,
-        env={"OPENROUTER_API_KEY": "sk-test"},
+        env={"OPENROUTER_API_KEY": "sk-test", "ATTICUS_ENABLE_LIVE_OPENROUTER": "1"},
     )
 
     assert result["ok"] is False
@@ -809,7 +827,7 @@ def test_openrouter_probe_fails_closed_when_probe_metadata_missing():
     result = probe_live_openrouter(
         {"provider": "openrouter", "model": "deepseek/deepseek-v4-pro", "allow_fallback": False},
         client=MissingMetadataClient(),
-        env={"OPENROUTER_API_KEY": "sk-test"},
+        env={"OPENROUTER_API_KEY": "sk-test", "ATTICUS_ENABLE_LIVE_OPENROUTER": "1"},
     )
 
     assert result["ok"] is False
@@ -988,6 +1006,51 @@ def test_live_orchestrator_underfills_15_slots_with_only_safe_tasks(tmp_path):
     assert [row["task_id"] for row in leases] == ["safe-1", "safe-2"]
     assert all(row["status"] == "active" for row in leases)
     assert all(row["worker_id"].startswith("live-test-") for row in leases)
+
+
+def test_live_orchestrator_expires_stale_active_lease_before_live_resume(tmp_path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="stale-live-task",
+                title="Stale live task",
+                task_type="source_inventory",
+                stage=LegalStage.S0_SOURCE_INVENTORY,
+                provider_policy={"provider": "openrouter", "model": "deepseek/deepseek-v4-pro", "allow_fallback": False, "estimated_cost_usd": 0.01},
+                status=TaskStatus.QUEUED,
+            ),
+        )
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="unrelated-stale-task",
+                title="Unrelated stale task",
+                task_type="draft",
+                stage=LegalStage.S8_DRAFT_PREPARATION,
+                provider_policy={"provider": "openrouter", "model": "deepseek/deepseek-v4-pro", "allow_fallback": False, "estimated_cost_usd": 0.01},
+                status=TaskStatus.QUEUED,
+            ),
+        )
+        stale_lease = acquire_lease(conn, task_id="stale-live-task", worker_id="old-live-worker", seconds=-1)
+        unrelated_stale_lease = acquire_lease(conn, task_id="unrelated-stale-task", worker_id="old-live-worker", seconds=-1)
+        plan = prepare_live_resume(
+            conn,
+            capacity=15,
+            env={"OPENROUTER_API_KEY": "sk-test", "ATTICUS_ENABLE_LIVE_OPENROUTER": "1"},
+            probe_result={"ok": True, "provider": "openrouter", "model": "deepseek/deepseek-v4-pro"},
+            write_leases=True,
+            worker_prefix="fresh-live",
+        )
+        leases = conn.execute("SELECT lease_id, worker_id, status FROM leases WHERE task_id = ? ORDER BY created_at", ("stale-live-task",)).fetchall()
+        unrelated_task = conn.execute("SELECT status FROM tasks WHERE task_id = 'unrelated-stale-task'").fetchone()
+
+    assert plan["ready"] is True
+    assert set(plan["expired_leases"]) == {stale_lease, unrelated_stale_lease}
+    assert [row["status"] for row in leases] == ["expired", "active"]
+    assert leases[1]["worker_id"].startswith("fresh-live-")
+    assert unrelated_task["status"] == TaskStatus.QUEUED
 
 
 def test_live_orchestrator_rolls_back_partial_leases_when_acquisition_fails(tmp_path, monkeypatch):

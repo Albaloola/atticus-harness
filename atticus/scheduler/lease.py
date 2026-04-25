@@ -30,6 +30,8 @@ def acquire_lease(
     task = conn.execute("SELECT status FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
     if task is None:
         raise LeaseError(f"unknown task: {task_id}")
+    expire_leases(conn, task_id=task_id)
+    task = conn.execute("SELECT status FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
     leaseable = {
         TaskStatus.QUEUED,
         TaskStatus.READY,
@@ -119,10 +121,14 @@ def complete_lease(conn: sqlite3.Connection, *, lease_id: str, task_status: str 
     repo.emit_event(conn, "lease.completed", payload={"lease_id": lease_id, "task_id": lease["task_id"]})
 
 
-def expire_leases(conn: sqlite3.Connection) -> list[str]:
+def expire_leases(conn: sqlite3.Connection, *, task_id: str | None = None) -> list[str]:
     now_dt = datetime.now(UTC)
     expired: list[str] = []
-    for row in conn.execute("SELECT * FROM leases WHERE status = 'active'"):
+    if task_id is None:
+        rows = conn.execute("SELECT * FROM leases WHERE status = 'active'")
+    else:
+        rows = conn.execute("SELECT * FROM leases WHERE status = 'active' AND task_id = ?", (task_id,))
+    for row in rows:
         if _parse_time(row["expires_at"]) <= now_dt:
             expired.append(row["lease_id"])
             conn.execute(

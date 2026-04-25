@@ -6,6 +6,7 @@ from atticus.cli import main
 from atticus.core.policies import LegalStage, TaskStatus
 from atticus.core.tasks import TaskSpec
 from atticus.db import repo
+from atticus.providers import live_readiness
 
 
 def init_db(tmp_path):
@@ -46,6 +47,57 @@ def test_cli_live_resume_accepts_preverified_probe_and_writes_leases(tmp_path, c
     assert code == 0
     assert output["ready"] is True
     assert output["leases"][0]["task_id"] == "safe-cli"
+
+
+def test_cli_provider_probe_requires_live_opt_in_before_spend(capsys, monkeypatch):
+    class ExplodingClient:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("provider-probe must not construct a client without opt-in")
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
+    monkeypatch.delenv("ATTICUS_ENABLE_LIVE_OPENROUTER", raising=False)
+    monkeypatch.setattr(live_readiness, "OpenRouterClient", ExplodingClient)
+
+    code = main(["provider-probe", "--model", "deepseek/deepseek-v4-pro"])
+    output = json.loads(capsys.readouterr().out)
+
+    assert code == 2
+    assert output["ok"] is False
+    assert "ATTICUS_ENABLE_LIVE_OPENROUTER" in output["reason"]
+
+
+def test_cli_live_resume_probe_requires_live_opt_in_before_spend(tmp_path, capsys, monkeypatch):
+    class ExplodingClient:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("live-resume --probe must not construct a client without opt-in")
+
+    db_path = init_db(tmp_path)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
+    monkeypatch.delenv("ATTICUS_ENABLE_LIVE_OPENROUTER", raising=False)
+    monkeypatch.setattr(live_readiness, "OpenRouterClient", ExplodingClient)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="probe-blocked-cli",
+                title="Probe blocked CLI",
+                task_type="source_inventory",
+                stage=LegalStage.S0_SOURCE_INVENTORY,
+                provider_policy={"provider": "openrouter", "model": "deepseek/deepseek-v4-pro", "allow_fallback": False, "estimated_cost_usd": 0.01},
+                status=TaskStatus.QUEUED,
+            ),
+        )
+
+    code = main(["live-resume", "--db", str(db_path), "--probe", "--write-leases"])
+    output = json.loads(capsys.readouterr().out)
+    with repo.db_connection(db_path) as conn:
+        lease_count = conn.execute("SELECT COUNT(*) AS n FROM leases").fetchone()["n"]
+
+    assert code == 2
+    assert output["ready"] is False
+    assert output["leases"] == []
+    assert lease_count == 0
+    assert any("ATTICUS_ENABLE_LIVE_OPENROUTER" in reason for reason in output["reasons"])
 
 
 def test_cli_live_resume_rejects_truthy_non_boolean_preverified_probe(tmp_path, capsys, monkeypatch):

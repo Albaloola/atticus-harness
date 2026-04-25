@@ -57,6 +57,20 @@ def test_execute_local_work_order_happy_path_records_candidate_only(tmp_path):
     assert canonical_count == 0
 
 
+def test_acquire_lease_expires_stale_active_lease_before_reacquiring(tmp_path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(conn, TaskSpec(task_id="stale-lease-task", title="Stale lease task", task_type="extract"))
+        stale_lease = acquire_lease(conn, task_id="stale-lease-task", worker_id="worker-stale", seconds=-1)
+        new_lease = acquire_lease(conn, task_id="stale-lease-task", worker_id="worker-new")
+        leases = conn.execute("SELECT lease_id, status FROM leases WHERE task_id = ? ORDER BY created_at", ("stale-lease-task",)).fetchall()
+        task = conn.execute("SELECT status FROM tasks WHERE task_id = ?", ("stale-lease-task",)).fetchone()
+
+    assert stale_lease != new_lease
+    assert [(row["lease_id"], row["status"]) for row in leases] == [(stale_lease, "expired"), (new_lease, "active")]
+    assert task["status"] == TaskStatus.LEASED
+
+
 def test_execute_local_work_order_rejects_non_local_adapter(tmp_path):
     db_path = init_db(tmp_path)
     with repo.db_connection(db_path) as conn:

@@ -13,7 +13,9 @@ from atticus.graph.staleness import update_source_hash_and_mark_dependents_stale
 from atticus.migration.import_old_run import import_candidates
 from atticus.providers.cost import estimate_cost_usd
 from atticus.providers.policy import ProviderActual, ProviderRequest, check_provider_policy
+from atticus.reducer.canonical_writer import write_canonical_text
 from atticus.retrieval.ask import answer_question
+from atticus.scheduler.lease import acquire_lease
 from atticus.scheduler.planner import select_runnable_tasks
 from atticus.status.report import generate_status
 from atticus.validation.canonical_write_guard import (
@@ -193,11 +195,45 @@ def test_certifications_require_validation(tmp_path):
     assert certification_id.startswith("cert-")
 
 
-def test_non_reducer_workers_cannot_write_canonical_files():
+def test_non_reducer_workers_cannot_write_canonical_files(tmp_path):
     with pytest.raises(CanonicalWriteDenied):
         assert_canonical_write_allowed(writer_role="worker", target_path="/canonical/facts.json")
 
-    assert_canonical_write_allowed(writer_role="reducer", target_path="/canonical/facts.json")
+    with pytest.raises(CanonicalWriteDenied):
+        assert_canonical_write_allowed(writer_role="reducer", target_path="/canonical/facts.json")
+
+    with pytest.raises(TypeError):
+        write_canonical_text(writer_role="canonical_writer", target_path=str(tmp_path / "facts.txt"), text="unsafe")
+
+
+def test_canonical_writer_requires_active_reducer_lease_context(tmp_path):
+    db_path = init_db(tmp_path)
+    target_path = tmp_path / "canonical.txt"
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(conn, TaskSpec(task_id="canonical-task", title="Canonical task", task_type="reduce"))
+        worker_lease = acquire_lease(conn, task_id="canonical-task", worker_id="worker-1")
+        with pytest.raises(CanonicalWriteDenied, match="not held by a reducer"):
+            write_canonical_text(
+                conn=conn,
+                lease_id=worker_lease,
+                task_id="canonical-task",
+                writer_role="canonical_writer",
+                target_path=str(target_path),
+                text="unsafe",
+            )
+        conn.execute("UPDATE leases SET status = 'failed' WHERE lease_id = ?", (worker_lease,))
+        conn.execute("UPDATE tasks SET status = ? WHERE task_id = ?", (TaskStatus.QUEUED, "canonical-task"))
+        reducer_lease = acquire_lease(conn, task_id="canonical-task", worker_id="reducer-1")
+        write_canonical_text(
+            conn=conn,
+            lease_id=reducer_lease,
+            task_id="canonical-task",
+            writer_role="canonical_writer",
+            target_path=str(target_path),
+            text="safe",
+        )
+
+    assert target_path.read_text(encoding="utf-8") == "safe"
 
 
 def test_scheduler_under_fills_capacity_when_only_fewer_tasks_are_safe(tmp_path):

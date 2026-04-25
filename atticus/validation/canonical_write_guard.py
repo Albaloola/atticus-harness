@@ -12,6 +12,7 @@ class CanonicalWriteDenied(PermissionError):
 
 
 REDUCER_ROLES = {"reducer", "canonical_writer"}
+REDUCER_WORKER_PREFIXES = ("reducer", "atticus-reducer")
 
 
 def assert_canonical_write_allowed(
@@ -26,10 +27,12 @@ def assert_canonical_write_allowed(
         raise CanonicalWriteDenied(
             f"canonical write denied for role {writer_role!r} to {target_path!r}; reducer role required"
         )
-    if conn is not None:
-        if lease_id is None:
-            raise CanonicalWriteDenied("canonical write denied: active reducer lease required")
-        try:
-            require_active_lease(conn, lease_id=lease_id, task_id=task_id)
-        except LeaseError as exc:
-            raise CanonicalWriteDenied(f"canonical write denied: {exc}") from exc
+    if conn is None or lease_id is None or task_id is None:
+        raise CanonicalWriteDenied("canonical write denied: active reducer lease context required")
+    try:
+        lease = require_active_lease(conn, lease_id=lease_id, task_id=task_id)
+    except LeaseError as exc:
+        raise CanonicalWriteDenied(f"canonical write denied: {exc}") from exc
+    worker_id = str(lease["worker_id"] or "")
+    if not worker_id.startswith(REDUCER_WORKER_PREFIXES):
+        raise CanonicalWriteDenied(f"canonical write denied: lease {lease_id} is not held by a reducer worker")

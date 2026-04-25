@@ -274,8 +274,8 @@ def execute_openrouter_work_order(
                 adapter_name=adapter_name,
                 reason=reason,
                 response=response,
-                actual_provider=str(response.get("provider") or "openrouter"),
-                actual_model=str(response.get("model") or requested.model),
+                actual_provider=_actual_metadata_or_missing(response, "provider"),
+                actual_model=_actual_metadata_or_missing(response, "model"),
                 raw_usage={"usage": response.get("usage")},
             )
             raise WorkerExecutionBlocked(reason)
@@ -298,8 +298,8 @@ def execute_openrouter_work_order(
                 adapter_name=adapter_name,
                 reason=reason,
                 response=response,
-                actual_provider=str(response.get("provider") or "openrouter"),
-                actual_model=str(response.get("model") or requested.model),
+                actual_provider=_actual_metadata_or_missing(response, "provider"),
+                actual_model=_actual_metadata_or_missing(response, "model"),
                 raw_usage={"usage": usage},
             )
             raise WorkerExecutionBlocked(reason) from exc
@@ -468,8 +468,8 @@ def _record_openrouter_post_dispatch_failure(
         stage=task["stage"],
         requested_provider=requested.provider,
         requested_model=requested.model,
-        actual_provider=actual_provider or "openrouter",
-        actual_model=actual_model or requested.model,
+        actual_provider=actual_provider or "missing",
+        actual_model=actual_model or "missing",
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         estimated_cost_usd=estimated_cost,
@@ -499,6 +499,11 @@ def _json_safe_payload(value: Any) -> Any:
     if isinstance(value, float) and not math.isfinite(value):
         return str(value)
     return value
+
+
+def _actual_metadata_or_missing(response: Mapping[str, Any], key: str) -> str:
+    value = response.get(key)
+    return str(value) if value else "missing"
 
 
 def _load_provider_policy_after_lease(
