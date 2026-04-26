@@ -31,7 +31,7 @@ def prepare_live_resume(
     """
 
     capacity_requested = max(0, capacity)
-    expired_leases = expire_leases(conn)
+    expired_leases = expire_leases(conn) if write_leases else []
     readiness = live_readiness_report(conn, capacity=capacity_requested, env=env)
     plan_readiness = dict(readiness)
     reasons = list(plan_readiness.get("reasons") or [])
@@ -49,7 +49,8 @@ def prepare_live_resume(
         for task in plan_readiness.get("runnable_tasks", []):
             task_provider = str(task.get("provider") or "")
             task_model = str(task.get("model") or "")
-            if probe_provider != task_provider or probe_model != task_model:
+            task_models = [str(model) for model in task.get("models") or [] if str(model)] or ([task_model] if task_model else [])
+            if probe_provider != task_provider or probe_model not in task_models:
                 mismatched_tasks.append(
                     {
                         "task_id": task.get("task_id"),
@@ -57,7 +58,7 @@ def prepare_live_resume(
                         "reasons": [
                             "OpenRouter probe does not match runnable task provider policy: "
                             f"probe={probe_provider or 'unset'}/{probe_model or 'unset'} "
-                            f"task={task.get('task_id')}/{task_provider or 'unset'}/{task_model or 'unset'}"
+                            f"task={task.get('task_id')}/{task_provider or 'unset'}/{','.join(task_models) or 'unset'}"
                         ],
                     }
                 )

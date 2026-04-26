@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from atticus.core.matters import require_matter_access
 from atticus.core.policies import enforce_read_only_intent
 from atticus.db.repo import db_connection
 from atticus.retrieval.citations import Citation
@@ -20,13 +21,21 @@ class AskAnswer:
     follow_up_task: str | None = None
 
 
-def answer_question(db_path: str, question: str, *, worker_launcher: object | None = None) -> AskAnswer:
+def answer_question(
+    db_path: str,
+    question: str,
+    *,
+    matter_scope: str = "atticus",
+    authorized_matter_scope: str = "atticus",
+    worker_launcher: object | None = None,
+) -> AskAnswer:
     """Answer from existing memory only.
 
     The worker_launcher parameter is intentionally unused. It exists so tests can
     prove ask mode does not launch or inspect execution machinery.
     """
 
+    matter_scope = require_matter_access(matter_scope, authorized_matter_scope=authorized_matter_scope)
     decision = enforce_read_only_intent(question)
     if not decision.allowed:
         return AskAnswer(
@@ -38,7 +47,7 @@ def answer_question(db_path: str, question: str, *, worker_launcher: object | No
         )
 
     with db_connection(db_path, read_only=True) as conn:
-        rows = search_memory(conn, question)
+        rows = search_memory(conn, question, matter_scope=matter_scope, authorized_matter_scope=authorized_matter_scope)
 
     citations = [
         Citation(

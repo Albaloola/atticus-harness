@@ -42,6 +42,31 @@ OPENROUTER_MODELS: dict[str, ModelCost] = {
     "deepseek/deepseek-v4-pro": DEEPSEEK_DIRECT_MODELS["deepseek-v4-pro"],
 }
 
+OPENROUTER_FREE_MODEL_ORDER = [
+    "qwen/qwen3-coder:free",
+    "openai/gpt-oss-120b:free",
+    "inclusionai/ling-2.6-1t:free",
+    "nvidia/nemotron-3-super-120b-a12b:free",
+    "z-ai/glm-4.5-air:free",
+    "nousresearch/hermes-3-llama-3.1-405b:free",
+    "minimax/minimax-m2.5:free",
+    "tencent/hy3-preview:free",
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "inclusionai/ling-2.6-flash:free",
+    "nvidia/nemotron-3-nano-30b-a3b:free",
+    "openai/gpt-oss-20b:free",
+    "google/gemma-4-31b-it:free",
+    "baidu/qianfan-ocr-fast:free",
+    "google/gemma-4-26b-a4b-it:free",
+    "google/gemma-3-27b-it:free",
+    "nvidia/nemotron-nano-12b-v2-vl:free",
+    "nvidia/nemotron-nano-9b-v2:free",
+    "google/gemma-3-12b-it:free",
+]
+
+_FREE_MODEL_COST = ModelCost(0.0, 0.0, 0.0, 0, 0)
+OPENROUTER_MODELS.update({model: _FREE_MODEL_COST for model in OPENROUTER_FREE_MODEL_ORDER})
+
 FLASH_USE_CASES = {
     "triage",
     "indexing",

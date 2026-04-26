@@ -12,8 +12,10 @@ Atticus Harness is a safe standalone legal AI factory control plane. It has dura
 - Live legal workers are blocked unless the OpenRouter-only live gates pass.
 - A local-only `run-local` path exists for safe harness exercising; it uses `local_stub`, requires an active lease, writes only task-local JSON, records candidate output, and never writes canonical artifacts.
 - A direct OpenRouter worker path exists, but it requires `ATTICUS_ENABLE_LIVE_OPENROUTER=1`, `OPENROUTER_API_KEY`, OpenRouter-only provider policy, fallback disabled, active leases, budget gates, and reducer-only candidate handoff.
-- Live resume is planning-only: `provider-probe` and `live-resume` may inspect readiness and write leases, but they do not launch workers. `live-resume` requires either `--probe` or object-shaped `--probe-result-json`, and lease writing requires literal `ok: true` plus matching provider/model metadata.
+- OpenRouter free-model failover is opt-in through `provider_policy.openrouter_failover.enabled` or `ATTICUS_OPENROUTER_FAILOVER_ENABLED=1`. When enabled, readiness validates every configured model (or the built-in free-model order if no custom list is supplied), probes through the same failover-aware client, and records final requested-model telemetry while still failing closed on provider/model drift.
+- Live resume is planning-only: `provider-probe` and `live-resume` may inspect readiness and write leases, but they do not launch workers. `live-resume` requires either `--probe` or object-shaped `--probe-result-json`, and lease writing requires literal `ok: true` plus provider metadata and a model that matches either the task's single model or one of its configured failover models.
 - External legal actions are blocked by policy.
+- Matter-scoped `ask` and `rebuild-search-index` require `--matter` to match `ATTICUS_AUTHORIZED_MATTER` from the execution context; the default authorized matter is `atticus`.
 - Legacy workspace/archive imports are candidate-only or rough-note-only.
 - Provider fallback fails closed. OpenRouter responses must report provider/model metadata and valid usage token scalars before accounting; malformed post-dispatch responses still record provider/budget telemetry, fail the lease and attempt, block the task, and commit the audit.
 - Worker outputs need valid leases; late outputs are quarantined.
@@ -33,7 +35,9 @@ CLI smoke set:
 ```bash
 atticus init --db /tmp/atticus-smoke.sqlite3
 atticus status --db /tmp/atticus-smoke.sqlite3
-atticus ask --db /tmp/atticus-smoke.sqlite3 "source inventory status"
+atticus ask --db /tmp/atticus-smoke.sqlite3 --matter atticus "source inventory status"
+atticus rebuild-search-index --db /tmp/atticus-smoke.sqlite3 --matter atticus --write
+ATTICUS_AUTHORIZED_MATTER=beta atticus ask --db /tmp/atticus-smoke.sqlite3 --matter beta "beta source inventory status"
 atticus import-candidates --workspace /home/alba/.openclaw/workspace-atticus-legal --db /tmp/atticus-smoke.sqlite3 --dry-run
 atticus provider-policy --provider openrouter --model deepseek/deepseek-v4-pro
 atticus budget --db /tmp/atticus-smoke.sqlite3 --scope-type matter --scope-id atticus

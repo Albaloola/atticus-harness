@@ -10,6 +10,7 @@ from atticus.db import repo
 from atticus.providers.budget import BudgetExceeded
 from atticus.reducer.reducer import reduce_candidate
 from atticus.scheduler.lease import acquire_lease
+from atticus.workers.outputs import record_worker_result
 from atticus.workers.runtime import WorkerExecutionBlocked, execute_local_work_order
 
 
@@ -17,6 +18,17 @@ def init_db(tmp_path):
     db_path = tmp_path / "atticus.sqlite3"
     repo.initialize_database(db_path)
     return db_path
+
+
+def valid_packet(task_id: str) -> dict:
+    return {
+        "task_id": task_id,
+        "summary": "candidate summary",
+        "findings": [{"text": "finding", "citation_ids": []}],
+        "citations": [],
+        "proposed_artifacts": [{"path": f"candidate/{task_id}.json", "artifact_type": "evidence_registry"}],
+        "proposed_tasks": [],
+    }
 
 
 def test_execute_local_work_order_happy_path_records_candidate_only(tmp_path):
@@ -120,6 +132,96 @@ def test_execute_local_work_order_wrong_worker_fails_lease_and_blocks_task(tmp_p
     assert candidate_count == 0
 
 
+def test_record_worker_result_wrong_worker_quarantines_and_fails_lease(tmp_path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(conn, TaskSpec(task_id="direct-wrong-worker", title="Direct wrong worker", task_type="extract"))
+        lease_id = acquire_lease(conn, task_id="direct-wrong-worker", worker_id="worker-owner")
+        candidate_id = record_worker_result(
+            conn,
+            task_id="direct-wrong-worker",
+            lease_id=lease_id,
+            worker_id="worker-impostor",
+            payload=valid_packet("direct-wrong-worker"),
+        )
+        candidate = conn.execute("SELECT status, quarantined_reason FROM candidate_outputs WHERE candidate_id = ?", (candidate_id,)).fetchone()
+        lease = conn.execute("SELECT status FROM leases WHERE lease_id = ?", (lease_id,)).fetchone()
+        task = conn.execute("SELECT status FROM tasks WHERE task_id = 'direct-wrong-worker'").fetchone()
+
+    assert candidate["status"] == "quarantined"
+    assert "belongs to worker" in candidate["quarantined_reason"]
+    assert lease["status"] == "failed"
+    assert task["status"] == TaskStatus.QUARANTINED
+
+
+def test_record_worker_result_task_mismatch_quarantines_candidate(tmp_path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(conn, TaskSpec(task_id="leased-task", title="Leased task", task_type="extract"))
+        lease_id = acquire_lease(conn, task_id="leased-task", worker_id="worker-owner")
+        payload = valid_packet("other-task")
+        candidate_id = record_worker_result(
+            conn,
+            task_id="leased-task",
+            lease_id=lease_id,
+            worker_id="worker-owner",
+            payload=payload,
+        )
+        candidate = conn.execute("SELECT status, quarantined_reason FROM candidate_outputs WHERE candidate_id = ?", (candidate_id,)).fetchone()
+        lease = conn.execute("SELECT status FROM leases WHERE lease_id = ?", (lease_id,)).fetchone()
+
+    assert candidate["status"] == "quarantined"
+    assert "does not match leased task" in candidate["quarantined_reason"]
+    assert lease["status"] == "failed"
+
+
+def test_record_worker_result_cross_task_lease_mismatch_fails_actual_lease(tmp_path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(conn, TaskSpec(task_id="actual-lease-task", title="Actual lease task", task_type="extract"))
+        repo.add_task(conn, TaskSpec(task_id="claimed-output-task", title="Claimed output task", task_type="extract"))
+        lease_id = acquire_lease(conn, task_id="actual-lease-task", worker_id="worker-owner")
+        candidate_id = record_worker_result(
+            conn,
+            task_id="claimed-output-task",
+            lease_id=lease_id,
+            worker_id="worker-owner",
+            payload=valid_packet("claimed-output-task"),
+        )
+        candidate = conn.execute("SELECT status, quarantined_reason FROM candidate_outputs WHERE candidate_id = ?", (candidate_id,)).fetchone()
+        lease = conn.execute("SELECT status FROM leases WHERE lease_id = ?", (lease_id,)).fetchone()
+        actual_task = conn.execute("SELECT status FROM tasks WHERE task_id = 'actual-lease-task'").fetchone()
+        claimed_task = conn.execute("SELECT status FROM tasks WHERE task_id = 'claimed-output-task'").fetchone()
+
+    assert candidate["status"] == "quarantined"
+    assert "belongs to task actual-lease-task" in candidate["quarantined_reason"]
+    assert lease["status"] == "failed"
+    assert actual_task["status"] == TaskStatus.QUEUED
+    assert claimed_task["status"] == TaskStatus.QUARANTINED
+
+
+def test_record_worker_result_malformed_list_items_quarantine_instead_of_crashing(tmp_path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(conn, TaskSpec(task_id="bad-list-item", title="Bad list item", task_type="extract"))
+        lease_id = acquire_lease(conn, task_id="bad-list-item", worker_id="worker-owner")
+        payload = valid_packet("bad-list-item")
+        payload["findings"] = ["not an object"]
+        candidate_id = record_worker_result(
+            conn,
+            task_id="bad-list-item",
+            lease_id=lease_id,
+            worker_id="worker-owner",
+            payload=payload,
+        )
+        candidate = conn.execute("SELECT status, quarantined_reason FROM candidate_outputs WHERE candidate_id = ?", (candidate_id,)).fetchone()
+        lease = conn.execute("SELECT status FROM leases WHERE lease_id = ?", (lease_id,)).fetchone()
+
+    assert candidate["status"] == "quarantined"
+    assert "findings[0]" in candidate["quarantined_reason"]
+    assert lease["status"] == "failed"
+
+
 def test_execute_local_work_order_sanitizes_task_output_paths(tmp_path):
     db_path = init_db(tmp_path)
     output_root = (tmp_path / "safe-output").resolve()
@@ -138,6 +240,33 @@ def test_execute_local_work_order_sanitizes_task_output_paths(tmp_path):
     assert result.output_path.resolve().is_relative_to(output_root)
     assert ".." not in payload["proposed_artifacts"][0]["path"]
     assert payload["proposed_artifacts"][0]["path"].startswith("candidate/")
+
+
+def test_execute_local_work_order_cross_task_lease_mismatch_fails_actual_lease(tmp_path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(conn, TaskSpec(task_id="local-actual-lease", title="Local actual lease", task_type="extract"))
+        repo.add_task(conn, TaskSpec(task_id="local-claimed-task", title="Local claimed task", task_type="extract"))
+        lease_id = acquire_lease(conn, task_id="local-actual-lease", worker_id="worker-local")
+
+    with pytest.raises(WorkerExecutionBlocked, match="belongs to task local-actual-lease"):
+        with repo.db_connection(db_path) as conn:
+            execute_local_work_order(
+                conn,
+                task_id="local-claimed-task",
+                lease_id=lease_id,
+                worker_id="worker-local",
+                output_dir=tmp_path / "out",
+            )
+
+    with repo.db_connection(db_path) as conn:
+        lease = conn.execute("SELECT status FROM leases WHERE lease_id = ?", (lease_id,)).fetchone()
+        actual_task = conn.execute("SELECT status FROM tasks WHERE task_id = 'local-actual-lease'").fetchone()
+        candidate_count = conn.execute("SELECT COUNT(*) AS n FROM candidate_outputs").fetchone()["n"]
+
+    assert lease["status"] == "failed"
+    assert actual_task["status"] == TaskStatus.QUEUED
+    assert candidate_count == 0
 
 
 def test_failed_local_execution_persists_failure_audit_when_exception_escapes(tmp_path, monkeypatch):

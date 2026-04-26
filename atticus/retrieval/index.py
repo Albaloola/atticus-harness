@@ -8,6 +8,7 @@ import sqlite3
 from typing import Any
 from uuid import uuid4
 
+from atticus.core.matters import require_matter_access
 from atticus.core.events import utc_now
 from atticus.db import repo
 from atticus.retrieval.search import all_memory_rows
@@ -20,6 +21,7 @@ def rebuild_search_index(
     conn: sqlite3.Connection,
     *,
     matter_scope: str = "atticus",
+    authorized_matter_scope: str = "atticus",
     index_name: str = DEFAULT_INDEX_NAME,
 ) -> dict[str, Any]:
     """Rebuild the legal-memory projection from durable source tables.
@@ -28,7 +30,8 @@ def rebuild_search_index(
     disposable and can be recreated from sources, artifacts, and authorities.
     """
 
-    rows = [row for row in all_memory_rows(conn) if str(row.get("matter_scope") or matter_scope) == matter_scope]
+    matter_scope = require_matter_access(matter_scope, authorized_matter_scope=authorized_matter_scope)
+    rows = all_memory_rows(conn, matter_scope=matter_scope)
     rows.sort(key=lambda row: (str(row["record_type"]), str(row["record_id"])))
     input_fingerprint = _fingerprint_rows(rows)
 

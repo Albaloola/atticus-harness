@@ -16,6 +16,11 @@ Transport = Callable[[urllib_request.Request, float], bytes]
 class OpenRouterError(RuntimeError):
     """Raised when an OpenRouter response is unusable."""
 
+    def __init__(self, message: str, *, status_code: int | None = None, body: str = "") -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.body = body
+
 
 USAGE_TOKEN_FIELDS = (
     "prompt_tokens",
@@ -94,9 +99,11 @@ class OpenRouterClient:
             raw_bytes = self.transport(req, self.timeout)
         except urllib_error.HTTPError as exc:
             body = exc.read().decode("utf-8", errors="replace")[:500]
-            raise OpenRouterError(f"OpenRouter HTTP {exc.code}: {body}") from exc
+            raise OpenRouterError(f"OpenRouter HTTP {exc.code}: {body}", status_code=exc.code, body=body) from exc
         except urllib_error.URLError as exc:
             raise OpenRouterError(f"OpenRouter request failed: {exc.reason}") from exc
+        except (ConnectionResetError, TimeoutError) as exc:
+            raise OpenRouterError(f"OpenRouter network error: {exc}") from exc
         try:
             raw = json.loads(raw_bytes.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:

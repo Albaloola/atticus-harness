@@ -148,7 +148,26 @@ def _unfreeze_foundation_blocked_work(conn: sqlite3.Connection, *, matter_scope:
         """,
         (matter_scope,),
     ):
-        reasons = json.loads(row["blocked_reasons_json"] or "[]")
+        try:
+            reasons = json.loads(row["blocked_reasons_json"] or "[]")
+        except (json.JSONDecodeError, TypeError) as exc:
+            repo.record_human_attention(
+                conn,
+                target_type="task",
+                target_id=row["task_id"],
+                severity="blocker",
+                reason=f"foundation blocked-task reasons are malformed and could not be unfrozen: {exc}",
+            )
+            continue
+        if not isinstance(reasons, list):
+            repo.record_human_attention(
+                conn,
+                target_type="task",
+                target_id=row["task_id"],
+                severity="blocker",
+                reason="foundation blocked-task reasons are malformed and could not be unfrozen: expected JSON array",
+            )
+            continue
         remaining = [reason for reason in reasons if not str(reason).startswith(prefix)]
         if len(remaining) == len(reasons):
             continue

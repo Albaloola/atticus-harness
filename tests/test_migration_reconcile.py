@@ -152,3 +152,37 @@ def test_reconcile_unfreezes_tasks_after_foundation_certifies(tmp_path):
     assert second["unfrozen_tasks"] == ["previously-frozen-draft"]
     assert task["status"] == "queued"
     assert json.loads(task["blocked_reasons_json"]) == []
+
+
+def test_reconcile_unfreeze_skips_malformed_blocked_reason_and_continues(tmp_path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(conn, TaskSpec(task_id="malformed-frozen", title="Malformed frozen", task_type="draft", status=TaskStatus.BLOCKED))
+        repo.add_task(conn, TaskSpec(task_id="valid-frozen", title="Valid frozen", task_type="draft", status=TaskStatus.BLOCKED))
+        conn.execute("PRAGMA ignore_check_constraints = ON")
+        conn.execute("UPDATE tasks SET blocked_reasons_json = ? WHERE task_id = ?", ("{not valid json", "malformed-frozen"))
+        conn.execute(
+            "UPDATE tasks SET blocked_reasons_json = ? WHERE task_id = ?",
+            (json.dumps(["foundation reconciliation incomplete before live resume: source_inventory"]), "valid-frozen"),
+        )
+        for gate in ["source_inventory", "extraction_coverage", "evidence_registry", "production_mapping", "chronology_citations"]:
+            validation_id = repo.record_validation(conn, target_type="matter", target_id="atticus", gate_name=gate, passed=True, details={})
+            repo.add_certification(
+                conn,
+                subject_type="matter",
+                subject_id="atticus",
+                certification_type=gate,
+                validator="test",
+                validation_result_id=validation_id,
+            )
+        result = reconcile_foundation(conn, matter_scope="atticus", dry_run=False)
+        malformed = conn.execute("SELECT status FROM tasks WHERE task_id = 'malformed-frozen'").fetchone()
+        valid = conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'valid-frozen'").fetchone()
+        attention = conn.execute("SELECT reason FROM human_attention WHERE target_id = 'malformed-frozen'").fetchone()
+
+    assert result["ready_for_live_resume"]
+    assert result["unfrozen_tasks"] == ["valid-frozen"]
+    assert malformed["status"] == TaskStatus.BLOCKED
+    assert valid["status"] == TaskStatus.QUEUED
+    assert json.loads(valid["blocked_reasons_json"]) == []
+    assert "malformed" in attention["reason"]

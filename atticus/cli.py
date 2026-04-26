@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any
 
 from atticus.config import DEFAULT_DB_PATH
+from atticus.core.events import utc_now
+from atticus.core.matters import authorized_matter_from_env, require_matter_access
 from atticus.db import repo
 from atticus.graph.certifications import CertificationBlocked, certify_subject
 from atticus.migration.import_old_run import import_candidates
@@ -25,6 +27,7 @@ from atticus.providers.policy import (
 )
 from atticus.reducer.reducer import reduce_candidate
 from atticus.retrieval.ask import answer_question
+from atticus.retrieval.index import DEFAULT_INDEX_NAME, rebuild_search_index
 from atticus.scheduler.gates import evaluate_task_gates
 from atticus.scheduler.lease import LeaseError, acquire_lease, expire_leases
 from atticus.scheduler.live_orchestrator import prepare_live_resume
@@ -54,6 +57,14 @@ def build_parser() -> argparse.ArgumentParser:
     ask = sub.add_parser("ask", help="read-only legal memory query")
     ask.add_argument("question")
     ask.add_argument("--db", required=True)
+    ask.add_argument("--matter", default="atticus")
+
+    rebuild_index = sub.add_parser("rebuild-search-index", help="rebuild durable legal-memory search projection")
+    rebuild_index.add_argument("--db", required=True)
+    rebuild_index.add_argument("--matter", default="atticus")
+    rebuild_index.add_argument("--index-name", default=DEFAULT_INDEX_NAME)
+    rebuild_index.add_argument("--dry-run", dest="dry_run", action="store_true", default=True)
+    rebuild_index.add_argument("--write", dest="dry_run", action="store_false", help="write rebuilt projection rows and audit record")
 
     imp = sub.add_parser("import-candidates", help="import legacy material as candidate artifacts")
     imp.add_argument("--workspace", required=True)
@@ -203,7 +214,12 @@ def _main(args: argparse.Namespace) -> int:
         return 0
 
     if args.command == "ask":
-        answer = answer_question(args.db, args.question)
+        answer = answer_question(
+            args.db,
+            args.question,
+            matter_scope=args.matter,
+            authorized_matter_scope=authorized_matter_from_env(),
+        )
         print_json(
             {
                 "answer": answer.answer,
@@ -213,6 +229,29 @@ def _main(args: argparse.Namespace) -> int:
                 "follow_up_task": answer.follow_up_task,
             }
         )
+        return 0
+
+    if args.command == "rebuild-search-index":
+        authorized_matter_scope = authorized_matter_from_env()
+        if args.dry_run:
+            require_matter_access(args.matter, authorized_matter_scope=authorized_matter_scope)
+            print_json(
+                {
+                    "dry_run": True,
+                    "index_name": args.index_name,
+                    "matter_scope": args.matter,
+                    "requires_write": True,
+                }
+            )
+            return 0
+        with repo.db_connection(args.db) as conn:
+            result = rebuild_search_index(
+                conn,
+                matter_scope=args.matter,
+                authorized_matter_scope=authorized_matter_scope,
+                index_name=args.index_name,
+            )
+        print_json({"dry_run": False, **result})
         return 0
 
     if args.command == "import-candidates":
@@ -389,7 +428,7 @@ def _main(args: argparse.Namespace) -> int:
             )
         else:
             probe_result = {"ok": False, "reason": "live-resume requires --probe or --probe-result-json"}
-        with repo.db_connection(args.db) as conn:
+        with repo.db_connection(args.db, read_only=not args.write_leases) as conn:
             plan = prepare_live_resume(
                 conn,
                 capacity=args.capacity,
@@ -448,8 +487,14 @@ def _main(args: argparse.Namespace) -> int:
         return 0
 
     if args.command == "doctor":
-        with repo.db_connection(args.db) as conn:
-            expired = expire_leases(conn)
+        with repo.db_connection(args.db, read_only=True) as conn:
+            expired = [
+                row["lease_id"]
+                for row in conn.execute(
+                    "SELECT lease_id FROM leases WHERE status = 'active' AND expires_at <= ? ORDER BY lease_id",
+                    (utc_now(),),
+                )
+            ]
             tables = {
                 name: int(conn.execute(f"SELECT COUNT(*) AS n FROM {name}").fetchone()["n"])
                 for name in ("events", "runs", "sources", "artifacts", "tasks", "leases", "human_attention")
@@ -458,6 +503,7 @@ def _main(args: argparse.Namespace) -> int:
         print_json(
             {
                 "ok": True,
+                "diagnostic_only": True,
                 "schema_version": schema_version,
                 "tables": tables,
                 "expired_leases": expired,
@@ -474,12 +520,13 @@ def _main(args: argparse.Namespace) -> int:
 
 
 def _schedule_preview(conn: Any, *, capacity: int) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    capacity_requested = max(0, capacity)
     runnable: list[dict[str, Any]] = []
     blocked: list[dict[str, Any]] = []
     for task in conn.execute(
         """
         SELECT * FROM tasks
-        WHERE status IN ('queued', 'ready')
+        WHERE status IN ('queued', 'ready', 'blocked')
         ORDER BY expected_value DESC, created_at ASC
         """
     ):
@@ -487,7 +534,7 @@ def _schedule_preview(conn: Any, *, capacity: int) -> tuple[list[dict[str, Any]]
         blockers = result.reasons + _budget_blockers(conn, task)
         if blockers:
             blocked.append({"task_id": task["task_id"], "title": task["title"], "reasons": blockers})
-        elif len(runnable) < capacity:
+        elif len(runnable) < capacity_requested:
             runnable.append(_task_summary(task))
     return runnable, blocked
 

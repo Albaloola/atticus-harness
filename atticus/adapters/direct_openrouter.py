@@ -12,7 +12,7 @@ from atticus.providers.openrouter import OpenRouterClient
 class DirectOpenRouterAdapter(ExecutionAdapter):
     name = "direct_openrouter"
 
-    def __init__(self, *, client: OpenRouterClient | None = None) -> None:
+    def __init__(self, *, client: Any | None = None) -> None:
         self.client = client or OpenRouterClient()
 
     def run(self, work_order: dict[str, Any], *, model: str, max_tokens: int = 4096) -> dict[str, Any]:

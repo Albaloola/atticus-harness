@@ -16,7 +16,7 @@ from atticus.providers.policy import ProviderActual, ProviderRequest, check_prov
 from atticus.reducer.canonical_writer import write_canonical_text
 from atticus.retrieval.ask import answer_question
 from atticus.retrieval.index import rebuild_search_index
-from atticus.scheduler.lease import acquire_lease
+from atticus.scheduler.lease import LeaseError, acquire_lease
 from atticus.scheduler.planner import select_runnable_tasks
 from atticus.status.report import generate_status
 from atticus.validation.canonical_write_guard import (
@@ -136,6 +136,72 @@ def test_search_index_rebuild_is_durable_and_ask_uses_projection(tmp_path):
     assert answer.citations[0].record_id == artifact_id
 
 
+def test_indexed_ask_is_limited_to_requested_matter(tmp_path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        alpha_artifact = repo.add_artifact(
+            conn,
+            matter_scope="alpha",
+            path="/alpha/settlement.txt",
+            artifact_type="matter_note",
+            title="alpha settlement",
+            content="alphaexclusive privileged settlement memo",
+            trust_status=TrustStatus.VALIDATED,
+        )
+        beta_artifact = repo.add_artifact(
+            conn,
+            matter_scope="beta",
+            path="/beta/settlement.txt",
+            artifact_type="matter_note",
+            title="beta settlement",
+            content="betaexclusive privileged settlement memo",
+            trust_status=TrustStatus.VALIDATED,
+        )
+        rebuild_search_index(conn, matter_scope="alpha", authorized_matter_scope="alpha")
+        rebuild_search_index(conn, matter_scope="beta", authorized_matter_scope="beta")
+
+    blocked = answer_question(str(db_path), "alphaexclusive", matter_scope="beta", authorized_matter_scope="beta")
+    beta = answer_question(str(db_path), "betaexclusive", matter_scope="beta", authorized_matter_scope="beta")
+
+    assert blocked.citations == []
+    assert blocked.trust_level == "unsupported"
+    assert beta.citations
+    assert beta.citations[0].record_id == beta_artifact
+    assert beta.citations[0].record_id != alpha_artifact
+
+
+def test_fallback_ask_is_limited_to_requested_matter(tmp_path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        alpha_artifact = repo.add_artifact(
+            conn,
+            matter_scope="alpha",
+            path="/alpha/source.txt",
+            artifact_type="matter_note",
+            title="alpha source",
+            content="alphafallback source memo",
+            trust_status=TrustStatus.VALIDATED,
+        )
+        beta_artifact = repo.add_artifact(
+            conn,
+            matter_scope="beta",
+            path="/beta/source.txt",
+            artifact_type="matter_note",
+            title="beta source",
+            content="betafallback source memo",
+            trust_status=TrustStatus.VALIDATED,
+        )
+
+    blocked = answer_question(str(db_path), "alphafallback", matter_scope="beta", authorized_matter_scope="beta")
+    beta = answer_question(str(db_path), "betafallback", matter_scope="beta", authorized_matter_scope="beta")
+
+    assert blocked.citations == []
+    assert blocked.trust_level == "unsupported"
+    assert beta.citations
+    assert beta.citations[0].record_id == beta_artifact
+    assert beta.citations[0].record_id != alpha_artifact
+
+
 def test_legacy_queued_tasks_cannot_bypass_dependency_gates(tmp_path):
     db_path = init_db(tmp_path)
     with repo.db_connection(db_path) as conn:
@@ -155,6 +221,96 @@ def test_legacy_queued_tasks_cannot_bypass_dependency_gates(tmp_path):
     assert runnable == []
     assert task["status"] == "blocked"
     assert "missing source dependency" in task["blocked_reasons_json"]
+
+
+def test_scheduler_capacity_zero_selects_no_tasks_without_mutating(tmp_path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(conn, TaskSpec(task_id="capacity-zero", title="Capacity zero", task_type="extract"))
+        runnable = select_runnable_tasks(conn, capacity=0)
+        task = conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'capacity-zero'").fetchone()
+
+    assert runnable == []
+    assert task["status"] == TaskStatus.QUEUED
+    assert task["blocked_reasons_json"] == "[]"
+
+
+def test_scheduler_rechecks_blocked_tasks_after_dependency_is_satisfied(tmp_path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="recheck-blocked",
+                title="Recheck blocked",
+                task_type="extract",
+                source_dependencies=["src-now-present"],
+            ),
+        )
+        assert select_runnable_tasks(conn, capacity=5) == []
+        blocked = conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'recheck-blocked'").fetchone()
+        repo.add_source(conn, source_id="src-now-present", path="/raw/now-present.pdf", sha256="c" * 64)
+        runnable = select_runnable_tasks(conn, capacity=5)
+        requeued = conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'recheck-blocked'").fetchone()
+
+    assert blocked["status"] == TaskStatus.BLOCKED
+    assert "missing source dependency" in blocked["blocked_reasons_json"]
+    assert [task["task_id"] for task in runnable] == ["recheck-blocked"]
+    assert requeued["status"] == TaskStatus.QUEUED
+    assert requeued["blocked_reasons_json"] == "[]"
+
+
+def test_scheduler_fails_closed_on_malformed_provider_policy_cost(tmp_path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(conn, TaskSpec(task_id="bad-scheduler-policy", title="Bad policy", task_type="extract"))
+        conn.execute("PRAGMA ignore_check_constraints = ON")
+        conn.execute("UPDATE tasks SET provider_policy_json = ? WHERE task_id = ?", ("{not valid json", "bad-scheduler-policy"))
+        runnable = select_runnable_tasks(conn, capacity=5)
+        task = conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'bad-scheduler-policy'").fetchone()
+
+    assert runnable == []
+    assert task["status"] == TaskStatus.BLOCKED
+    assert "malformed provider policy" in task["blocked_reasons_json"]
+
+
+def test_manual_lease_cannot_bypass_dependency_gates(tmp_path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(task_id="lease-missing-source", title="Lease missing source", task_type="extract", source_dependencies=["src-missing"]),
+        )
+        with pytest.raises(LeaseError, match="blocked by gates"):
+            acquire_lease(conn, task_id="lease-missing-source", worker_id="worker-1")
+        task = conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'lease-missing-source'").fetchone()
+        lease_count = conn.execute("SELECT COUNT(*) AS n FROM leases WHERE task_id = 'lease-missing-source'").fetchone()["n"]
+
+    assert task["status"] == TaskStatus.BLOCKED
+    assert "missing source dependency" in task["blocked_reasons_json"]
+    assert lease_count == 0
+
+
+def test_task_gates_block_cross_matter_source_dependencies(tmp_path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_source(conn, source_id="src-alpha-only", matter_scope="alpha", path="/alpha/source.pdf", sha256="d" * 64)
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="beta-cross-source",
+                title="Beta cross source",
+                task_type="extract",
+                matter_scope="beta",
+                source_dependencies=["src-alpha-only"],
+            ),
+        )
+        runnable = select_runnable_tasks(conn, capacity=5)
+        task = conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'beta-cross-source'").fetchone()
+
+    assert runnable == []
+    assert task["status"] == TaskStatus.BLOCKED
+    assert "cross-matter source dependency" in task["blocked_reasons_json"]
 
 
 def test_provider_fallback_is_blocked_unless_explicitly_allowed():

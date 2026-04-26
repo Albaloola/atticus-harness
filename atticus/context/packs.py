@@ -53,8 +53,8 @@ def build_context_pack(
     if task is None:
         raise KeyError(f"unknown task: {task_id}")
 
-    source_ids = json.loads(task["source_dependencies_json"])
-    artifact_ids = json.loads(task["artifact_dependencies_json"])
+    source_ids = _load_string_list(task, "source_dependencies_json")
+    artifact_ids = _load_string_list(task, "artifact_dependencies_json")
     required_certs = json.loads(task["required_certifications_json"])
 
     sections: list[dict[str, Any]] = [
@@ -88,12 +88,18 @@ def build_context_pack(
             """
             SELECT source_id, path, source_type, sha256, trust_status, stale
             FROM sources
-            WHERE source_id IN (%s)
+            WHERE source_id IN (%s) AND matter_scope = ?
             ORDER BY source_id
             """ % ",".join("?" for _ in source_ids),
-            tuple(source_ids),
+            (*source_ids, task["matter_scope"]),
         )
     ] if source_ids else []
+    _require_all_dependencies_present(
+        requested=source_ids,
+        found=[row["source_id"] for row in sources],
+        record_type="source",
+        matter_scope=task["matter_scope"],
+    )
     artifacts = [
         {
             "artifact_id": row["artifact_id"],
@@ -108,12 +114,18 @@ def build_context_pack(
             """
             SELECT artifact_id, path, artifact_type, trust_status, stale, title, content
             FROM artifacts
-            WHERE artifact_id IN (%s)
+            WHERE artifact_id IN (%s) AND matter_scope = ?
             ORDER BY artifact_id
             """ % ",".join("?" for _ in artifact_ids),
-            tuple(artifact_ids),
+            (*artifact_ids, task["matter_scope"]),
         )
     ] if artifact_ids else []
+    _require_all_dependencies_present(
+        requested=artifact_ids,
+        found=[row["artifact_id"] for row in artifacts],
+        record_type="artifact",
+        matter_scope=task["matter_scope"],
+    )
 
     sections.extend(
         [
@@ -151,3 +163,23 @@ def build_context_pack(
             sections=sections,
         )
     return pack
+
+
+def _load_string_list(task: sqlite3.Row, field: str) -> list[str]:
+    value = json.loads(task[field] or "[]")
+    if not isinstance(value, list):
+        raise ValueError(f"{field} for task {task['task_id']} must be a JSON array")
+    items: list[str] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, str) or not item:
+            raise ValueError(f"{field}[{index}] for task {task['task_id']} must be a non-empty string")
+        items.append(item)
+    return items
+
+
+def _require_all_dependencies_present(*, requested: list[str], found: list[str], record_type: str, matter_scope: str) -> None:
+    missing = sorted(set(requested) - set(found))
+    if missing:
+        raise ValueError(
+            f"context pack missing or unauthorized {record_type} dependencies for matter {matter_scope}: {', '.join(missing)}"
+        )

@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
+from atticus.core.matters import require_matter_access
 from atticus.retrieval.rank import lexical_score
 
 _TRUST_BOOST = {
@@ -18,7 +19,14 @@ _TRUST_BOOST = {
 }
 
 
-def search_memory(conn: sqlite3.Connection, question: str, *, limit: int = 5) -> list[dict[str, Any]]:
+def search_memory(
+    conn: sqlite3.Connection,
+    question: str,
+    *,
+    limit: int = 5,
+    matter_scope: str = "atticus",
+    authorized_matter_scope: str = "atticus",
+) -> list[dict[str, Any]]:
     """Return relevant memory rows without launching or mutating anything.
 
     This is deliberately schema-light but much safer than the original LIKE
@@ -27,7 +35,8 @@ def search_memory(conn: sqlite3.Connection, question: str, *, limit: int = 5) ->
     returns no result instead of arbitrary recent artifacts when nothing matches.
     """
 
-    rows = _indexed_memory_rows(conn) or all_memory_rows(conn)
+    matter_scope = require_matter_access(matter_scope, authorized_matter_scope=authorized_matter_scope)
+    rows = _indexed_memory_rows(conn, matter_scope=matter_scope) or all_memory_rows(conn, matter_scope=matter_scope)
     scored: list[tuple[float, str, str, dict[str, Any]]] = []
     for row in rows:
         score = _score_row(conn, question, row)
@@ -38,27 +47,32 @@ def search_memory(conn: sqlite3.Connection, question: str, *, limit: int = 5) ->
     return [item[3] for item in scored[:limit]]
 
 
-def all_memory_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
-    return _artifact_rows(conn) + _source_rows(conn) + _authority_rows(conn)
+def all_memory_rows(conn: sqlite3.Connection, *, matter_scope: str = "atticus") -> list[dict[str, Any]]:
+    return _artifact_rows(conn, matter_scope=matter_scope) + _source_rows(conn, matter_scope=matter_scope) + _authority_rows(conn, matter_scope=matter_scope)
 
 
-def _indexed_memory_rows(conn: sqlite3.Connection, *, index_name: str = "legal_memory.v1") -> list[dict[str, Any]]:
+def _indexed_memory_rows(
+    conn: sqlite3.Connection,
+    *,
+    index_name: str = "legal_memory.v1",
+    matter_scope: str = "atticus",
+) -> list[dict[str, Any]]:
     entries = conn.execute(
         """
         SELECT record_type, record_id
         FROM search_index_entries
-        WHERE index_name = ?
+        WHERE index_name = ? AND matter_scope = ?
         ORDER BY record_type, record_id
         """,
-        (index_name,),
+        (index_name, matter_scope),
     ).fetchall()
     if not entries:
         return []
-    by_key = {(row["record_type"], row["record_id"]): row for row in all_memory_rows(conn)}
+    by_key = {(row["record_type"], row["record_id"]): row for row in all_memory_rows(conn, matter_scope=matter_scope)}
     return [by_key[(entry["record_type"], entry["record_id"])] for entry in entries if (entry["record_type"], entry["record_id"]) in by_key]
 
 
-def _artifact_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+def _artifact_rows(conn: sqlite3.Connection, *, matter_scope: str) -> list[dict[str, Any]]:
     return [
         dict(row)
         for row in conn.execute(
@@ -66,13 +80,14 @@ def _artifact_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
             SELECT 'artifact' AS record_type, artifact_id AS record_id, path, title, content,
               trust_status, stale, stage, matter_scope, created_at
             FROM artifacts
-            WHERE trust_status != 'rejected'
-            """
+            WHERE trust_status != 'rejected' AND matter_scope = ?
+            """,
+            (matter_scope,),
         )
     ]
 
 
-def _source_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+def _source_rows(conn: sqlite3.Connection, *, matter_scope: str) -> list[dict[str, Any]]:
     return [
         dict(row)
         for row in conn.execute(
@@ -80,13 +95,14 @@ def _source_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
             SELECT 'source' AS record_type, source_id AS record_id, path, path AS title,
               source_type AS content, trust_status, stale, stage, matter_scope, created_at
             FROM sources
-            WHERE trust_status != 'rejected'
-            """
+            WHERE trust_status != 'rejected' AND matter_scope = ?
+            """,
+            (matter_scope,),
         )
     ]
 
 
-def _authority_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+def _authority_rows(conn: sqlite3.Connection, *, matter_scope: str) -> list[dict[str, Any]]:
     return [
         {
             "record_type": "authority",
@@ -114,8 +130,9 @@ def _authority_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
             """
             SELECT authority_id, matter_scope, jurisdiction, citation, authority_type, title, status, source_url, created_at
             FROM legal_authorities
-            WHERE status != 'rejected'
-            """
+            WHERE status != 'rejected' AND matter_scope = ?
+            """,
+            (matter_scope,),
         )
     ]
 

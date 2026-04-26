@@ -20,11 +20,13 @@ OpenClaw, Codex, Claude Code, direct OpenRouter, and other agents are execution 
 ## Safety Defaults
 
 - `ask` is read-only and never launches workers or mutates canonical state.
+- Matter-scoped query/rebuild commands authorize against the execution-context matter (`ATTICUS_AUTHORIZED_MATTER`, default `atticus`) before accepting `--matter`.
 - Commands that could affect factory state default to dry-run or require explicit `--write` / `--write-context`.
 - OpenClaw adapter launch is blocked in this package.
 - External legal actions are policy-blocked: no emails, filings, uploads, court contact, party contact, or counsel contact.
 - Legacy outputs import as `candidate`, `rough_note`, or rejected/noise. They are never certified automatically.
 - Provider fallback fails closed unless explicitly allowed.
+- OpenRouter free-model failover is opt-in (`openrouter_failover.enabled` or `ATTICUS_OPENROUTER_FAILOVER_ENABLED=1`) and rotates only across the configured ordered requested-model list, or the built-in free-model order when enabled without custom models; provider/model drift still fails closed.
 
 ## CLI
 
@@ -32,7 +34,9 @@ OpenClaw, Codex, Claude Code, direct OpenRouter, and other agents are execution 
 atticus init --db atticus.sqlite3
 atticus status --db atticus.sqlite3
 atticus inspect --db atticus.sqlite3 --type task --id task-1
-atticus ask --db atticus.sqlite3 "What source indexes mention production status?"
+atticus ask --db atticus.sqlite3 --matter atticus "What source indexes mention production status?"
+atticus rebuild-search-index --db atticus.sqlite3 --matter atticus --write
+ATTICUS_AUTHORIZED_MATTER=beta atticus ask --db atticus.sqlite3 --matter beta "What beta evidence is indexed?"
 atticus import-candidates --workspace /home/alba/.openclaw/workspace-atticus-legal --db atticus.sqlite3 --dry-run
 atticus validate --db atticus.sqlite3 --gate source_inventory --target-type matter --target-id atticus
 atticus certify --db atticus.sqlite3 --subject-type matter --subject-id atticus --type source_inventory
@@ -46,6 +50,16 @@ atticus human-attention --db atticus.sqlite3
 atticus migrate-report --workspace /home/alba/.openclaw/workspace-atticus-legal --db atticus.sqlite3 --dry-run
 atticus doctor --db atticus.sqlite3
 ```
+
+OpenRouter failover can be enabled per task with `provider_policy.openrouter_failover` or via environment. If `ATTICUS_OPENROUTER_FAILOVER_MODELS` is omitted, Atticus uses the built-in free-model order from `OPENROUTER_FREE_MODEL_ORDER`:
+
+```bash
+ATTICUS_OPENROUTER_FAILOVER_ENABLED=1 \
+ATTICUS_OPENROUTER_FAILOVER_MODELS="qwen/qwen3-coder:free,openai/gpt-oss-120b:free" \
+atticus live-resume --db atticus.sqlite3 --probe --write-leases
+```
+
+The live gate validates every configured model, probes through the same failover path, and records the final requested model in provider telemetry.
 
 ## Development
 

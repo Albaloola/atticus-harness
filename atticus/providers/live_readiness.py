@@ -11,7 +11,8 @@ from typing import Mapping, Any
 
 from atticus.providers.deepseek import known_model
 from atticus.providers.budget import check_budget
-from atticus.providers.openrouter import OpenRouterClient, OpenRouterError
+from atticus.providers.openrouter_failover import openrouter_client_for_policy, openrouter_models_for_policy, primary_model_for_policy, safe_openrouter_error_message
+from atticus.providers.openrouter import OpenRouterClient, OpenRouterError, validate_usage_tokens
 from atticus.providers.policy import ProviderActual, ProviderRequest, check_provider_policy
 from atticus.scheduler.gates import evaluate_task_gates
 
@@ -35,14 +36,22 @@ def check_live_provider_policy(provider_policy: Mapping[str, Any], *, env: Mappi
 
     env = env if env is not None else os.environ
     provider = str(provider_policy.get("provider") or "")
-    model = str(provider_policy.get("model") or "")
     allow_fallback = bool(provider_policy.get("allow_fallback") or False)
     reasons: list[str] = []
+    models: tuple[str, ...] = ()
 
     if provider != "openrouter":
         reasons.append(f"provider must be openrouter for live Atticus work, got {provider or 'unset'}")
-    if provider == "openrouter" and not known_model(provider, model):
-        reasons.append(f"unknown or unsupported OpenRouter model: {model or 'unset'}")
+    elif provider == "openrouter":
+        try:
+            models = openrouter_models_for_policy(provider_policy, env=env)
+        except (OpenRouterError, TypeError, ValueError) as exc:
+            reasons.append(str(exc))
+        if not models:
+            reasons.append("unknown or unsupported OpenRouter model: unset")
+        for model in models:
+            if not known_model(provider, model):
+                reasons.append(f"unknown or unsupported OpenRouter model: {model or 'unset'}")
     if allow_fallback:
         reasons.append("fallback must be disabled for live Atticus work")
     if not env.get(OPENROUTER_KEY_ENV):
@@ -65,8 +74,8 @@ def probe_live_openrouter(
     """Make a tiny OpenRouter JSON probe and fail closed on provider/model drift."""
 
     env = env if env is not None else os.environ
+    model = str(provider_policy.get("model") or "")
     if not live_openrouter_enabled(env=env):
-        model = str(provider_policy.get("model") or "")
         return {
             "ok": False,
             "provider": "openrouter",
@@ -75,7 +84,13 @@ def probe_live_openrouter(
             "provider_policy_result": "blocked_before_probe",
         }
     policy = check_live_provider_policy(provider_policy, env=env)
-    model = str(provider_policy.get("model") or "")
+    try:
+        model = primary_model_for_policy(provider_policy, env=env)
+        configured_models = openrouter_models_for_policy(provider_policy, env=env)
+    except (OpenRouterError, TypeError, ValueError) as exc:
+        model = str(provider_policy.get("model") or "")
+        configured_models = (model,) if model else ()
+        policy = LiveProviderDecision(False, [*policy.reasons, str(exc)])
     if not policy.allowed:
         return {
             "ok": False,
@@ -83,9 +98,10 @@ def probe_live_openrouter(
             "model": model,
             "reason": "; ".join(policy.reasons),
             "provider_policy_result": "blocked_before_probe",
+            "configured_models": list(configured_models),
         }
 
-    probe_client = client or OpenRouterClient(api_key=env.get(OPENROUTER_KEY_ENV, ""))
+    probe_client = openrouter_client_for_policy(provider_policy, env=env, client=client) or OpenRouterClient(api_key=env.get(OPENROUTER_KEY_ENV, ""))
     try:
         response = probe_client.chat_json(
             model=model,
@@ -107,8 +123,9 @@ def probe_live_openrouter(
             "ok": False,
             "provider": "openrouter",
             "model": model,
-            "reason": f"OpenRouter probe failed: {exc}",
+            "reason": f"OpenRouter probe failed: {safe_openrouter_error_message(exc)}",
             "provider_policy_result": "probe_failed",
+            "configured_models": list(configured_models),
         }
 
     if not isinstance(response, Mapping):
@@ -129,6 +146,17 @@ def probe_live_openrouter(
             "provider_policy_result": "probe_failed",
         }
     usage = dict(usage_raw) if isinstance(usage_raw, Mapping) else {}
+    try:
+        validate_usage_tokens(usage)
+    except OpenRouterError as exc:
+        return {
+            "ok": False,
+            "provider": str(response.get("provider") or "missing"),
+            "model": str(response.get("model") or "missing"),
+            "reason": f"OpenRouter probe usage metadata is invalid: {exc}",
+            "provider_policy_result": "probe_failed",
+            "usage": usage,
+        }
     reported_provider = response.get("provider")
     reported_model = response.get("model")
     if not reported_provider or not reported_model:
@@ -141,9 +169,22 @@ def probe_live_openrouter(
             "usage": usage,
         }
     actual = ProviderActual(str(reported_provider), str(reported_model))
-    request = ProviderRequest("openrouter", model, allow_fallback=False)
+    requested_model = str(response.get("requested_model") or model)
+    if requested_model not in configured_models:
+        return {
+            "ok": False,
+            "provider": actual.provider,
+            "model": actual.model,
+            "requested_model": requested_model,
+            "configured_models": list(configured_models),
+            "reason": f"OpenRouter probe requested model {requested_model} is not in configured model list",
+            "provider_policy_result": "failed_closed",
+            "usage": usage,
+        }
+    request = ProviderRequest("openrouter", requested_model, allow_fallback=False)
     decision = check_provider_policy(request, actual=actual)
-    content = response.get("content") if isinstance(response.get("content"), Mapping) else {}
+    content_raw = response.get("content")
+    content = content_raw if isinstance(content_raw, Mapping) else {}
     ok_content = content.get("ok") is True
     ok = decision.allowed and ok_content
     reason = "probe passed" if ok else decision.reason if not decision.allowed else "OpenRouter probe did not return literal ok=true"
@@ -151,6 +192,8 @@ def probe_live_openrouter(
         "ok": ok,
         "provider": actual.provider,
         "model": actual.model,
+        "requested_model": requested_model,
+        "configured_models": list(configured_models),
         "reason": reason,
         "provider_policy_result": decision.result,
         "usage": usage,
@@ -171,7 +214,7 @@ def live_readiness_report(conn: sqlite3.Connection, *, capacity: int = 15, env: 
     for task in conn.execute(
         """
         SELECT * FROM tasks
-        WHERE status IN ('queued', 'ready')
+        WHERE status IN ('queued', 'ready', 'blocked')
         ORDER BY expected_value DESC, created_at ASC
         """
     ):
@@ -181,6 +224,10 @@ def live_readiness_report(conn: sqlite3.Connection, *, capacity: int = 15, env: 
             blocked.append({"task_id": task["task_id"], "title": task["title"], "reasons": [str(exc)]})
             continue
         reasons: list[str] = []
+        try:
+            policy_models = openrouter_models_for_policy(policy, env=env)
+        except (OpenRouterError, TypeError, ValueError):
+            policy_models = (str(policy.get("model") or ""),) if policy.get("model") else ()
         try:
             estimated = parse_estimated_cost_usd(policy, task_id=task["task_id"], require_present=True)
         except ValueError as exc:
@@ -209,7 +256,8 @@ def live_readiness_report(conn: sqlite3.Connection, *, capacity: int = 15, env: 
                     "stage": task["stage"],
                     "task_type": task["task_type"],
                     "provider": str(policy.get("provider") or ""),
-                    "model": str(policy.get("model") or ""),
+                    "model": policy_models[0] if policy_models else str(policy.get("model") or ""),
+                    "models": list(policy_models),
                 }
             )
 
@@ -245,6 +293,8 @@ def parse_estimated_cost_usd(provider_policy: Mapping[str, Any], *, task_id: str
             raise ValueError(f"provider policy for task {task_id} must include estimated_cost_usd before live work")
         return 0.0
     raw = provider_policy.get("estimated_cost_usd")
+    if raw is None:
+        raise ValueError(f"provider policy for task {task_id} must include estimated_cost_usd before live work")
     if isinstance(raw, bool):
         raise ValueError(f"provider policy for task {task_id} has invalid estimated_cost_usd: boolean is not allowed")
     try:

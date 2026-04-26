@@ -24,9 +24,10 @@ from atticus.core.policies import TaskStatus
 from atticus.db import repo
 from atticus.providers.budget import BudgetExceeded, charge_budget, require_budget
 from atticus.providers.live_readiness import check_live_provider_policy, live_openrouter_enabled, parse_estimated_cost_usd
+from atticus.providers.openrouter_failover import openrouter_client_for_policy, openrouter_models_for_policy, primary_model_for_policy, safe_openrouter_error_message
 from atticus.providers.openrouter import OpenRouterError, validate_usage_tokens
 from atticus.providers.policy import ProviderActual, ProviderRequest, check_provider_policy
-from atticus.scheduler.lease import require_active_lease
+from atticus.scheduler.lease import LeaseError, require_active_lease
 from atticus.workers.contracts import safe_path_component
 from atticus.workers.outputs import record_worker_result
 from atticus.workers.work_order import build_work_order
@@ -64,7 +65,7 @@ def execute_local_work_order(
     - canonical artifacts are never written here.
     """
 
-    lease = require_active_lease(conn, lease_id=lease_id, task_id=task_id)
+    lease = _require_runtime_lease_for_task(conn, lease_id=lease_id, task_id=task_id)
     task = conn.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
     if task is None:
         reason = f"unknown task: {task_id}"
@@ -173,7 +174,7 @@ def execute_openrouter_work_order(
 ) -> WorkerExecutionResult:
     """Execute one leased task through OpenRouter after explicit live gates pass."""
 
-    lease = require_active_lease(conn, lease_id=lease_id, task_id=task_id)
+    lease = _require_runtime_lease_for_task(conn, lease_id=lease_id, task_id=task_id)
     task = conn.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
     if task is None:
         reason = f"unknown task: {task_id}"
@@ -221,11 +222,14 @@ def execute_openrouter_work_order(
     provider_run_id: str | None = None
     try:
         order = build_work_order(conn, task_id=task_id, lease_id=lease_id, persist_context=True)
-        requested = ProviderRequest("openrouter", str(provider_policy["model"]), allow_fallback=False)
+        configured_models = openrouter_models_for_policy(provider_policy, env=env)
+        requested = ProviderRequest("openrouter", primary_model_for_policy(provider_policy, env=env), allow_fallback=False)
+        provider_client = openrouter_client_for_policy(provider_policy, env=env, client=client)
         try:
-            response = DirectOpenRouterAdapter(client=client).run(order.as_dict(), model=requested.model)
+            response = DirectOpenRouterAdapter(client=provider_client).run(order.as_dict(), model=requested.model)
         except OpenRouterError as exc:
-            reason = f"OpenRouter provider call failed after dispatch: {exc}"
+            safe_error = safe_openrouter_error_message(exc)
+            reason = f"OpenRouter provider call failed after dispatch: {safe_error}"
             provider_run_id = _record_openrouter_post_dispatch_failure(
                 conn,
                 task=task,
@@ -239,7 +243,7 @@ def execute_openrouter_work_order(
                 adapter_name=adapter_name,
                 reason=reason,
                 fallback_policy_result="provider_error",
-                raw_usage={"error": str(exc)},
+                raw_usage={"error": safe_error},
             )
             raise WorkerExecutionBlocked(reason) from exc
         if not isinstance(response, Mapping):
@@ -256,6 +260,28 @@ def execute_openrouter_work_order(
                 started=started,
                 adapter_name=adapter_name,
                 reason=reason,
+            )
+            raise WorkerExecutionBlocked(reason)
+        final_requested_model = str(response.get("requested_model") or requested.model)
+        requested = ProviderRequest("openrouter", final_requested_model, allow_fallback=False)
+        if final_requested_model not in configured_models:
+            reason = f"OpenRouter response requested model {final_requested_model} is not in configured model list"
+            provider_run_id = _record_openrouter_post_dispatch_failure(
+                conn,
+                task=task,
+                task_id=task_id,
+                lease_id=lease_id,
+                attempt_id=attempt_id,
+                output_path=output_path,
+                requested=requested,
+                estimated_cost=estimated_cost,
+                started=started,
+                adapter_name=adapter_name,
+                reason=reason,
+                response=response,
+                actual_provider=_actual_metadata_or_missing(response, "provider"),
+                actual_model=_actual_metadata_or_missing(response, "model"),
+                raw_usage={"requested_model": final_requested_model, "configured_models": list(configured_models)},
             )
             raise WorkerExecutionBlocked(reason)
         usage_raw = response.get("usage")
@@ -344,7 +370,15 @@ def execute_openrouter_work_order(
             latency_ms=latency_ms,
             fallback_allowed=False,
             fallback_policy_result=policy_decision.result,
-            raw_usage=_json_safe_payload({"usage": usage, "adapter": adapter_name, "output_path": str(output_path), "raw": response.get("raw", {})}),
+            raw_usage=_json_safe_payload(
+                {
+                    "usage": usage,
+                    "adapter": adapter_name,
+                    "output_path": str(output_path),
+                    "requested_model": requested.model,
+                    "raw": response.get("raw", {}),
+                }
+            ),
         )
         _charge_budget_scopes(conn, task=task, task_id=task_id, amount_usd=estimated_cost, provider_run_id=provider_run_id)
         if not policy_decision.allowed:
@@ -386,18 +420,46 @@ def execute_openrouter_work_order(
         raise
 
 
-def _mark_lease_failed(conn: sqlite3.Connection, *, lease_id: str, reason: str) -> None:
+def _require_runtime_lease_for_task(conn: sqlite3.Connection, *, lease_id: str, task_id: str) -> sqlite3.Row:
+    try:
+        lease = require_active_lease(conn, lease_id=lease_id)
+    except LeaseError as exc:
+        raise WorkerExecutionBlocked(str(exc)) from exc
+    if lease["task_id"] != task_id:
+        reason = f"lease {lease_id} belongs to task {lease['task_id']}, not {task_id}"
+        failed_task_id = _mark_lease_failed(conn, lease_id=lease_id, reason=reason)
+        if failed_task_id is not None:
+            _restore_task_after_failed_runtime_lease(conn, task_id=failed_task_id)
+            conn.commit()
+        raise WorkerExecutionBlocked(reason)
+    return lease
+
+
+def _mark_lease_failed(conn: sqlite3.Connection, *, lease_id: str, reason: str) -> str | None:
     """Mark a lease as failed so capacity accounting cannot leak active leases."""
 
     now = utc_now()
-    row = conn.execute("SELECT task_id FROM leases WHERE lease_id = ?", (lease_id,)).fetchone()
-    if row is None:
-        return
+    row = conn.execute("SELECT task_id, status FROM leases WHERE lease_id = ?", (lease_id,)).fetchone()
+    if row is None or row["status"] != "active":
+        return None
     conn.execute(
         "UPDATE leases SET status = 'failed', updated_at = ? WHERE lease_id = ?",
         (now, lease_id),
     )
     repo.emit_event(conn, "lease.failed", payload={"lease_id": lease_id, "task_id": row["task_id"], "reason": reason})
+    return str(row["task_id"])
+
+
+def _restore_task_after_failed_runtime_lease(conn: sqlite3.Connection, *, task_id: str) -> None:
+    pending_candidate = conn.execute(
+        "SELECT 1 FROM candidate_outputs WHERE task_id = ? AND status = 'candidate' LIMIT 1",
+        (task_id,),
+    ).fetchone()
+    next_status = TaskStatus.REDUCER_PENDING if pending_candidate is not None else TaskStatus.QUEUED
+    conn.execute(
+        "UPDATE tasks SET status = ?, updated_at = ? WHERE task_id = ? AND status IN (?, ?)",
+        (next_status, utc_now(), task_id, TaskStatus.LEASED, TaskStatus.RUNNING),
+    )
 
 
 def _requires_local_cost_estimate(conn: sqlite3.Connection, *, task: sqlite3.Row) -> bool:

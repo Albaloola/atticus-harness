@@ -26,8 +26,11 @@ Active factory path:
 - `provider-policy` with optional DB recording
 - `human-attention`
 - `import-candidates --write`
+- `rebuild-search-index --write`
 
 `ask` uses a read-only SQLite connection. It blocks external action, worker-launch, validation, certification, and drafting intents.
+Matter-scoped read/query commands must authorize `--matter` against the execution-context matter (`ATTICUS_AUTHORIZED_MATTER`, default `atticus`) before reading snippets or citations.
+`rebuild-search-index` is an operator maintenance command for disposable retrieval projections; it defaults to dry-run and requires `--write` before it updates projection or audit rows.
 
 ## Consequences
 

@@ -517,4 +517,5 @@ CREATE INDEX IF NOT EXISTS citation_spans_target_idx ON citation_spans(target_ty
 CREATE INDEX IF NOT EXISTS candidate_outputs_task_idx ON candidate_outputs(task_id, status);
 CREATE INDEX IF NOT EXISTS tracked_files_status_idx ON tracked_files(status, file_kind);
 CREATE INDEX IF NOT EXISTS search_index_entries_lookup_idx ON search_index_entries(index_name, record_type, record_id);
+CREATE INDEX IF NOT EXISTS search_index_entries_scope_lookup_idx ON search_index_entries(index_name, matter_scope, record_type, record_id);
 """

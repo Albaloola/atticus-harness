@@ -18,9 +18,11 @@ class GateResult:
 def evaluate_task_gates(conn: sqlite3.Connection, task_row: sqlite3.Row) -> GateResult:
     reasons: list[str] = []
     task_id = str(task_row["task_id"])
+    task_matter = str(task_row["matter_scope"])
     source_deps = _load_string_list(task_row, "source_dependencies_json", task_id, reasons)
     artifact_deps = _load_string_list(task_row, "artifact_dependencies_json", task_id, reasons)
     task_deps = _load_string_list(task_row, "task_dependencies_json", task_id, reasons) if "task_dependencies_json" in task_row.keys() else []
+    matter_deps = _load_string_list(task_row, "matter_dependencies_json", task_id, reasons) if "matter_dependencies_json" in task_row.keys() else []
     required_certs = _load_certification_requirements(task_row, task_id, reasons)
     for requirement in STAGE_FOUNDATION_REQUIREMENTS.get(task_row["stage"], []):
         scoped = dict(requirement)
@@ -30,33 +32,49 @@ def evaluate_task_gates(conn: sqlite3.Connection, task_row: sqlite3.Row) -> Gate
 
     for source_id in source_deps:
         row = conn.execute(
-            "SELECT stale FROM sources WHERE source_id = ?",
+            "SELECT stale, matter_scope FROM sources WHERE source_id = ?",
             (source_id,),
         ).fetchone()
         if row is None:
             reasons.append(f"missing source dependency: {source_id}")
+        elif row["matter_scope"] != task_matter:
+            reasons.append(f"cross-matter source dependency: {source_id} belongs to {row['matter_scope']}, not {task_matter}")
         elif row["stale"]:
             reasons.append(f"stale source dependency: {source_id}")
 
     for artifact_id in artifact_deps:
         row = conn.execute(
-            "SELECT stale FROM artifacts WHERE artifact_id = ?",
+            "SELECT stale, matter_scope FROM artifacts WHERE artifact_id = ?",
             (artifact_id,),
         ).fetchone()
         if row is None:
             reasons.append(f"missing artifact dependency: {artifact_id}")
+        elif row["matter_scope"] != task_matter:
+            reasons.append(f"cross-matter artifact dependency: {artifact_id} belongs to {row['matter_scope']}, not {task_matter}")
         elif row["stale"]:
             reasons.append(f"stale artifact dependency: {artifact_id}")
 
     for dependency_task_id in task_deps:
         row = conn.execute(
-            "SELECT status FROM tasks WHERE task_id = ?",
+            "SELECT status, matter_scope FROM tasks WHERE task_id = ?",
             (dependency_task_id,),
         ).fetchone()
         if row is None:
             reasons.append(f"missing task dependency: {dependency_task_id}")
+        elif row["matter_scope"] != task_matter:
+            reasons.append(f"cross-matter task dependency: {dependency_task_id} belongs to {row['matter_scope']}, not {task_matter}")
         elif row["status"] != "complete":
             reasons.append(f"incomplete task dependency: {dependency_task_id}")
+
+    for matter_scope in matter_deps:
+        row = conn.execute(
+            "SELECT status FROM matters WHERE matter_scope = ?",
+            (matter_scope,),
+        ).fetchone()
+        if row is None:
+            reasons.append(f"missing matter dependency: {matter_scope}")
+        elif row["status"] != "active":
+            reasons.append(f"inactive matter dependency: {matter_scope}")
 
     for requirement in required_certs:
         subject_type = requirement.get("subject_type", "artifact")

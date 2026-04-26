@@ -38,6 +38,9 @@ def reduce_candidate(
         raise ReductionBlocked(f"unknown candidate: {candidate_id}")
     if candidate["status"] != "candidate":
         raise ReductionBlocked(f"candidate {candidate_id} has status {candidate['status']}")
+    task = conn.execute("SELECT matter_scope FROM tasks WHERE task_id = ?", (candidate["task_id"],)).fetchone()
+    if task is None:
+        raise ReductionBlocked(f"candidate {candidate_id} references unknown task: {candidate['task_id']}")
     require_active_lease(conn, lease_id=reducer_lease_id, task_id=candidate["task_id"])
     assert_canonical_write_allowed(
         writer_role=writer_role,
@@ -52,6 +55,7 @@ def reduce_candidate(
     canonical_preview = {
         "candidate_id": candidate_id,
         "task_id": candidate["task_id"],
+        "matter_scope": task["matter_scope"],
         "summary": packet.summary,
         "proposed_artifact": proposed,
         "dry_run": dry_run,
@@ -76,6 +80,7 @@ def reduce_candidate(
 
     artifact_id = repo.add_artifact(
         conn,
+        matter_scope=task["matter_scope"],
         path=str(proposed.get("path") or f"canonical/{candidate['task_id']}/{candidate_id}.json"),
         artifact_type=str(proposed.get("artifact_type") or "reduced_result"),
         stage=str(proposed.get("stage") or ""),

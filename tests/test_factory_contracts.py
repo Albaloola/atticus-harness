@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 
 import pytest
@@ -8,6 +9,7 @@ from atticus.adapters.base import AdapterBlocked
 from atticus.adapters.openclaw import OpenClawAdapter
 from atticus.cli import main as cli_main
 from atticus.context.packs import build_context_pack
+from atticus.core.matters import MatterAccessDenied
 from atticus.core.policies import LegalStage, TaskStatus, TrustStatus
 from atticus.core.tasks import TaskSpec
 from atticus.db import repo
@@ -16,6 +18,8 @@ from atticus.migration.import_old_run import import_candidates
 from atticus.providers.budget import BudgetExceeded, require_budget
 from atticus.providers.policy import ProviderActual, ProviderRequest, record_provider_policy_decision
 from atticus.reducer.reducer import reduce_candidate
+from atticus.retrieval.ask import answer_question
+from atticus.retrieval.index import rebuild_search_index
 from atticus.scheduler.lease import acquire_lease
 from atticus.scheduler.planner import select_runnable_tasks
 from atticus.validation.canonical_write_guard import CanonicalWriteDenied
@@ -157,6 +161,28 @@ def test_context_pack_rejects_oversized_budget_before_persisting(tmp_path):
     assert context_count == 0
 
 
+def test_context_pack_rejects_cross_matter_dependencies(tmp_path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        source_id = repo.add_source(conn, matter_scope="alpha", path="/alpha/secret.pdf", sha256="e" * 64)
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="beta-work-order",
+                title="Beta work order",
+                task_type="extract",
+                matter_scope="beta",
+                source_dependencies=[source_id],
+            ),
+        )
+        with pytest.raises(ValueError, match="missing or unauthorized source dependencies"):
+            build_context_pack(conn, task_id="beta-work-order")
+
+        context_count = conn.execute("SELECT COUNT(*) AS n FROM context_packs").fetchone()["n"]
+
+    assert context_count == 0
+
+
 def test_citation_spans_require_known_records_and_claim_validation(tmp_path):
     db_path = init_db(tmp_path)
     with repo.db_connection(db_path) as conn:
@@ -233,6 +259,28 @@ def test_reducer_writes_canonical_only_with_valid_lease_and_validations(tmp_path
     assert artifact["produced_by_task_id"] == "reduce-me"
 
 
+def test_reducer_preserves_task_matter_on_canonical_artifact(tmp_path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(conn, TaskSpec(task_id="beta-reduce", title="Beta reduce", task_type="extract", matter_scope="beta"))
+        worker_lease = acquire_lease(conn, task_id="beta-reduce", worker_id="worker-1")
+        candidate_id = record_worker_result(
+            conn,
+            task_id="beta-reduce",
+            lease_id=worker_lease,
+            worker_id="worker-1",
+            payload=valid_packet("beta-reduce"),
+        )
+        reducer_lease = acquire_lease(conn, task_id="beta-reduce", worker_id="reducer-1")
+        result = reduce_candidate(conn, candidate_id=candidate_id, reducer_lease_id=reducer_lease, dry_run=False)
+        artifact = conn.execute("SELECT matter_scope, trust_status, produced_by_task_id FROM artifacts WHERE artifact_id = ?", (result["artifact_id"],)).fetchone()
+
+    assert result["matter_scope"] == "beta"
+    assert artifact["matter_scope"] == "beta"
+    assert artifact["trust_status"] == "validated"
+    assert artifact["produced_by_task_id"] == "beta-reduce"
+
+
 def test_migration_imports_drafts_as_rough_notes_and_never_certifies(tmp_path):
     db_path = init_db(tmp_path)
     workspace = tmp_path / "legacy"
@@ -262,6 +310,7 @@ def test_factory_cli_dry_runs_do_not_launch_or_mutate_execution_state(tmp_path):
         repo.add_task(conn, TaskSpec(task_id="cli-task", title="CLI task", task_type="extract"))
 
     assert cli_main(["schedule", "--db", str(db_path), "--capacity", "1", "--dry-run"]) == 0
+    assert cli_main(["lease", "--db", str(db_path), "--task-id", "cli-task", "--dry-run"]) == 0
     assert cli_main(["work-order", "--db", str(db_path), "--task-id", "cli-task", "--dry-run"]) == 0
 
     with repo.db_connection(db_path) as conn:
@@ -308,3 +357,91 @@ def test_factory_cli_run_local_requires_write_and_then_records_candidate(tmp_pat
     ]) == 0
     with repo.db_connection(db_path) as conn:
         assert conn.execute("SELECT COUNT(*) AS n FROM candidate_outputs WHERE status = 'candidate'").fetchone()["n"] == 1
+
+
+def test_factory_cli_rebuild_search_index_requires_write_and_records_projection(tmp_path, capsys):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        artifact_id = repo.add_artifact(
+            conn,
+            path="/validated/cli-index.txt",
+            artifact_type="production_crosswalk",
+            title="CLI index",
+            content="CLI rebuild index evidence",
+            trust_status=TrustStatus.VALIDATED,
+        )
+
+    assert cli_main(["rebuild-search-index", "--db", str(db_path)]) == 0
+    dry_run_output = json.loads(capsys.readouterr().out)
+    with repo.db_connection(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) AS n FROM search_index_entries").fetchone()["n"] == 0
+        assert conn.execute("SELECT COUNT(*) AS n FROM index_rebuilds").fetchone()["n"] == 0
+
+    assert dry_run_output["dry_run"] is True
+    assert dry_run_output["matter_scope"] == "atticus"
+    assert dry_run_output["requires_write"] is True
+
+    assert cli_main(["rebuild-search-index", "--db", str(db_path), "--write"]) == 0
+    write_output = json.loads(capsys.readouterr().out)
+    with repo.db_connection(db_path) as conn:
+        indexed = conn.execute("SELECT record_id, matter_scope FROM search_index_entries").fetchone()
+        rebuild_count = conn.execute("SELECT COUNT(*) AS n FROM index_rebuilds").fetchone()["n"]
+        event_count = conn.execute("SELECT COUNT(*) AS n FROM events WHERE event_type = 'search_index.rebuilt'").fetchone()["n"]
+
+    assert write_output["dry_run"] is False
+    assert write_output["entry_count"] == 1
+    assert write_output["matter_scope"] == "atticus"
+    assert indexed["record_id"] == artifact_id
+    assert indexed["matter_scope"] == "atticus"
+    assert rebuild_count == 1
+    assert event_count == 1
+
+
+def test_matter_scoped_cli_requires_authorized_execution_context(tmp_path, capsys, monkeypatch):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_artifact(
+            conn,
+            matter_scope="beta",
+            path="/beta/authorized.txt",
+            artifact_type="matter_note",
+            content="betaauthorized evidence",
+            trust_status=TrustStatus.VALIDATED,
+        )
+
+    assert cli_main(["ask", "--db", str(db_path), "--matter", "beta", "betaauthorized"]) == 2
+    assert "not authorized" in capsys.readouterr().err
+    assert cli_main(["rebuild-search-index", "--db", str(db_path), "--matter", "beta"]) == 2
+    assert "not authorized" in capsys.readouterr().err
+    assert cli_main(["rebuild-search-index", "--db", str(db_path), "--matter", "beta", "--write"]) == 2
+    assert "not authorized" in capsys.readouterr().err
+
+    monkeypatch.setenv("ATTICUS_AUTHORIZED_MATTER", "beta")
+    assert cli_main(["ask", "--db", str(db_path), "--matter", "beta", "betaauthorized"]) == 0
+    assert "betaauthorized" in capsys.readouterr().out
+    assert cli_main(["rebuild-search-index", "--db", str(db_path), "--matter", "beta", "--write"]) == 0
+    write_output = json.loads(capsys.readouterr().out)
+    assert write_output["matter_scope"] == "beta"
+
+
+def test_matter_scoped_api_requires_authorized_context(tmp_path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_artifact(
+            conn,
+            matter_scope="beta",
+            path="/beta/api.txt",
+            artifact_type="matter_note",
+            content="betaapi evidence",
+            trust_status=TrustStatus.VALIDATED,
+        )
+        with pytest.raises(MatterAccessDenied):
+            rebuild_search_index(conn, matter_scope="beta")
+        rebuild_search_index(conn, matter_scope="beta", authorized_matter_scope="beta")
+
+    with pytest.raises(MatterAccessDenied):
+        answer_question(str(db_path), "betaapi", matter_scope="beta")
+    answer = answer_question(str(db_path), "betaapi", matter_scope="beta", authorized_matter_scope="beta")
+
+    assert answer.citations
+    assert answer.citations[0].path == "/beta/api.txt"

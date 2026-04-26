@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -24,6 +25,8 @@ class ParsedResultPacket:
 
 
 def parse_result(payload: dict[str, Any]) -> ParsedResultPacket:
+    if not isinstance(payload, dict):
+        raise ResultPacketError("worker result packet must be a JSON object")
     missing = sorted(REQUIRED_RESULT_PACKET_KEYS - set(payload))
     if missing:
         raise ResultPacketError(f"missing worker result keys: {', '.join(missing)}")
@@ -32,15 +35,27 @@ def parse_result(payload: dict[str, Any]) -> ParsedResultPacket:
     proposed_artifacts = payload.get("proposed_artifacts")
     if not isinstance(findings, list) or not isinstance(citations, list) or not isinstance(proposed_artifacts, list):
         raise ResultPacketError("findings, citations, and proposed_artifacts must be lists")
+    proposed_tasks = payload.get("proposed_tasks", [])
+    if not isinstance(proposed_tasks, list):
+        raise ResultPacketError("proposed_tasks must be a list when present")
     return ParsedResultPacket(
         task_id=str(payload["task_id"]),
         summary=str(payload.get("summary") or ""),
-        findings=[dict(item) for item in findings],
-        citations=[dict(item) for item in citations],
-        proposed_artifacts=[dict(item) for item in proposed_artifacts],
-        proposed_tasks=[dict(item) for item in payload.get("proposed_tasks", [])],
+        findings=_mapping_list("findings", findings),
+        citations=_mapping_list("citations", citations),
+        proposed_artifacts=_mapping_list("proposed_artifacts", proposed_artifacts),
+        proposed_tasks=_mapping_list("proposed_tasks", proposed_tasks),
         raw=dict(payload),
     )
+
+
+def _mapping_list(field: str, value: list[Any]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, Mapping):
+            raise ResultPacketError(f"{field}[{index}] must be a JSON object")
+        items.append(dict(item))
+    return items
 
 
 def packet_as_dict(packet: ParsedResultPacket) -> dict[str, Any]:
