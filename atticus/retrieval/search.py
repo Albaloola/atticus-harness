@@ -27,7 +27,7 @@ def search_memory(conn: sqlite3.Connection, question: str, *, limit: int = 5) ->
     returns no result instead of arbitrary recent artifacts when nothing matches.
     """
 
-    rows = _artifact_rows(conn) + _source_rows(conn) + _authority_rows(conn)
+    rows = _indexed_memory_rows(conn) or all_memory_rows(conn)
     scored: list[tuple[float, str, str, dict[str, Any]]] = []
     for row in rows:
         score = _score_row(conn, question, row)
@@ -38,13 +38,33 @@ def search_memory(conn: sqlite3.Connection, question: str, *, limit: int = 5) ->
     return [item[3] for item in scored[:limit]]
 
 
+def all_memory_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    return _artifact_rows(conn) + _source_rows(conn) + _authority_rows(conn)
+
+
+def _indexed_memory_rows(conn: sqlite3.Connection, *, index_name: str = "legal_memory.v1") -> list[dict[str, Any]]:
+    entries = conn.execute(
+        """
+        SELECT record_type, record_id
+        FROM search_index_entries
+        WHERE index_name = ?
+        ORDER BY record_type, record_id
+        """,
+        (index_name,),
+    ).fetchall()
+    if not entries:
+        return []
+    by_key = {(row["record_type"], row["record_id"]): row for row in all_memory_rows(conn)}
+    return [by_key[(entry["record_type"], entry["record_id"])] for entry in entries if (entry["record_type"], entry["record_id"]) in by_key]
+
+
 def _artifact_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return [
         dict(row)
         for row in conn.execute(
             """
             SELECT 'artifact' AS record_type, artifact_id AS record_id, path, title, content,
-              trust_status, stale, stage, created_at
+              trust_status, stale, stage, matter_scope, created_at
             FROM artifacts
             WHERE trust_status != 'rejected'
             """
@@ -58,7 +78,7 @@ def _source_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         for row in conn.execute(
             """
             SELECT 'source' AS record_type, source_id AS record_id, path, path AS title,
-              source_type AS content, trust_status, stale, stage, created_at
+              source_type AS content, trust_status, stale, stage, matter_scope, created_at
             FROM sources
             WHERE trust_status != 'rejected'
             """
@@ -87,11 +107,12 @@ def _authority_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
             "trust_status": row["status"],
             "stale": 0,
             "stage": "S6",
+            "matter_scope": row["matter_scope"],
             "created_at": row["created_at"],
         }
         for row in conn.execute(
             """
-            SELECT authority_id, jurisdiction, citation, authority_type, title, status, source_url, created_at
+            SELECT authority_id, matter_scope, jurisdiction, citation, authority_type, title, status, source_url, created_at
             FROM legal_authorities
             WHERE status != 'rejected'
             """

@@ -15,6 +15,7 @@ from atticus.providers.cost import estimate_cost_usd
 from atticus.providers.policy import ProviderActual, ProviderRequest, check_provider_policy
 from atticus.reducer.canonical_writer import write_canonical_text
 from atticus.retrieval.ask import answer_question
+from atticus.retrieval.index import rebuild_search_index
 from atticus.scheduler.lease import acquire_lease
 from atticus.scheduler.planner import select_runnable_tasks
 from atticus.status.report import generate_status
@@ -106,6 +107,33 @@ def test_read_only_ask_returns_authority_records(tmp_path):
     assert answer.citations
     assert answer.citations[0].record_type == "authority"
     assert answer.citations[0].record_id == authority_id
+
+
+def test_search_index_rebuild_is_durable_and_ask_uses_projection(tmp_path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        artifact_id = repo.add_artifact(
+            conn,
+            path="/validated/production-map.txt",
+            artifact_type="production_crosswalk",
+            title="production map",
+            content="Bates UOG-001 maps to the disclosure bundle.",
+            trust_status=TrustStatus.VALIDATED,
+        )
+        first = rebuild_search_index(conn)
+        second = rebuild_search_index(conn)
+        entries = conn.execute("SELECT record_type, record_id FROM search_index_entries ORDER BY record_type, record_id").fetchall()
+        rebuild_count = conn.execute("SELECT COUNT(*) AS n FROM index_rebuilds WHERE index_name = ?", (first["index_name"],)).fetchone()["n"]
+        event_count = conn.execute("SELECT COUNT(*) AS n FROM events WHERE event_type = 'search_index.rebuilt'").fetchone()["n"]
+
+    answer = answer_question(str(db_path), "Bates UOG-001 disclosure bundle")
+
+    assert first["entry_count"] == 1
+    assert second["input_fingerprint"] == first["input_fingerprint"]
+    assert [(row["record_type"], row["record_id"]) for row in entries] == [("artifact", artifact_id)]
+    assert rebuild_count == 2
+    assert event_count == 2
+    assert answer.citations[0].record_id == artifact_id
 
 
 def test_legacy_queued_tasks_cannot_bypass_dependency_gates(tmp_path):

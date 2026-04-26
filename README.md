@@ -6,7 +6,7 @@ OpenClaw, Codex, Claude Code, direct OpenRouter, and other agents are execution 
 
 ## Implemented Architecture
 
-- SQLite durable ledger with append-only event chain and mutable projections.
+- SQLite durable ledger with append-only event chain, mutable projections, and rebuildable legal-memory search indexes.
 - Legal evidence graph tables for sources, source snapshots, artifact versions, dependencies, extraction/OCR/transcription records, production mappings, chronology events, issues, claims, legal authorities, citation spans, validations, and certifications.
 - Read-only query path: `atticus ask`, `atticus status`, and `atticus inspect`.
 - Active factory path: `schedule`, `lease`, `work-order`, `reduce`, `validate`, `certify`, budgets, provider policy, and human-attention queue.
