@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from typing import Any
 
 from atticus.db import repo
 
@@ -18,7 +19,7 @@ def certify_subject(
     subject_id: str,
     certification_type: str,
     validator: str,
-    evidence: dict | None = None,
+    evidence: dict[str, Any] | None = None,
 ) -> str:
     validation = conn.execute(
         """

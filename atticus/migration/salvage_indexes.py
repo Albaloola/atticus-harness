@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from atticus.migration.classify_old_outputs import classify_legacy_file
+from atticus.migration.classify_old_outputs import LegacyClassification, classify_legacy_file
 
 SUPPORTED_SUFFIXES = {".json", ".jsonl", ".csv", ".tsv", ".txt", ".md", ".sha256"}
 
@@ -29,11 +29,11 @@ def iter_candidate_files(workspace: str | Path) -> list[tuple[Path, str, str]]:
     return results
 
 
-def iter_classified_files(workspace: str | Path) -> list[tuple[Path, object]]:
+def iter_classified_files(workspace: str | Path) -> list[tuple[Path, LegacyClassification]]:
     root = Path(workspace)
     if not root.exists():
         raise FileNotFoundError(root)
-    results: list[tuple[Path, object]] = []
+    results: list[tuple[Path, LegacyClassification]] = []
     for path in sorted(root.rglob("*")):
         if not path.is_file():
             continue

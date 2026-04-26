@@ -69,6 +69,25 @@ def test_openrouter_failover_rotates_requested_models_on_recoverable_error():
     assert response["model"] == "model-b:free"
 
 
+def test_openrouter_failover_returns_first_model_success():
+    client = SequencedOpenRouterClient([{"model": "model-a:free"}])
+    response = _failover(client).chat_json(model="ignored", messages=[{"role": "user", "content": "{}"}])
+
+    assert client.calls == ["model-a:free"]
+    assert response["requested_model"] == "model-a:free"
+
+
+def test_openrouter_failover_wraps_from_end_to_first_model():
+    client = SequencedOpenRouterClient([OpenRouterError("provider unavailable", status_code=503), {"model": "model-a:free"}])
+    failover = _failover(client)
+    failover.current_index = 1
+
+    response = failover.chat_json(model="ignored", messages=[{"role": "user", "content": "{}"}])
+
+    assert client.calls == ["model-b:free", "model-a:free"]
+    assert response["requested_model"] == "model-a:free"
+
+
 def test_openrouter_failover_hard_errors_do_not_rotate():
     client = SequencedOpenRouterClient([OpenRouterError("OPENROUTER_API_KEY is required")])
 
@@ -95,21 +114,41 @@ def test_openrouter_failover_fails_closed_on_usage_and_provider_metadata_errors(
     assert client.calls == ["model-a:free"]
 
 
-def test_openrouter_failover_cools_down_between_cycles_and_exhausts_bounded_attempts():
+def test_openrouter_failover_cools_down_after_failed_cycles_and_continues_from_first_model():
     sleeps: list[float] = []
     events: list[JsonObject] = []
-    client = SequencedOpenRouterClient([OpenRouterError("rate limit", status_code=429) for _ in range(4)])
+    client = SequencedOpenRouterClient([
+        OpenRouterError("rate limit", status_code=429),
+        OpenRouterError("rate limit", status_code=429),
+        OpenRouterError("rate limit", status_code=429),
+        OpenRouterError("rate limit", status_code=429),
+        {"model": "model-a:free"},
+    ])
 
-    with pytest.raises(OpenRouterError, match="failover exhausted 4 attempts"):
-        _failover(client, max_failed_cycles=2, event_sink=events.append, sleep=sleeps.append).chat_json(
-            model="ignored",
-            messages=[{"role": "user", "content": "{}"}],
-        )
+    response = _failover(client, max_failed_cycles=2, event_sink=events.append, sleep=sleeps.append).chat_json(
+        model="ignored",
+        messages=[{"role": "user", "content": "{}"}],
+    )
 
-    assert client.calls == ["model-a:free", "model-b:free", "model-a:free", "model-b:free"]
+    assert client.calls == ["model-a:free", "model-b:free", "model-a:free", "model-b:free", "model-a:free"]
+    assert response["requested_model"] == "model-a:free"
     assert sleeps == [3.0]
     assert any(event["event"] == "cooldown_start" for event in events)
-    assert events[-1]["event"] == "failover_exhausted"
+    assert any(event["event"] == "cooldown_end" and event["model"] == "model-a:free" for event in events)
+    assert events[-1]["event"] == "model_success"
+
+
+def test_openrouter_failover_bounded_attempt_guard_is_explicit():
+    client = SequencedOpenRouterClient([OpenRouterError("rate limit", status_code=429) for _ in range(3)])
+
+    with pytest.raises(OpenRouterError, match="max_total_attempts exceeded after 3 attempts"):
+        _failover(client, max_failed_cycles=1).chat_json(
+            model="ignored",
+            messages=[{"role": "user", "content": "{}"}],
+            max_total_attempts=3,
+        )
+
+    assert client.calls == ["model-a:free", "model-b:free", "model-a:free"]
 
 
 def test_openrouter_failover_retains_successful_model_for_next_request():

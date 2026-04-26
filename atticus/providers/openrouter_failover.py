@@ -101,14 +101,29 @@ class OpenRouterModelFailover:
         messages: list[dict[str, str]],
         max_tokens: int = 4096,
         temperature: float = 0.1,
+        max_total_attempts: int | None = None,
     ) -> dict[str, Any]:
         del model
         self._validate_request(messages=messages)
+        if max_total_attempts is not None and max_total_attempts < 1:
+            raise OpenRouterFailoverHardError("OpenRouter failover max_total_attempts must be >= 1 when set")
         failed_cycles = 0
         attempts_in_cycle = 0
         attempt_number = 0
 
-        while attempt_number < len(self.config.models) * self.config.max_failed_cycles:
+        while True:
+            if max_total_attempts is not None and attempt_number >= max_total_attempts:
+                self._emit(
+                    "failover_attempt_guard_exceeded",
+                    model=self.current_model,
+                    attempt_number=attempt_number,
+                    failed_cycle_count=failed_cycles,
+                    reason=f"max_total_attempts {max_total_attempts} reached",
+                )
+                raise OpenRouterError(
+                    "OpenRouter failover max_total_attempts exceeded "
+                    f"after {attempt_number} attempts across {len(self.config.models)} configured models"
+                )
             attempted_model = self.current_model
             attempt_number += 1
             attempts_in_cycle += 1
@@ -153,18 +168,10 @@ class OpenRouterModelFailover:
                     failed_cycles += 1
                     attempts_in_cycle = 0
                     if failed_cycles >= self.config.max_failed_cycles:
-                        self._emit(
-                            "failover_exhausted",
-                            model=self.current_model,
-                            attempt_number=attempt_number,
-                            failed_cycle_count=failed_cycles,
-                            reason=f"{failed_cycles} full model cycles failed",
-                        )
-                        raise OpenRouterError(
-                            "OpenRouter failover exhausted "
-                            f"{attempt_number} attempts across {len(self.config.models)} configured models"
-                        ) from exc
-                    self._cooldown(attempt_number=attempt_number, failed_cycle_count=failed_cycles)
+                        self._cooldown(attempt_number=attempt_number, failed_cycle_count=failed_cycles)
+                        failed_cycles = 0
+                    else:
+                        self._sleep_between_failures()
                 else:
                     self._sleep_between_failures()
                 continue
@@ -177,10 +184,6 @@ class OpenRouterModelFailover:
                 reason="success",
             )
             return normalized
-        raise OpenRouterError(
-            "OpenRouter failover exhausted "
-            f"{attempt_number} attempts across {len(self.config.models)} configured models"
-        )
 
     def _validate_request(self, *, messages: list[dict[str, str]]) -> None:
         if not isinstance(messages, list) or not messages:

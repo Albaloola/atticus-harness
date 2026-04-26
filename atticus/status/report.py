@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from typing import Any
 
 from atticus.db.repo import db_connection
 
@@ -12,12 +13,12 @@ from atticus.db.repo import db_connection
 class StatusReport:
     run_state: str
     counts: dict[str, int]
-    blocked_tasks: list[dict]
-    stale_artifacts: list[dict]
-    active_leases: list[dict]
-    human_attention: list[dict]
-    budget: dict
-    provider_usage: dict
+    blocked_tasks: list[dict[str, Any]]
+    stale_artifacts: list[dict[str, Any]]
+    active_leases: list[dict[str, Any]]
+    human_attention: list[dict[str, Any]]
+    budget: dict[str, Any]
+    provider_usage: dict[str, Any]
 
 
 def generate_status(db_path: str) -> StatusReport:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import sqlite3
 
 import pytest
@@ -386,8 +387,9 @@ def test_non_reducer_workers_cannot_write_canonical_files(tmp_path):
     with pytest.raises(CanonicalWriteDenied):
         assert_canonical_write_allowed(writer_role="reducer", target_path="/canonical/facts.json")
 
-    with pytest.raises(TypeError):
-        write_canonical_text(writer_role="canonical_writer", target_path=str(tmp_path / "facts.txt"), text="unsafe")
+    signature = inspect.signature(write_canonical_text)
+    required_params = {name for name, parameter in signature.parameters.items() if parameter.default is inspect.Parameter.empty}
+    assert {"conn", "lease_id", "task_id"} <= required_params
 
 
 def test_canonical_writer_requires_active_reducer_lease_context(tmp_path):

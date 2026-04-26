@@ -8,7 +8,7 @@ from typing import Any
 from atticus.db.repo import db_connection
 
 
-TABLES_BY_TYPE = {
+TABLES_BY_TYPE: dict[str, tuple[str, str]] = {
     "run": ("runs", "run_id"),
     "task": ("tasks", "task_id"),
     "source": ("sources", "source_id"),
@@ -31,8 +31,8 @@ def inspect_record(db_path: str, *, record_type: str, record_id: str) -> dict[st
     return summarize_row(dict(row))
 
 
-def summarize_row(row: dict) -> dict:
-    summarized = {}
+def summarize_row(row: dict[str, Any]) -> dict[str, Any]:
+    summarized: dict[str, Any] = {}
     for key, value in row.items():
         if isinstance(value, str) and key.endswith("_json"):
             try:

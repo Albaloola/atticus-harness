@@ -19,7 +19,7 @@ class CouncilDecision:
     votes: list[dict[str, Any]]
 
 
-def collect_votes(votes: list[dict]) -> dict:
+def collect_votes(votes: list[dict[str, Any]]) -> dict[str, Any]:
     decision = reduce_votes(votes)
     return {"votes": votes, "count": len(votes), "decision": decision.decision, "selected_candidate_id": decision.selected_candidate_id}
 

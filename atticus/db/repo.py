@@ -520,7 +520,10 @@ def record_validation(
             utc_now(),
         ),
     )
-    validation_id = int(cur.lastrowid)
+    lastrowid = cur.lastrowid
+    if lastrowid is None:
+        raise RuntimeError("validation insert did not produce a row id")
+    validation_id = int(lastrowid)
     emit_event(
         conn,
         "validation.recorded",
@@ -672,7 +675,10 @@ def record_human_attention(
         """,
         (target_type, target_id, severity, reason, status, utc_now()),
     )
-    return int(cur.lastrowid)
+    lastrowid = cur.lastrowid
+    if lastrowid is None:
+        raise RuntimeError("human attention insert did not produce a row id")
+    return int(lastrowid)
 
 
 def record_external_action_block(

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from typing import Any
 
-def trust_level(rows: list[dict]) -> str:
+
+def trust_level(rows: list[dict[str, Any]]) -> str:
     if not rows:
         return "unsupported"
     statuses = {str(row["trust_status"]) for row in rows}
@@ -16,7 +18,7 @@ def trust_level(rows: list[dict]) -> str:
     return "mixed"
 
 
-def confidence(rows: list[dict]) -> str:
+def confidence(rows: list[dict[str, Any]]) -> str:
     if not rows:
         return "low"
     non_stale = [r for r in rows if not r["stale"]]

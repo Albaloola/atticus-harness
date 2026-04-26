@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from typing import Any
 
 from atticus.core.events import utc_now
 from atticus.core.policies import TaskStatus
@@ -17,7 +18,7 @@ def record_worker_result(
     task_id: str,
     lease_id: str,
     worker_id: str,
-    payload: dict,
+    payload: dict[str, Any],
 ) -> str:
     status = "candidate"
     quarantine_reason = ""
