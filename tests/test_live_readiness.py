@@ -560,6 +560,56 @@ def test_openrouter_runtime_honors_deepseek_profile_generation_settings(tmp_path
     assert raw_usage["timeout_seconds"] == 33.0
 
 
+def test_openrouter_runtime_records_prompt_cache_usage_for_deepseek(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    client = FakeOpenRouterClient(
+        content=_provider_packet("cached-deepseek", summary="Cached DeepSeek profile completed."),
+        model="deepseek/deepseek-v4-pro",
+        usage={
+            "prompt_tokens": 1000,
+            "completion_tokens": 20,
+            "total_tokens": 1020,
+            "prompt_tokens_details": {"cached_tokens": 700, "cache_write_tokens": 300},
+        },
+    )
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="cached-deepseek",
+                title="Cached DeepSeek",
+                task_type="extract",
+                provider_policy={
+                    "provider": "openrouter",
+                    "model": "deepseek/deepseek-v4-pro",
+                    "allow_fallback": False,
+                    "estimated_cost_usd": 0.03,
+                },
+            ),
+        )
+        lease_id = acquire_lease(conn, task_id="cached-deepseek", worker_id="openrouter-worker")
+        result = execute_openrouter_work_order(
+            conn,
+            task_id="cached-deepseek",
+            lease_id=lease_id,
+            worker_id="openrouter-worker",
+            output_dir=tmp_path / "out",
+            client=client,
+            env={"OPENROUTER_API_KEY": "sk-test", "ATTICUS_ENABLE_LIVE_OPENROUTER": "1"},
+            allow_live=True,
+        )
+        provider_run = cast(Mapping[str, object], conn.execute("SELECT input_tokens, output_tokens, cache_hit_tokens, cache_miss_tokens, raw_usage_json FROM provider_runs WHERE provider_run_id = ?", (result.provider_run_id,)).fetchone())
+
+    raw_usage = _json_mapping(str(provider_run["raw_usage_json"]))
+    assert provider_run["input_tokens"] == 1000
+    assert provider_run["output_tokens"] == 20
+    assert provider_run["cache_hit_tokens"] == 700
+    assert provider_run["cache_miss_tokens"] == 300
+    usage = cast(Mapping[str, object], raw_usage["usage"])
+    details = cast(Mapping[str, object], usage["prompt_tokens_details"])
+    assert details["cached_tokens"] == 700
+
+
 def test_openrouter_paid_deepseek_allows_endpoint_provider_provenance(tmp_path: Path):
     class EndpointProviderClient(FakeOpenRouterClient):
         @override
@@ -937,6 +987,28 @@ def test_openrouter_client_blocks_malformed_usage_token_scalars(usage: dict[str,
     client = OpenRouterClient(api_key=test_api_key, transport=lambda req, timeout: json.dumps(raw).encode("utf-8"))
 
     with pytest.raises(OpenRouterError, match="usage field"):
+        _ = client.chat_json(model="deepseek/deepseek-v4-pro", messages=[{"role": "user", "content": "{}"}], max_tokens=8, temperature=0.0)
+
+
+@pytest.mark.parametrize(
+    "usage",
+    [
+        {"prompt_tokens": 1, "completion_tokens": 1, "prompt_tokens_details": ["bad"]},
+        {"prompt_tokens": 1, "completion_tokens": 1, "prompt_tokens_details": {"cached_tokens": True}},
+        {"prompt_tokens": 1, "completion_tokens": 1, "prompt_tokens_details": {"cache_write_tokens": -1}},
+    ],
+)
+def test_openrouter_client_blocks_malformed_cache_usage_details(usage: dict[str, object]) -> None:
+    raw = {
+        "provider": "openrouter",
+        "model": "deepseek/deepseek-v4-pro",
+        "choices": [{"message": {"content": json.dumps({"ok": True, "probe": "atticus-live-openrouter"})}}],
+        "usage": usage,
+    }
+    test_api_key = "sk-" + "test"
+    client = OpenRouterClient(api_key=test_api_key, transport=lambda req, timeout: json.dumps(raw).encode("utf-8"))
+
+    with pytest.raises(OpenRouterError, match="cache usage"):
         _ = client.chat_json(model="deepseek/deepseek-v4-pro", messages=[{"role": "user", "content": "{}"}], max_tokens=8, temperature=0.0)
 
 

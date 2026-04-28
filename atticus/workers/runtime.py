@@ -27,7 +27,7 @@ from atticus.db import repo
 from atticus.providers.budget import BudgetExceeded, charge_budget, require_budget
 from atticus.providers.live_readiness import check_live_provider_policy, live_openrouter_enabled, parse_estimated_cost_usd
 from atticus.providers.openrouter_failover import openrouter_client_for_policy, openrouter_failover_config_from_policy, openrouter_models_for_policy, primary_model_for_policy, safe_openrouter_error_message
-from atticus.providers.openrouter import OpenRouterError, validate_usage_tokens
+from atticus.providers.openrouter import OpenRouterError, validate_cache_usage_tokens, validate_usage_tokens
 from atticus.providers.policy import ProviderActual, ProviderDecision, ProviderRequest, canonical_provider_policy, check_provider_policy
 from atticus.scheduler.lease import LeaseError, require_active_lease
 from atticus.workers.contracts import safe_path_component
@@ -394,6 +394,7 @@ def execute_openrouter_work_order(
         latency_ms = int((perf_counter() - started) * 1000)
         try:
             token_usage = validate_usage_tokens(usage)
+            cache_usage = validate_cache_usage_tokens(usage)
         except OpenRouterError as exc:
             reason = f"OpenRouter response usage metadata is invalid: {exc}"
             provider_run_id = _record_openrouter_post_dispatch_failure(
@@ -486,6 +487,8 @@ def execute_openrouter_work_order(
             actual_model=actual.model,
             input_tokens=token_usage["prompt_tokens"],
             output_tokens=token_usage["completion_tokens"],
+            cache_hit_tokens=cache_usage["cached_tokens"],
+            cache_miss_tokens=max(0, token_usage["prompt_tokens"] - cache_usage["cached_tokens"]),
             estimated_cost_usd=estimated_cost,
             actual_cost_usd=None,
             latency_ms=latency_ms,

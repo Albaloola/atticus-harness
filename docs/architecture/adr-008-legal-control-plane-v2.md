@@ -121,6 +121,20 @@ blocks unsafe external legal actions, cross-matter context, and final drafting
 without required hostile-review certification. It warns on stale evidence so
 uncertainty remains visible.
 
+## OpenRouter Cache Telemetry
+
+OpenRouter DeepSeek prompt caching is provider-side and automatic when the
+selected endpoint supports it. The harness does not add hidden provider
+fallback or cache-control routing to make that happen. It does normalize
+OpenRouter cache usage telemetry into `provider_runs.cache_hit_tokens` and
+`provider_runs.cache_miss_tokens` when the provider returns
+`usage.prompt_tokens_details.cached_tokens`.
+
+OpenRouter response caching is a separate request-level cache for identical
+requests. It is not enabled silently because legal outputs should remain tied to
+explicit operator/runtime policy. If enabled later, it must be represented as an
+audited provider policy option, not as a default side effect.
+
 ## Command Registry
 
 CLI commands now have auditable metadata:

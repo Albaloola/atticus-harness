@@ -61,6 +61,22 @@ def validate_usage_tokens(usage: dict[str, object]) -> dict[str, int]:
     }
 
 
+def validate_cache_usage_tokens(usage: dict[str, object]) -> dict[str, int]:
+    """Return normalized prompt-cache telemetry from OpenRouter usage metadata."""
+
+    details = usage.get("prompt_tokens_details")
+    if details is None:
+        details = usage.get("input_tokens_details")
+    if details is None:
+        return {"cached_tokens": 0, "cache_write_tokens": 0}
+    if not isinstance(details, Mapping):
+        raise OpenRouterError("OpenRouter cache usage details must be a JSON object")
+    details_dict = _mapping_to_dict(cast(Mapping[object, object], details))
+    cached_tokens = _parse_cache_token_count("cached_tokens", details_dict.get("cached_tokens", 0))
+    cache_write_tokens = _parse_cache_token_count("cache_write_tokens", details_dict.get("cache_write_tokens", 0))
+    return {"cached_tokens": cached_tokens, "cache_write_tokens": cache_write_tokens}
+
+
 def _parse_token_count(field: str, value: object) -> int:
     if isinstance(value, bool):
         raise OpenRouterError(f"OpenRouter usage field {field} must be a non-negative integer, not boolean")
@@ -73,6 +89,13 @@ def _parse_token_count(field: str, value: object) -> int:
             raise OpenRouterError(f"OpenRouter usage field {field} must be a whole non-negative integer string")
         return int(value)
     raise OpenRouterError(f"OpenRouter usage field {field} must be a non-negative integer")
+
+
+def _parse_cache_token_count(field: str, value: object) -> int:
+    try:
+        return _parse_token_count(field, value)
+    except OpenRouterError as exc:
+        raise OpenRouterError(f"OpenRouter cache usage field {field} must be a non-negative integer") from exc
 
 
 class OpenRouterClient:
@@ -144,6 +167,7 @@ class OpenRouterClient:
             raise OpenRouterError("OpenRouter usage metadata must be a JSON object")
         usage_dict = _mapping_to_dict(cast(Mapping[object, object], usage))
         _ = validate_usage_tokens(usage_dict)
+        _ = validate_cache_usage_tokens(usage_dict)
         return {
             "provider": str(provider),
             "model": str(actual_model),

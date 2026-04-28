@@ -17,7 +17,7 @@ import time
 from collections.abc import Callable, Mapping
 from typing import Protocol, cast
 
-from atticus.providers.openrouter import OpenRouterClient, OpenRouterError, validate_usage_tokens
+from atticus.providers.openrouter import OpenRouterClient, OpenRouterError, validate_cache_usage_tokens, validate_usage_tokens
 
 FAILOVER_POLICY_KEY = "openrouter_failover"
 ENV_FAILOVER_ENABLED = "ATTICUS_OPENROUTER_FAILOVER_ENABLED"
@@ -229,6 +229,7 @@ class OpenRouterModelFailover:
             raise OpenRouterError("OpenRouter usage metadata must be a JSON object")
         usage_dict = _mapping_to_dict(cast(Mapping[object, object], usage))
         _ = validate_usage_tokens(usage_dict)
+        _ = validate_cache_usage_tokens(usage_dict)
         normalized = _mapping_to_dict(response)
         normalized["provider"] = str(provider)
         normalized["model"] = str(actual_model)
