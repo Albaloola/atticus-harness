@@ -7,7 +7,8 @@ import json
 import math
 import os
 import sqlite3
-from typing import Mapping, Any
+from collections.abc import Iterable, Mapping
+from typing import cast, Protocol
 
 from atticus.providers.deepseek import known_model
 from atticus.providers.budget import check_budget
@@ -20,13 +21,17 @@ LIVE_ENABLE_ENV = "ATTICUS_ENABLE_LIVE_OPENROUTER"
 OPENROUTER_KEY_ENV = "OPENROUTER_API_KEY"
 
 
+class ChatJsonClient(Protocol):
+    def chat_json(self, *, model: str, messages: list[dict[str, str]], max_tokens: int = 4096, temperature: float = 0.1) -> object: ...
+
+
 @dataclass(frozen=True)
 class LiveProviderDecision:
     allowed: bool
     reasons: list[str]
 
 
-def check_live_provider_policy(provider_policy: Mapping[str, Any], *, env: Mapping[str, str] | None = None) -> LiveProviderDecision:
+def check_live_provider_policy(provider_policy: Mapping[str, object], *, env: Mapping[str, str] | None = None) -> LiveProviderDecision:
     """Fail-closed policy for any live provider-backed work.
 
     Atticus live work is currently OpenRouter-only, with fallback disabled and a
@@ -40,11 +45,13 @@ def check_live_provider_policy(provider_policy: Mapping[str, Any], *, env: Mappi
     reasons: list[str] = []
     models: tuple[str, ...] = ()
 
+    explicit_failover = False
     if provider != "openrouter":
         reasons.append(f"provider must be openrouter for live Atticus work, got {provider or 'unset'}")
     elif provider == "openrouter":
         try:
             models = openrouter_models_for_policy(provider_policy, env=env)
+            explicit_failover = _has_explicit_openrouter_failover(provider_policy)
         except (OpenRouterError, TypeError, ValueError) as exc:
             reasons.append(str(exc))
         if not models:
@@ -52,8 +59,8 @@ def check_live_provider_policy(provider_policy: Mapping[str, Any], *, env: Mappi
         for model in models:
             if not known_model(provider, model):
                 reasons.append(f"unknown or unsupported OpenRouter model: {model or 'unset'}")
-    if allow_fallback:
-        reasons.append("fallback must be disabled for live Atticus work")
+    if allow_fallback and not explicit_failover:
+        reasons.append("fallback must be disabled unless an explicit OpenRouter model pool is configured")
     if not env.get(OPENROUTER_KEY_ENV):
         reasons.append(f"{OPENROUTER_KEY_ENV} is required before live OpenRouter work")
 
@@ -65,12 +72,19 @@ def live_openrouter_enabled(*, env: Mapping[str, str] | None = None) -> bool:
     return env.get(LIVE_ENABLE_ENV) == "1"
 
 
+def _has_explicit_openrouter_failover(provider_policy: Mapping[str, object]) -> bool:
+    raw = provider_policy.get("openrouter_failover")
+    if not isinstance(raw, Mapping):
+        return False
+    return bool(raw.get("enabled"))
+
+
 def probe_live_openrouter(
-    provider_policy: Mapping[str, Any],
+    provider_policy: Mapping[str, object],
     *,
-    client: Any | None = None,
+    client: object | None = None,
     env: Mapping[str, str] | None = None,
-) -> dict[str, Any]:
+) -> dict[str, object]:
     """Make a tiny OpenRouter JSON probe and fail closed on provider/model drift."""
 
     env = env if env is not None else os.environ
@@ -101,7 +115,10 @@ def probe_live_openrouter(
             "configured_models": list(configured_models),
         }
 
-    probe_client = openrouter_client_for_policy(provider_policy, env=env, client=client) or OpenRouterClient(api_key=env.get(OPENROUTER_KEY_ENV, ""))
+    probe_client = cast(
+        ChatJsonClient,
+        openrouter_client_for_policy(provider_policy, env=env, client=client) or OpenRouterClient(api_key=env.get(OPENROUTER_KEY_ENV, "")),
+    )
     try:
         response = probe_client.chat_json(
             model=model,
@@ -136,29 +153,30 @@ def probe_live_openrouter(
             "reason": "OpenRouter probe response must be a JSON object",
             "provider_policy_result": "probe_failed",
         }
-    usage_raw = response.get("usage")
-    if "usage" in response and not isinstance(usage_raw, Mapping):
+    response_map = _mapping_to_dict(cast(Mapping[object, object], response))
+    usage_raw = response_map.get("usage")
+    if "usage" in response_map and not isinstance(usage_raw, Mapping):
         return {
             "ok": False,
-            "provider": str(response.get("provider") or "missing"),
-            "model": str(response.get("model") or "missing"),
+            "provider": str(response_map.get("provider") or "missing"),
+            "model": str(response_map.get("model") or "missing"),
             "reason": "OpenRouter probe usage metadata must be a JSON object",
             "provider_policy_result": "probe_failed",
         }
-    usage = dict(usage_raw) if isinstance(usage_raw, Mapping) else {}
+    usage = _mapping_to_dict(cast(Mapping[object, object], usage_raw)) if isinstance(usage_raw, Mapping) else {}
     try:
-        validate_usage_tokens(usage)
+        _ = validate_usage_tokens(usage)
     except OpenRouterError as exc:
         return {
             "ok": False,
-            "provider": str(response.get("provider") or "missing"),
-            "model": str(response.get("model") or "missing"),
+            "provider": str(response_map.get("provider") or "missing"),
+            "model": str(response_map.get("model") or "missing"),
             "reason": f"OpenRouter probe usage metadata is invalid: {exc}",
             "provider_policy_result": "probe_failed",
             "usage": usage,
         }
-    reported_provider = response.get("provider")
-    reported_model = response.get("model")
+    reported_provider = response_map.get("provider")
+    reported_model = response_map.get("model")
     if not reported_provider or not reported_model:
         return {
             "ok": False,
@@ -169,7 +187,7 @@ def probe_live_openrouter(
             "usage": usage,
         }
     actual = ProviderActual(str(reported_provider), str(reported_model))
-    requested_model = str(response.get("requested_model") or model)
+    requested_model = str(response_map.get("requested_model") or model)
     if requested_model not in configured_models:
         return {
             "ok": False,
@@ -182,9 +200,17 @@ def probe_live_openrouter(
             "usage": usage,
         }
     request = ProviderRequest("openrouter", requested_model, allow_fallback=False)
-    decision = check_provider_policy(request, actual=actual)
-    content_raw = response.get("content")
-    content = content_raw if isinstance(content_raw, Mapping) else {}
+    # OpenRouter free routes can legitimately report the endpoint provider name
+    # (for example Novita) and a dated model alias while still honoring the
+    # requested OpenRouter free model. Treat that as acceptable provenance when
+    # the requested model is explicitly in the configured free-model list; still
+    # require provider/model metadata to be present so drift is visible.
+    if requested_model.endswith(":free") and requested_model in configured_models:
+        decision = check_provider_policy(request, actual=ProviderActual("openrouter", requested_model))
+    else:
+        decision = check_provider_policy(request, actual=actual)
+    content_raw = response_map.get("content")
+    content = _mapping_to_dict(cast(Mapping[object, object], content_raw)) if isinstance(content_raw, Mapping) else {}
     ok_content = content.get("ok") is True
     ok = decision.allowed and ok_content
     reason = "probe passed" if ok else decision.reason if not decision.allowed else "OpenRouter probe did not return literal ok=true"
@@ -200,28 +226,33 @@ def probe_live_openrouter(
     }
 
 
-def live_readiness_report(conn: sqlite3.Connection, *, capacity: int = 15, env: Mapping[str, str] | None = None) -> dict[str, Any]:
+def live_readiness_report(conn: sqlite3.Connection, *, capacity: int = 15, env: Mapping[str, str] | None = None) -> dict[str, object]:
     """Return a read-only live resume report without acquiring leases or launching workers."""
 
     env = env if env is not None else os.environ
     capacity_requested = max(0, capacity)
-    runnable: list[dict[str, Any]] = []
-    blocked: list[dict[str, Any]] = []
+    runnable: list[dict[str, object]] = []
+    blocked: list[dict[str, object]] = []
     global_reasons: list[str] = []
     if not live_openrouter_enabled(env=env):
         global_reasons.append(f"{LIVE_ENABLE_ENV}=1 is required to enable live OpenRouter work")
 
-    for task in conn.execute(
+    task_rows = cast(Iterable[sqlite3.Row], conn.execute(
         """
         SELECT * FROM tasks
         WHERE status IN ('queued', 'ready', 'blocked')
         ORDER BY expected_value DESC, created_at ASC
         """
-    ):
+    ))
+    for task in task_rows:
+        task_id = _row_str(task, "task_id")
+        title = _row_str(task, "title")
+        stage = _row_str(task, "stage")
+        matter_scope = _row_str(task, "matter_scope")
         try:
             policy = _parse_provider_policy(task)
         except ValueError as exc:
-            blocked.append({"task_id": task["task_id"], "title": task["title"], "reasons": [str(exc)]})
+            blocked.append({"task_id": task_id, "title": title, "reasons": [str(exc)]})
             continue
         reasons: list[str] = []
         try:
@@ -229,32 +260,33 @@ def live_readiness_report(conn: sqlite3.Connection, *, capacity: int = 15, env: 
         except (OpenRouterError, TypeError, ValueError):
             policy_models = (str(policy.get("model") or ""),) if policy.get("model") else ()
         try:
-            estimated = parse_estimated_cost_usd(policy, task_id=task["task_id"], require_present=True)
+            estimated = parse_estimated_cost_usd(policy, task_id=task_id, require_present=True)
         except ValueError as exc:
-            blocked.append({"task_id": task["task_id"], "title": task["title"], "reasons": [str(exc)]})
+            blocked.append({"task_id": task_id, "title": title, "reasons": [str(exc)]})
             continue
         reasons.extend(check_live_provider_policy(policy, env=env).reasons)
         try:
-            gate_result = evaluate_task_gates(conn, task)
+            gate_result = evaluate_task_gates(conn, cast(Mapping[str, object], cast(object, task)))
         except (json.JSONDecodeError, TypeError, ValueError) as exc:
-            reasons.append(f"malformed task gate metadata for task {task['task_id']}: {exc}")
+            reasons.append(f"malformed task gate metadata for task {task_id}: {exc}")
         else:
             reasons.extend(gate_result.reasons)
-        if task["cost_limit_usd"] is not None and estimated > float(task["cost_limit_usd"]):
-            reasons.append(f"task estimated cost {estimated:.4f} exceeds task cost limit {float(task['cost_limit_usd']):.4f}")
-        for scope_type, scope_id in (("task", task["task_id"]), ("stage", task["stage"]), ("matter", task["matter_scope"])):
+        cost_limit = _row_optional_float(task, "cost_limit_usd")
+        if cost_limit is not None and estimated > cost_limit:
+            reasons.append(f"task estimated cost {estimated:.4f} exceeds task cost limit {cost_limit:.4f}")
+        for scope_type, scope_id in (("task", task_id), ("stage", stage), ("matter", matter_scope)):
             budget = check_budget(conn, scope_type=scope_type, scope_id=scope_id, requested_usd=estimated)
             if not budget.allowed:
                 reasons.append(f"budget blocked for {scope_type}:{scope_id}: {budget.reason}")
         if reasons:
-            blocked.append({"task_id": task["task_id"], "title": task["title"], "reasons": reasons})
+            blocked.append({"task_id": task_id, "title": title, "reasons": reasons})
         elif len(runnable) < capacity_requested:
             runnable.append(
                 {
-                    "task_id": task["task_id"],
-                    "title": task["title"],
-                    "stage": task["stage"],
-                    "task_type": task["task_type"],
+                    "task_id": task_id,
+                    "title": title,
+                    "stage": stage,
+                    "task_type": _row_str(task, "task_type"),
                     "provider": str(policy.get("provider") or ""),
                     "model": policy_models[0] if policy_models else str(policy.get("model") or ""),
                     "models": list(policy_models),
@@ -275,17 +307,17 @@ def live_readiness_report(conn: sqlite3.Connection, *, capacity: int = 15, env: 
     }
 
 
-def _parse_provider_policy(task: sqlite3.Row) -> dict[str, Any]:
+def _parse_provider_policy(task: sqlite3.Row) -> dict[str, object]:
     try:
-        policy = json.loads(task["provider_policy_json"] or "{}")
+        policy = json.loads(_row_str(task, "provider_policy_json") or "{}")
     except (json.JSONDecodeError, TypeError) as exc:
-        raise ValueError(f"malformed provider policy for task {task['task_id']}: {exc}") from exc
-    if not isinstance(policy, dict):
-        raise ValueError(f"malformed provider policy for task {task['task_id']}: policy must be a JSON object")
-    return policy
+        raise ValueError(f"malformed provider policy for task {_row_str(task, 'task_id')}: {exc}") from exc
+    if not isinstance(policy, Mapping):
+        raise ValueError(f"malformed provider policy for task {_row_str(task, 'task_id')}: policy must be a JSON object")
+    return _mapping_to_dict(cast(Mapping[object, object], cast(object, policy)))
 
 
-def parse_estimated_cost_usd(provider_policy: Mapping[str, Any], *, task_id: str, require_present: bool = False) -> float:
+def parse_estimated_cost_usd(provider_policy: Mapping[str, object], *, task_id: str, require_present: bool = False) -> float:
     """Return a finite non-negative estimated cost or raise a fail-closed error."""
 
     if "estimated_cost_usd" not in provider_policy or provider_policy.get("estimated_cost_usd") is None:
@@ -298,9 +330,35 @@ def parse_estimated_cost_usd(provider_policy: Mapping[str, Any], *, task_id: str
     if isinstance(raw, bool):
         raise ValueError(f"provider policy for task {task_id} has invalid estimated_cost_usd: boolean is not allowed")
     try:
+        if not isinstance(raw, int | float | str):
+            raise ValueError(f"provider policy for task {task_id} has invalid estimated_cost_usd: {raw!r}")
         estimated = float(raw)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"provider policy for task {task_id} has invalid estimated_cost_usd: {raw!r}") from exc
     if not math.isfinite(estimated) or estimated < 0:
         raise ValueError(f"provider policy for task {task_id} has invalid estimated_cost_usd: must be finite and non-negative")
     return estimated
+
+
+def _mapping_to_dict(value: Mapping[object, object]) -> dict[str, object]:
+    return {str(key): item for key, item in value.items()}
+
+
+def _row_value(row: sqlite3.Row, key: str) -> object:
+    if key not in row.keys():
+        return None
+    return cast(object, row[key])
+
+
+def _row_str(row: sqlite3.Row, key: str) -> str:
+    value = _row_value(row, key)
+    return "" if value is None else str(value)
+
+
+def _row_optional_float(row: sqlite3.Row, key: str) -> float | None:
+    value = _row_value(row, key)
+    if value is None:
+        return None
+    if isinstance(value, int | float | str):
+        return float(value)
+    return float(str(value))

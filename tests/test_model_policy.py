@@ -1,0 +1,364 @@
+from __future__ import annotations
+
+from collections.abc import Mapping
+import json
+from pathlib import Path
+import sqlite3
+from typing import cast
+
+from atticus.cli import main as cli_main
+from atticus.core.policies import LegalStage, TaskStatus
+from atticus.core.tasks import TaskSpec
+from atticus.db import repo
+from atticus.providers.model_policy import (
+    ModelPolicyError,
+    load_model_routing_policy,
+    normalize_legacy_provider_policy,
+    provider_policy_for_route,
+)
+from atticus.providers.live_readiness import check_live_provider_policy
+from atticus.scheduler.free_loop import run_free_loop_once
+from atticus.scheduler.lease import acquire_lease
+from atticus.workers.outputs import record_worker_result
+from atticus.workers.work_order import build_work_order
+
+
+def init_db(tmp_path: Path) -> Path:
+    db_path = tmp_path / "atticus.sqlite3"
+    repo.initialize_database(db_path)
+    return db_path
+
+
+def _json_mapping(text: str) -> Mapping[str, object]:
+    value = json.loads(text)
+    assert isinstance(value, Mapping)
+    return cast(Mapping[str, object], value)
+
+
+def _mapping_value(value: object) -> Mapping[str, object]:
+    assert isinstance(value, Mapping)
+    return cast(Mapping[str, object], value)
+
+
+def _text_value(conn: sqlite3.Connection, sql: str) -> str:
+    row = conn.execute(sql).fetchone()
+    assert row is not None
+    value = row[0]
+    assert value is not None
+    return str(value)
+
+
+def _scalar_int(conn: sqlite3.Connection, sql: str) -> int:
+    row = conn.execute(sql).fetchone()
+    assert row is not None
+    value = row[0]
+    assert value is not None
+    return int(str(value))
+
+
+def _policy_file(tmp_path: Path, payload: dict[str, object]) -> Path:
+    path = tmp_path / "model-policy.json"
+    _ = path.write_text(json.dumps(payload, sort_keys=True, indent=2), encoding="utf-8")
+    return path
+
+
+def _rich_policy_payload() -> dict[str, object]:
+    return {
+        "version": 1,
+        "profiles": {
+            "gpt55_codex": {
+                "provider": "openai-codex",
+                "model": "openai-codex/gpt-5.5",
+                "runtime": "codex",
+                "allow_fallback": False,
+                "estimated_cost_usd": 0.0,
+                "capabilities": ["legal_reasoning", "coding_agent"],
+            },
+            "deepseek_flash_or": {
+                "provider": "openrouter",
+                "model": "deepseek/deepseek-v4-flash",
+                "runtime": "openrouter",
+                "allow_fallback": False,
+                "estimated_cost_usd": 0.01,
+                "capabilities": ["triage", "indexing", "structured_extraction"],
+            },
+            "deepseek_pro_or": {
+                "provider": "openrouter",
+                "model": "deepseek/deepseek-v4-pro",
+                "runtime": "openrouter",
+                "allow_fallback": False,
+                "estimated_cost_usd": 0.03,
+                "capabilities": ["legal_reasoning", "hostile_review", "synthesis"],
+            },
+            "qwen_free": {
+                "provider": "openrouter",
+                "model": "qwen/qwen3-coder:free",
+                "runtime": "openrouter",
+                "allow_fallback": False,
+                "estimated_cost_usd": 0.0,
+            },
+        },
+        "pools": {
+            "free_loop": {
+                "strategy": "fallback_loop",
+                "profiles": ["qwen_free"],
+                "max_failed_cycles": 7,
+                "cooldown_seconds": 11.0,
+                "per_model_timeout_seconds": 22.0,
+                "backoff_seconds": 0.5,
+                "jitter_seconds": 0.0,
+            },
+            "pro_then_flash": {
+                "strategy": "fallback_loop",
+                "profiles": ["deepseek_pro_or", "deepseek_flash_or"],
+                "max_failed_cycles": 3,
+                "cooldown_seconds": 4.0,
+            },
+        },
+        "routes": {
+            "default": "gpt55_codex",
+            "layers": {
+                "worker": "deepseek_flash_or",
+                "subagent": "deepseek_flash_or",
+                "reducer": "deepseek_pro_or",
+                "hostile_review": "deepseek_pro_or",
+                "verifier": "deepseek_pro_or",
+            },
+            "stages": {
+                "S0": "deepseek_flash_or",
+                "S1": "deepseek_flash_or",
+                "S7": "deepseek_pro_or",
+                "S8": "gpt55_codex",
+            },
+            "task_types": {
+                "source_inventory": "free_loop",
+            },
+            "task_ids": {
+                "exact-task": "gpt55_codex",
+            },
+        },
+    }
+
+
+def test_legacy_flat_provider_policy_normalizes_without_routing_shape():
+    policy = normalize_legacy_provider_policy(
+        {"provider": "openai-codex", "model": "openai-codex/gpt-5.5", "allow_fallback": False, "estimated_cost_usd": 0.0}
+    )
+    resolved = provider_policy_for_route(policy, layer="worker", stage="S8", task_type="draft", task_id="t")
+
+    assert resolved["provider"] == "openai-codex"
+    assert resolved["model"] == "gpt-5.5"
+    assert resolved["allow_fallback"] is False
+    assert resolved["model_profile_id"] == "legacy"
+    assert "model_routing" not in resolved
+
+
+def test_model_policy_resolves_all_one_model_for_every_layer_stage_and_subagent():
+    policy = load_model_routing_policy(
+        {
+            "version": 1,
+            "profiles": {
+                "all": {
+                    "provider": "openai-codex",
+                    "model": "gpt-5.5",
+                    "runtime": "codex",
+                    "allow_fallback": False,
+                    "estimated_cost_usd": 0.0,
+                }
+            },
+            "routes": {"default": "all"},
+        }
+    )
+
+    for layer in ("worker", "reducer", "subagent", "verifier"):
+        for stage in ("S0", "S7", "S8"):
+            resolved = provider_policy_for_route(policy, layer=layer, stage=stage, task_type="anything", task_id="task")
+            assert resolved["provider"] == "openai-codex"
+            assert resolved["model"] == "gpt-5.5"
+            assert resolved["runtime"] == "codex"
+
+
+def test_model_policy_precedence_and_openrouter_deepseek_syntax():
+    policy = load_model_routing_policy(_rich_policy_payload())
+
+    worker = provider_policy_for_route(policy, layer="worker", stage="S8", task_type="draft", task_id="worker-task")
+    reducer = provider_policy_for_route(policy, layer="reducer", stage="S0", task_type="draft", task_id="reducer-task")
+    stage_s7 = provider_policy_for_route(policy, layer="", stage="S7", task_type="draft", task_id="stage-task")
+    task_type = provider_policy_for_route(policy, layer="worker", stage="S0", task_type="source_inventory", task_id="type-task")
+    exact = provider_policy_for_route(policy, layer="worker", stage="S0", task_type="source_inventory", task_id="exact-task")
+
+    assert worker["model"] == "deepseek/deepseek-v4-flash"
+    assert reducer["model"] == "deepseek/deepseek-v4-pro"
+    assert stage_s7["model"] == "deepseek/deepseek-v4-pro"
+    assert task_type["model_pool_id"] == "free_loop"
+    failover = _mapping_value(task_type["openrouter_failover"])
+    assert failover["models"] == ["qwen/qwen3-coder:free"]
+    assert failover["max_failed_cycles"] == 7
+    assert exact["provider"] == "openai-codex"
+    assert exact["model"] == "gpt-5.5"
+
+
+def test_model_policy_rejects_unknown_direct_deepseek_and_unsafe_cross_provider_pool():
+    unknown = {"version": 1, "profiles": {"bad": {"provider": "openrouter", "model": "unknown/model", "runtime": "openrouter"}}, "routes": {"default": "bad"}}
+    direct = {"version": 1, "profiles": {"bad": {"provider": "deepseek", "model": "deepseek-v4-pro", "runtime": "deepseek"}}, "routes": {"default": "bad"}}
+    cross = _rich_policy_payload()
+    cast(dict[str, object], cross["pools"])["mixed"] = {"profiles": ["gpt55_codex", "deepseek_flash_or"], "allow_cross_provider_fallback": True}
+    cast(dict[str, object], cross["routes"])["default"] = "mixed"
+
+    for payload in (unknown, direct, cross):
+        try:
+            _ = load_model_routing_policy(payload)
+        except ModelPolicyError:
+            pass
+        else:
+            raise AssertionError("invalid model policy should fail closed")
+
+
+def test_set_provider_policy_policy_file_dry_run_write_and_work_order_audit(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    policy_file = _policy_file(tmp_path, _rich_policy_payload())
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="source-task",
+                title="Source task",
+                task_type="source_inventory",
+                matter_scope="napier",
+                stage=LegalStage.S0_SOURCE_INVENTORY,
+                status=TaskStatus.QUEUED,
+            ),
+        )
+
+    assert cli_main(["set-provider-policy", "--db", str(db_path), "--matter", "napier", "--policy-file", str(policy_file)]) == 0
+    with repo.db_connection(db_path) as conn:
+        assert _json_mapping(_text_value(conn, "SELECT provider_policy_json FROM tasks WHERE task_id = 'source-task'")) == {}
+
+    assert cli_main(["set-provider-policy", "--db", str(db_path), "--matter", "napier", "--policy-file", str(policy_file), "--write"]) == 0
+    with repo.db_connection(db_path) as conn:
+        task_policy = _json_mapping(_text_value(conn, "SELECT provider_policy_json FROM tasks WHERE task_id = 'source-task'"))
+        order = build_work_order(conn, task_id="source-task", persist_context=False)
+        provider_runs = _scalar_int(conn, "SELECT COUNT(*) FROM provider_runs")
+
+    assert task_policy["model_pool_id"] == "free_loop"
+    assert _mapping_value(task_policy["openrouter_failover"])["max_failed_cycles"] == 7
+    work_order_policy = _mapping_value(order.as_dict()["provider_policy"])
+    assert _mapping_value(work_order_policy["resolved_model"])["pool_id"] == "free_loop"
+    assert provider_runs == 0
+
+
+def test_model_policy_cli_validate_and_resolve_smokes(tmp_path: Path):
+    policy_file = _policy_file(tmp_path, _rich_policy_payload())
+
+    assert cli_main(["model-policy", "validate", "--policy-file", str(policy_file)]) == 0
+    assert cli_main(
+        [
+            "model-policy",
+            "resolve",
+            "--policy-file",
+            str(policy_file),
+            "--stage",
+            "S0",
+            "--layer",
+            "worker",
+            "--task-type",
+            "source_inventory",
+            "--task-id",
+            "type-task",
+        ]
+    ) == 0
+
+
+def test_proposed_tasks_inherit_or_normalize_against_parent_model_routing_policy(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    policy = provider_policy_for_route(
+        load_model_routing_policy(_rich_policy_payload()),
+        layer="worker",
+        stage="S0",
+        task_type="source_inventory",
+        task_id="parent-task",
+    )
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="parent-task",
+                title="Parent",
+                task_type="source_inventory",
+                stage=LegalStage.S0_SOURCE_INVENTORY,
+                provider_policy=policy,
+            ),
+        )
+        lease_id = acquire_lease(conn, task_id="parent-task", worker_id="worker-01", dry_run=False)
+        candidate_id = record_worker_result(
+            conn,
+            task_id="parent-task",
+            lease_id=lease_id,
+            worker_id="worker-01",
+            payload={
+                "task_id": "parent-task",
+                "summary": "done",
+                "findings": [{"text": "finding", "citation_ids": []}],
+                "citations": [],
+                "proposed_artifacts": [{"path": "candidate/parent.json", "artifact_type": "note"}],
+                "proposed_tasks": [
+                    {
+                        "task_id": "inherits-subagent",
+                        "title": "Inherits",
+                        "task_type": "followup",
+                        "stage": "S7",
+                    },
+                    {
+                        "task_id": "bad-policy-subagent",
+                        "title": "Bad policy",
+                        "task_type": "followup",
+                        "stage": "S7",
+                        "provider_policy": {
+                            "provider": "openrouter",
+                            "model": "not/in-policy",
+                            "allow_fallback": True,
+                            "estimated_cost_usd": 99.0,
+                        },
+                    },
+                ],
+            },
+        )
+
+        result = run_free_loop_once(conn, output_dir=tmp_path / "out", capacity=0, execute_workers=False)
+        inherited = _json_mapping(_text_value(conn, "SELECT provider_policy_json FROM tasks WHERE task_id = 'inherits-subagent'"))
+        normalized = _json_mapping(_text_value(conn, "SELECT provider_policy_json FROM tasks WHERE task_id = 'bad-policy-subagent'"))
+        attention = _scalar_int(conn, "SELECT COUNT(*) FROM human_attention")
+
+    assert result["reduced_candidates"] == [candidate_id]
+    assert inherited["model"] == "deepseek/deepseek-v4-flash"
+    assert inherited["model_profile_id"] == "deepseek_flash_or"
+    assert normalized["model"] == "deepseek/deepseek-v4-flash"
+    assert str(_mapping_value(normalized["model_policy_audit"])["reason"]).startswith("proposed task provider policy")
+    assert attention == 0
+
+
+def test_run_free_loop_capacity_zero_does_not_make_provider_calls(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(conn, TaskSpec(task_id="queued", title="Queued", task_type="source_inventory"))
+        result = run_free_loop_once(conn, output_dir=tmp_path / "out", capacity=0, execute_workers=True, runtime="openrouter")
+        provider_runs = _scalar_int(conn, "SELECT COUNT(*) FROM provider_runs")
+        leases = _scalar_int(conn, "SELECT COUNT(*) FROM leases")
+
+    assert result["leased_tasks"] == []
+    assert provider_runs == 0
+    assert leases == 0
+
+
+def test_live_policy_allows_explicit_openrouter_pool_but_not_silent_fallback():
+    policy = provider_policy_for_route(load_model_routing_policy(_rich_policy_payload()), task_type="source_inventory")
+
+    allowed = check_live_provider_policy(policy, env={"OPENROUTER_API_KEY": "test-key"})
+    silent = check_live_provider_policy(
+        {"provider": "openrouter", "model": "deepseek/deepseek-v4-pro", "allow_fallback": True, "estimated_cost_usd": 0.01},
+        env={"OPENROUTER_API_KEY": "test-key"},
+    )
+
+    assert allowed.allowed
+    assert not silent.allowed
+    assert any("fallback" in reason for reason in silent.reasons)

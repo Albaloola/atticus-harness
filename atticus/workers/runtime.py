@@ -8,6 +8,7 @@ handoff. Neither path starts OpenClaw, shell agents, or external legal actions.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 import json
 import math
@@ -15,7 +16,7 @@ from pathlib import Path
 import sqlite3
 from time import perf_counter
 from uuid import uuid4
-from typing import Any, Mapping
+from typing import cast
 
 from atticus.adapters.direct_openrouter import DirectOpenRouterAdapter
 from atticus.adapters.local_stub import LocalStubAdapter
@@ -26,7 +27,7 @@ from atticus.providers.budget import BudgetExceeded, charge_budget, require_budg
 from atticus.providers.live_readiness import check_live_provider_policy, live_openrouter_enabled, parse_estimated_cost_usd
 from atticus.providers.openrouter_failover import openrouter_client_for_policy, openrouter_models_for_policy, primary_model_for_policy, safe_openrouter_error_message
 from atticus.providers.openrouter import OpenRouterError, validate_usage_tokens
-from atticus.providers.policy import ProviderActual, ProviderRequest, check_provider_policy
+from atticus.providers.policy import ProviderActual, ProviderDecision, ProviderRequest, check_provider_policy
 from atticus.scheduler.lease import LeaseError, require_active_lease
 from atticus.workers.contracts import safe_path_component
 from atticus.workers.outputs import record_worker_result
@@ -66,10 +67,10 @@ def execute_local_work_order(
     """
 
     lease = _require_runtime_lease_for_task(conn, lease_id=lease_id, task_id=task_id)
-    task = conn.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
+    task = cast(Mapping[str, object] | None, conn.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone())
     if task is None:
         reason = f"unknown task: {task_id}"
-        _mark_lease_failed(conn, lease_id=lease_id, reason=reason)
+        _ = _mark_lease_failed(conn, lease_id=lease_id, reason=reason)
         conn.commit()
         raise WorkerExecutionBlocked(reason)
     if lease["worker_id"] != worker_id:
@@ -89,14 +90,14 @@ def execute_local_work_order(
         reason = str(exc)
         _block_preflight_after_lease(conn, lease_id=lease_id, task_id=task_id, reason=reason)
         raise WorkerExecutionBlocked(reason) from exc
-    if task["cost_limit_usd"] is not None and estimated_cost > float(task["cost_limit_usd"]):
-        reason = f"task estimated cost {estimated_cost:.4f} exceeds task cost limit {float(task['cost_limit_usd']):.4f}"
+    if task["cost_limit_usd"] is not None and estimated_cost > float(str(task["cost_limit_usd"])):
+        reason = f"task estimated cost {estimated_cost:.4f} exceeds task cost limit {float(str(task['cost_limit_usd'])):.4f}"
         _block_preflight_after_lease(conn, lease_id=lease_id, task_id=task_id, reason=reason)
         raise WorkerExecutionBlocked("task cost limit would be exceeded")
 
     try:
-        for scope_type, scope_id in (("task", task_id), ("stage", task["stage"]), ("matter", task["matter_scope"])):
-            require_budget(conn, scope_type=scope_type, scope_id=scope_id, requested_usd=estimated_cost)
+        for scope_type, scope_id in (("task", task_id), ("stage", str(task["stage"])), ("matter", str(task["matter_scope"]))):
+            _ = require_budget(conn, scope_type=scope_type, scope_id=scope_id, requested_usd=estimated_cost)
     except BudgetExceeded as exc:
         _block_preflight_after_lease(conn, lease_id=lease_id, task_id=task_id, reason=str(exc))
         raise
@@ -110,12 +111,12 @@ def execute_local_work_order(
         order = build_work_order(conn, task_id=task_id, lease_id=lease_id, persist_context=True)
         payload = LocalStubAdapter().run(order.as_dict())
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(json.dumps(payload, sort_keys=True, indent=2), encoding="utf-8")
+        _ = output_path.write_text(json.dumps(payload, sort_keys=True, indent=2), encoding="utf-8")
         latency_ms = int((perf_counter() - started) * 1000)
         provider_run_id = repo.record_provider_run(
             conn,
             task_id=task_id,
-            stage=task["stage"],
+            stage=str(task["stage"]),
             requested_provider=str(provider_policy.get("provider") or "local"),
             requested_model=str(provider_policy.get("model") or "stub"),
             actual_provider="local",
@@ -127,8 +128,8 @@ def execute_local_work_order(
             fallback_policy_result="local_stub_not_provider_backed",
             raw_usage={"adapter": adapter_name, "output_path": str(output_path)},
         )
-        for scope_type, scope_id in (("task", task_id), ("stage", task["stage"]), ("matter", task["matter_scope"])):
-            charge_budget(conn, scope_type=scope_type, scope_id=scope_id, amount_usd=estimated_cost, provider_run_id=provider_run_id)
+        for scope_type, scope_id in (("task", task_id), ("stage", str(task["stage"])), ("matter", str(task["matter_scope"]))):
+            _ = charge_budget(conn, scope_type=scope_type, scope_id=scope_id, amount_usd=estimated_cost, provider_run_id=provider_run_id)
         candidate_id = record_worker_result(
             conn,
             task_id=task_id,
@@ -136,10 +137,10 @@ def execute_local_work_order(
             worker_id=worker_id,
             payload=payload,
         )
-        candidate = conn.execute("SELECT status, quarantined_reason FROM candidate_outputs WHERE candidate_id = ?", (candidate_id,)).fetchone()
+        candidate = cast(Mapping[str, object] | None, conn.execute("SELECT status, quarantined_reason FROM candidate_outputs WHERE candidate_id = ?", (candidate_id,)).fetchone())
         if candidate is None or candidate["status"] != "candidate":
-            reason = candidate["quarantined_reason"] if candidate is not None else "candidate output was not recorded"
-            _mark_lease_failed(conn, lease_id=lease_id, reason=reason)
+            reason = str(candidate["quarantined_reason"] if candidate is not None else "candidate output was not recorded")
+            _ = _mark_lease_failed(conn, lease_id=lease_id, reason=reason)
             _record_attempt_finished(conn, attempt_id=attempt_id, status="failed", output_path=output_path, error={"error": reason})
             conn.commit()
             raise WorkerExecutionBlocked(f"local worker output quarantined: {reason}")
@@ -154,7 +155,7 @@ def execute_local_work_order(
     except WorkerExecutionBlocked:
         raise
     except Exception as exc:
-        _mark_lease_failed(conn, lease_id=lease_id, reason=str(exc))
+        _ = _mark_lease_failed(conn, lease_id=lease_id, reason=str(exc))
         _record_attempt_finished(conn, attempt_id=attempt_id, status="failed", output_path=output_path, error={"error": str(exc)})
         repo.update_task_status(conn, task_id, TaskStatus.FAILED, str(exc))
         conn.commit()
@@ -168,17 +169,17 @@ def execute_openrouter_work_order(
     lease_id: str,
     worker_id: str,
     output_dir: str | Path,
-    client: Any | None = None,
+    client: object | None = None,
     env: Mapping[str, str] | None = None,
     allow_live: bool = False,
 ) -> WorkerExecutionResult:
     """Execute one leased task through OpenRouter after explicit live gates pass."""
 
     lease = _require_runtime_lease_for_task(conn, lease_id=lease_id, task_id=task_id)
-    task = conn.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
+    task = cast(Mapping[str, object] | None, conn.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone())
     if task is None:
         reason = f"unknown task: {task_id}"
-        _mark_lease_failed(conn, lease_id=lease_id, reason=reason)
+        _ = _mark_lease_failed(conn, lease_id=lease_id, reason=reason)
         conn.commit()
         raise WorkerExecutionBlocked(reason)
     if lease["worker_id"] != worker_id:
@@ -203,13 +204,13 @@ def execute_openrouter_work_order(
         reason = str(exc)
         _block_preflight_after_lease(conn, lease_id=lease_id, task_id=task_id, reason=reason)
         raise WorkerExecutionBlocked(reason) from exc
-    if task["cost_limit_usd"] is not None and estimated_cost > float(task["cost_limit_usd"]):
-        reason = f"task estimated cost {estimated_cost:.4f} exceeds task cost limit {float(task['cost_limit_usd']):.4f}"
+    if task["cost_limit_usd"] is not None and estimated_cost > float(str(task["cost_limit_usd"])):
+        reason = f"task estimated cost {estimated_cost:.4f} exceeds task cost limit {float(str(task['cost_limit_usd'])):.4f}"
         _block_preflight_after_lease(conn, lease_id=lease_id, task_id=task_id, reason=reason)
         raise WorkerExecutionBlocked("task cost limit would be exceeded")
     try:
-        for scope_type, scope_id in (("task", task_id), ("stage", task["stage"]), ("matter", task["matter_scope"])):
-            require_budget(conn, scope_type=scope_type, scope_id=scope_id, requested_usd=estimated_cost)
+        for scope_type, scope_id in (("task", task_id), ("stage", str(task["stage"])), ("matter", str(task["matter_scope"]))):
+            _ = require_budget(conn, scope_type=scope_type, scope_id=scope_id, requested_usd=estimated_cost)
     except BudgetExceeded as exc:
         _block_preflight_after_lease(conn, lease_id=lease_id, task_id=task_id, reason=str(exc))
         raise
@@ -226,7 +227,7 @@ def execute_openrouter_work_order(
         requested = ProviderRequest("openrouter", primary_model_for_policy(provider_policy, env=env), allow_fallback=False)
         provider_client = openrouter_client_for_policy(provider_policy, env=env, client=client)
         try:
-            response = DirectOpenRouterAdapter(client=provider_client).run(order.as_dict(), model=requested.model)
+            response = cast(object, DirectOpenRouterAdapter(client=provider_client).run(order.as_dict(), model=requested.model))
         except OpenRouterError as exc:
             safe_error = safe_openrouter_error_message(exc)
             reason = f"OpenRouter provider call failed after dispatch: {safe_error}"
@@ -262,6 +263,7 @@ def execute_openrouter_work_order(
                 reason=reason,
             )
             raise WorkerExecutionBlocked(reason)
+        response = cast(Mapping[str, object], response)
         final_requested_model = str(response.get("requested_model") or requested.model)
         requested = ProviderRequest("openrouter", final_requested_model, allow_fallback=False)
         if final_requested_model not in configured_models:
@@ -305,7 +307,7 @@ def execute_openrouter_work_order(
                 raw_usage={"usage": response.get("usage")},
             )
             raise WorkerExecutionBlocked(reason)
-        usage = dict(usage_raw)
+        usage = dict(cast(Mapping[str, object], usage_raw))
         latency_ms = int((perf_counter() - started) * 1000)
         try:
             token_usage = validate_usage_tokens(usage)
@@ -354,11 +356,21 @@ def execute_openrouter_work_order(
             )
             raise WorkerExecutionBlocked(reason)
         actual = ProviderActual(str(reported_provider), str(reported_model))
-        policy_decision = check_provider_policy(requested, actual=actual)
+        exact_policy_decision = check_provider_policy(requested, actual=actual)
+        if exact_policy_decision.allowed:
+            policy_decision = exact_policy_decision
+        elif requested.model.endswith(":free") and requested.model in configured_models:
+            # OpenRouter free routes may expose the endpoint provider/model alias
+            # (for example Novita + dated model ID) while still honoring the
+            # configured requested_model. Allow that narrow case, but preserve
+            # the endpoint metadata in provider_runs for provenance/audit.
+            policy_decision = ProviderDecision(True, "openrouter_free_endpoint_provenance", "requested OpenRouter free model was honored; endpoint provider/model recorded as provenance")
+        else:
+            policy_decision = exact_policy_decision
         provider_run_id = repo.record_provider_run(
             conn,
             task_id=task_id,
-            stage=task["stage"],
+            stage=str(task["stage"]),
             requested_provider=requested.provider,
             requested_model=requested.model,
             actual_provider=actual.provider,
@@ -370,20 +382,23 @@ def execute_openrouter_work_order(
             latency_ms=latency_ms,
             fallback_allowed=False,
             fallback_policy_result=policy_decision.result,
-            raw_usage=_json_safe_payload(
+            raw_usage=cast(dict[str, object], _json_safe_payload(
                 {
                     "usage": usage,
                     "adapter": adapter_name,
                     "output_path": str(output_path),
                     "requested_model": requested.model,
+                    "model_profile_id": provider_policy.get("model_profile_id", ""),
+                    "model_pool_id": provider_policy.get("model_pool_id", ""),
+                    "resolved_model": provider_policy.get("resolved_model", {}),
                     "raw": response.get("raw", {}),
                 }
-            ),
+            )),
         )
         _charge_budget_scopes(conn, task=task, task_id=task_id, amount_usd=estimated_cost, provider_run_id=provider_run_id)
         if not policy_decision.allowed:
             reason = policy_decision.reason
-            _mark_lease_failed(conn, lease_id=lease_id, reason=reason)
+            _ = _mark_lease_failed(conn, lease_id=lease_id, reason=reason)
             _record_attempt_finished(conn, attempt_id=attempt_id, status="failed", output_path=output_path, error={"error": reason})
             repo.update_task_blocked(conn, task_id, [reason])
             conn.commit()
@@ -392,19 +407,19 @@ def execute_openrouter_work_order(
         content = response.get("content")
         if not isinstance(content, Mapping):
             reason = "OpenRouter response content must be a JSON object candidate packet"
-            _mark_lease_failed(conn, lease_id=lease_id, reason=reason)
+            _ = _mark_lease_failed(conn, lease_id=lease_id, reason=reason)
             _record_attempt_finished(conn, attempt_id=attempt_id, status="failed", output_path=output_path, error={"error": reason})
             repo.update_task_blocked(conn, task_id, [reason])
             conn.commit()
             raise WorkerExecutionBlocked(reason)
-        payload = dict(content)
+        payload = dict(cast(Mapping[str, object], content))
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(json.dumps(payload, sort_keys=True, indent=2), encoding="utf-8")
+        _ = output_path.write_text(json.dumps(payload, sort_keys=True, indent=2), encoding="utf-8")
         candidate_id = record_worker_result(conn, task_id=task_id, lease_id=lease_id, worker_id=worker_id, payload=payload)
-        candidate = conn.execute("SELECT status, quarantined_reason FROM candidate_outputs WHERE candidate_id = ?", (candidate_id,)).fetchone()
+        candidate = cast(Mapping[str, object] | None, conn.execute("SELECT status, quarantined_reason FROM candidate_outputs WHERE candidate_id = ?", (candidate_id,)).fetchone())
         if candidate is None or candidate["status"] != "candidate":
-            reason = candidate["quarantined_reason"] if candidate is not None else "candidate output was not recorded"
-            _mark_lease_failed(conn, lease_id=lease_id, reason=reason)
+            reason = str(candidate["quarantined_reason"] if candidate is not None else "candidate output was not recorded")
+            _ = _mark_lease_failed(conn, lease_id=lease_id, reason=reason)
             _record_attempt_finished(conn, attempt_id=attempt_id, status="failed", output_path=output_path, error={"error": reason})
             conn.commit()
             raise WorkerExecutionBlocked(f"OpenRouter worker output quarantined: {reason}")
@@ -413,14 +428,62 @@ def execute_openrouter_work_order(
     except WorkerExecutionBlocked:
         raise
     except Exception as exc:
-        _mark_lease_failed(conn, lease_id=lease_id, reason=str(exc))
+        _ = _mark_lease_failed(conn, lease_id=lease_id, reason=str(exc))
         _record_attempt_finished(conn, attempt_id=attempt_id, status="failed", output_path=output_path, error={"error": str(exc)})
         repo.update_task_status(conn, task_id, TaskStatus.FAILED, str(exc))
         conn.commit()
         raise
 
 
-def _require_runtime_lease_for_task(conn: sqlite3.Connection, *, lease_id: str, task_id: str) -> sqlite3.Row:
+def execute_codex_work_order(
+    conn: sqlite3.Connection,
+    *,
+    task_id: str,
+    lease_id: str,
+    worker_id: str,
+    output_dir: str | Path,
+) -> WorkerExecutionResult:
+    """Fail closed for policy-configurable Codex work until a CLI adapter exists."""
+
+    del output_dir
+    lease = _require_runtime_lease_for_task(conn, lease_id=lease_id, task_id=task_id)
+    task = cast(Mapping[str, object] | None, conn.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone())
+    if task is None:
+        reason = f"unknown task: {task_id}"
+        _ = _mark_lease_failed(conn, lease_id=lease_id, reason=reason)
+        conn.commit()
+        raise WorkerExecutionBlocked(reason)
+    if lease["worker_id"] != worker_id:
+        reason = f"lease {lease_id} belongs to worker {lease['worker_id']}, not {worker_id}"
+        _block_preflight_after_lease(conn, lease_id=lease_id, task_id=task_id, reason=reason)
+        raise WorkerExecutionBlocked(reason)
+
+    provider_policy = _load_provider_policy_after_lease(conn, task=task, lease_id=lease_id, task_id=task_id)
+    requested = ProviderRequest(
+        str(provider_policy.get("provider") or ""),
+        str(provider_policy.get("model") or ""),
+        allow_fallback=bool(provider_policy.get("allow_fallback") or False),
+    )
+    decision = check_provider_policy(requested)
+    if not decision.allowed:
+        reason = decision.reason
+        _block_preflight_after_lease(conn, lease_id=lease_id, task_id=task_id, reason=reason)
+        raise WorkerExecutionBlocked(reason)
+    if requested.provider != "openai-codex":
+        reason = f"Codex runtime requires provider openai-codex, got {requested.provider or 'unset'}"
+        _block_preflight_after_lease(conn, lease_id=lease_id, task_id=task_id, reason=reason)
+        raise WorkerExecutionBlocked(reason)
+    if requested.allow_fallback:
+        reason = "Codex runtime requires fallback disabled"
+        _block_preflight_after_lease(conn, lease_id=lease_id, task_id=task_id, reason=reason)
+        raise WorkerExecutionBlocked(reason)
+
+    reason = "Codex provider is policy-configurable, but live Codex CLI execution adapter is not implemented"
+    _block_preflight_after_lease(conn, lease_id=lease_id, task_id=task_id, reason=reason)
+    raise WorkerExecutionBlocked(reason)
+
+
+def _require_runtime_lease_for_task(conn: sqlite3.Connection, *, lease_id: str, task_id: str) -> Mapping[str, object]:
     try:
         lease = require_active_lease(conn, lease_id=lease_id)
     except LeaseError as exc:
@@ -439,39 +502,39 @@ def _mark_lease_failed(conn: sqlite3.Connection, *, lease_id: str, reason: str) 
     """Mark a lease as failed so capacity accounting cannot leak active leases."""
 
     now = utc_now()
-    row = conn.execute("SELECT task_id, status FROM leases WHERE lease_id = ?", (lease_id,)).fetchone()
+    row = cast(Mapping[str, object] | None, conn.execute("SELECT task_id, status FROM leases WHERE lease_id = ?", (lease_id,)).fetchone())
     if row is None or row["status"] != "active":
         return None
-    conn.execute(
+    _ = conn.execute(
         "UPDATE leases SET status = 'failed', updated_at = ? WHERE lease_id = ?",
         (now, lease_id),
     )
-    repo.emit_event(conn, "lease.failed", payload={"lease_id": lease_id, "task_id": row["task_id"], "reason": reason})
+    _ = repo.emit_event(conn, "lease.failed", payload={"lease_id": lease_id, "task_id": row["task_id"], "reason": reason})
     return str(row["task_id"])
 
 
 def _restore_task_after_failed_runtime_lease(conn: sqlite3.Connection, *, task_id: str) -> None:
-    pending_candidate = conn.execute(
+    pending_candidate = cast(object | None, conn.execute(
         "SELECT 1 FROM candidate_outputs WHERE task_id = ? AND status = 'candidate' LIMIT 1",
         (task_id,),
-    ).fetchone()
+    ).fetchone())
     next_status = TaskStatus.REDUCER_PENDING if pending_candidate is not None else TaskStatus.QUEUED
-    conn.execute(
+    _ = conn.execute(
         "UPDATE tasks SET status = ?, updated_at = ? WHERE task_id = ? AND status IN (?, ?)",
         (next_status, utc_now(), task_id, TaskStatus.LEASED, TaskStatus.RUNNING),
     )
 
 
-def _requires_local_cost_estimate(conn: sqlite3.Connection, *, task: sqlite3.Row) -> bool:
+def _requires_local_cost_estimate(conn: sqlite3.Connection, *, task: Mapping[str, object]) -> bool:
     """Require explicit local cost estimates when any cost/budget gate exists."""
 
     if task["cost_limit_usd"] is not None:
         return True
-    for scope_type, scope_id in (("task", task["task_id"]), ("stage", task["stage"]), ("matter", task["matter_scope"])):
-        row = conn.execute(
+    for scope_type, scope_id in (("task", str(task["task_id"])), ("stage", str(task["stage"])), ("matter", str(task["matter_scope"]))):
+        row = cast(object | None, conn.execute(
             "SELECT 1 FROM budgets WHERE scope_type = ? AND scope_id = ? LIMIT 1",
             (scope_type, scope_id),
-        ).fetchone()
+        ).fetchone())
         if row is not None:
             return True
     return False
@@ -480,21 +543,21 @@ def _requires_local_cost_estimate(conn: sqlite3.Connection, *, task: sqlite3.Row
 def _charge_budget_scopes(
     conn: sqlite3.Connection,
     *,
-    task: sqlite3.Row,
+    task: Mapping[str, object],
     task_id: str,
     amount_usd: float,
     provider_run_id: str | None,
 ) -> None:
     """Charge configured task/stage/matter budgets for a completed provider call."""
 
-    for scope_type, scope_id in (("task", task_id), ("stage", task["stage"]), ("matter", task["matter_scope"])):
-        charge_budget(conn, scope_type=scope_type, scope_id=scope_id, amount_usd=amount_usd, provider_run_id=provider_run_id)
+    for scope_type, scope_id in (("task", task_id), ("stage", str(task["stage"])), ("matter", str(task["matter_scope"]))):
+        _ = charge_budget(conn, scope_type=scope_type, scope_id=scope_id, amount_usd=amount_usd, provider_run_id=provider_run_id)
 
 
 def _record_openrouter_post_dispatch_failure(
     conn: sqlite3.Connection,
     *,
-    task: sqlite3.Row,
+    task: Mapping[str, object],
     task_id: str,
     lease_id: str,
     attempt_id: str,
@@ -504,13 +567,13 @@ def _record_openrouter_post_dispatch_failure(
     started: float,
     adapter_name: str,
     reason: str,
-    response: Mapping[str, Any] | None = None,
+    response: Mapping[str, object] | None = None,
     actual_provider: str | None = None,
     actual_model: str | None = None,
     input_tokens: int = 0,
     output_tokens: int = 0,
     fallback_policy_result: str = "failed_closed",
-    raw_usage: dict[str, Any] | None = None,
+    raw_usage: dict[str, object] | None = None,
 ) -> str:
     """Record spend telemetry, fail capacity, block task, and commit after dispatch."""
 
@@ -527,7 +590,7 @@ def _record_openrouter_post_dispatch_failure(
     provider_run_id = repo.record_provider_run(
         conn,
         task_id=task_id,
-        stage=task["stage"],
+        stage=str(task["stage"]),
         requested_provider=requested.provider,
         requested_model=requested.model,
         actual_provider=actual_provider or "missing",
@@ -539,31 +602,32 @@ def _record_openrouter_post_dispatch_failure(
         latency_ms=int((perf_counter() - started) * 1000),
         fallback_allowed=False,
         fallback_policy_result=fallback_policy_result,
-        raw_usage=_json_safe_payload(usage_payload),
+        raw_usage=cast(dict[str, object], _json_safe_payload(usage_payload)),
     )
     _charge_budget_scopes(conn, task=task, task_id=task_id, amount_usd=estimated_cost, provider_run_id=provider_run_id)
-    _mark_lease_failed(conn, lease_id=lease_id, reason=reason)
+    _ = _mark_lease_failed(conn, lease_id=lease_id, reason=reason)
     _record_attempt_finished(conn, attempt_id=attempt_id, status="failed", output_path=output_path, error={"error": reason})
     repo.update_task_blocked(conn, task_id, [reason])
     conn.commit()
     return provider_run_id
 
 
-def _json_safe_payload(value: Any) -> Any:
+def _json_safe_payload(value: object) -> object:
     """Return a SQLite JSON-valid telemetry payload, preserving bad values as text."""
 
     if isinstance(value, Mapping):
-        return {str(key): _json_safe_payload(item) for key, item in value.items()}
+        mapping = cast(Mapping[object, object], value)
+        return {str(key): _json_safe_payload(item) for key, item in mapping.items()}
     if isinstance(value, list):
-        return [_json_safe_payload(item) for item in value]
+        return [_json_safe_payload(item) for item in cast(list[object], value)]
     if isinstance(value, tuple):
-        return [_json_safe_payload(item) for item in value]
+        return [_json_safe_payload(item) for item in cast(tuple[object, ...], value)]
     if isinstance(value, float) and not math.isfinite(value):
         return str(value)
     return value
 
 
-def _actual_metadata_or_missing(response: Mapping[str, Any], key: str) -> str:
+def _actual_metadata_or_missing(response: Mapping[str, object], key: str) -> str:
     value = response.get(key)
     return str(value) if value else "missing"
 
@@ -571,29 +635,33 @@ def _actual_metadata_or_missing(response: Mapping[str, Any], key: str) -> str:
 def _load_provider_policy_after_lease(
     conn: sqlite3.Connection,
     *,
-    task: sqlite3.Row,
+    task: Mapping[str, object],
     lease_id: str,
     task_id: str,
-) -> dict[str, Any]:
+) -> dict[str, object]:
     """Parse provider policy after leasing without leaking capacity on corrupt state."""
 
     try:
-        provider_policy = json.loads(task["provider_policy_json"] or "{}")
+        provider_policy = _load_json_value(str(task["provider_policy_json"] or "{}"))
     except (json.JSONDecodeError, TypeError) as exc:
         reason = f"malformed provider policy for task {task_id}: {exc}"
         _block_preflight_after_lease(conn, lease_id=lease_id, task_id=task_id, reason=reason)
         raise WorkerExecutionBlocked(reason) from exc
-    if not isinstance(provider_policy, dict):
+    if not isinstance(provider_policy, Mapping):
         reason = f"malformed provider policy for task {task_id}: policy must be a JSON object"
         _block_preflight_after_lease(conn, lease_id=lease_id, task_id=task_id, reason=reason)
         raise WorkerExecutionBlocked(reason)
-    return provider_policy
+    return {str(key): value for key, value in cast(Mapping[object, object], provider_policy).items()}
+
+
+def _load_json_value(text: str) -> object:
+    return json.loads(text)
 
 
 def _block_preflight_after_lease(conn: sqlite3.Connection, *, lease_id: str, task_id: str, reason: str) -> None:
     """Fail an active lease and block the task when a preflight gate fails post-lease."""
 
-    _mark_lease_failed(conn, lease_id=lease_id, reason=reason)
+    _ = _mark_lease_failed(conn, lease_id=lease_id, reason=reason)
     repo.update_task_blocked(conn, task_id, [reason])
     conn.commit()
 
@@ -608,15 +676,15 @@ def _record_attempt_started(
 ) -> str:
     attempt_id = f"wattempt-{uuid4().hex}"
     now = utc_now()
-    conn.execute(
+    _ = conn.execute(
         """
         INSERT INTO worker_attempts(worker_attempt_id, task_id, lease_id, worker_id, adapter, status, started_at)
         VALUES (?, ?, ?, ?, ?, 'running', ?)
         """,
         (attempt_id, task_id, lease_id, worker_id, adapter, now),
     )
-    conn.execute("UPDATE tasks SET status = 'running', updated_at = ? WHERE task_id = ?", (now, task_id))
-    repo.emit_event(conn, "worker_attempt.started", payload={"worker_attempt_id": attempt_id, "task_id": task_id, "adapter": adapter})
+    _ = conn.execute("UPDATE tasks SET status = 'running', updated_at = ? WHERE task_id = ?", (now, task_id))
+    _ = repo.emit_event(conn, "worker_attempt.started", payload={"worker_attempt_id": attempt_id, "task_id": task_id, "adapter": adapter})
     return attempt_id
 
 
@@ -626,9 +694,9 @@ def _record_attempt_finished(
     attempt_id: str,
     status: str,
     output_path: Path,
-    error: dict[str, Any] | None = None,
+    error: dict[str, object] | None = None,
 ) -> None:
-    conn.execute(
+    _ = conn.execute(
         """
         UPDATE worker_attempts
         SET status = ?, finished_at = ?, output_path = ?, error_json = ?
@@ -636,4 +704,4 @@ def _record_attempt_finished(
         """,
         (status, utc_now(), str(output_path), json.dumps(error or {}, sort_keys=True), attempt_id),
     )
-    repo.emit_event(conn, "worker_attempt.finished", payload={"worker_attempt_id": attempt_id, "status": status})
+    _ = repo.emit_event(conn, "worker_attempt.finished", payload={"worker_attempt_id": attempt_id, "status": status})

@@ -1,0 +1,67 @@
+{
+  "version": 1,
+  "profiles": {
+    "gpt55_codex": {
+      "provider": "openai-codex",
+      "model": "gpt-5.5",
+      "runtime": "codex",
+      "allow_fallback": false,
+      "estimated_cost_usd": 0.0,
+      "capabilities": ["legal_reasoning", "coding_agent"]
+    },
+    "deepseek_flash_or": {
+      "provider": "openrouter",
+      "model": "deepseek/deepseek-v4-flash",
+      "runtime": "openrouter",
+      "allow_fallback": false,
+      "estimated_cost_usd": 0.01,
+      "capabilities": ["triage", "indexing", "structured_extraction"]
+    },
+    "deepseek_pro_or": {
+      "provider": "openrouter",
+      "model": "deepseek/deepseek-v4-pro",
+      "runtime": "openrouter",
+      "allow_fallback": false,
+      "estimated_cost_usd": 0.03,
+      "capabilities": ["legal_reasoning", "hostile_review", "synthesis"]
+    },
+    "qwen_free": {
+      "provider": "openrouter",
+      "model": "qwen/qwen3-coder:free",
+      "runtime": "openrouter",
+      "allow_fallback": false,
+      "estimated_cost_usd": 0.0
+    }
+  },
+  "pools": {
+    "free_loop": {
+      "strategy": "fallback_loop",
+      "profiles": ["qwen_free"],
+      "max_failed_cycles": 5,
+      "cooldown_seconds": 300.0,
+      "per_model_timeout_seconds": 120.0,
+      "backoff_seconds": 0.25,
+      "jitter_seconds": 0.25
+    }
+  },
+  "routes": {
+    "default": "gpt55_codex",
+    "layers": {
+      "worker": "deepseek_flash_or",
+      "subagent": "deepseek_flash_or",
+      "reducer": "deepseek_pro_or",
+      "hostile_review": "deepseek_pro_or",
+      "verifier": "deepseek_pro_or"
+    },
+    "stages": {
+      "S0": "deepseek_flash_or",
+      "S1": "deepseek_flash_or",
+      "S6": "deepseek_pro_or",
+      "S7": "deepseek_pro_or",
+      "S8": "gpt55_codex"
+    },
+    "task_types": {
+      "source_inventory": "free_loop"
+    }
+  }
+}

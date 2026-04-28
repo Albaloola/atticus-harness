@@ -2,23 +2,30 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 import argparse
 import json
 import os
+import sqlite3
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Protocol, cast
 
 from atticus.config import DEFAULT_DB_PATH
 from atticus.core.events import utc_now
 from atticus.core.matters import authorized_matter_from_env, require_matter_access
 from atticus.db import repo
 from atticus.graph.certifications import CertificationBlocked, certify_subject
+from atticus.matter_seed import seed_matter_from_inventory, set_provider_policy_for_matter
 from atticus.migration.import_old_run import import_candidates
 from atticus.migration.reconcile import reconcile_foundation
 from atticus.migration.report import build_migration_report
 from atticus.providers.budget import budget_status, check_budget
 from atticus.providers.live_readiness import probe_live_openrouter
+from atticus.providers.model_policy import (
+    load_model_routing_policy,
+    provider_policy_for_route,
+)
 from atticus.providers.policy import (
     ProviderActual,
     ProviderRequest,
@@ -29,9 +36,10 @@ from atticus.reducer.reducer import reduce_candidate
 from atticus.retrieval.ask import answer_question
 from atticus.retrieval.index import DEFAULT_INDEX_NAME, rebuild_search_index
 from atticus.scheduler.gates import evaluate_task_gates
-from atticus.scheduler.lease import LeaseError, acquire_lease, expire_leases
+from atticus.scheduler.free_loop import run_free_loop
+from atticus.scheduler.lease import LeaseError, acquire_lease
 from atticus.scheduler.live_orchestrator import prepare_live_resume
-from atticus.scheduler.planner import _budget_blockers, select_runnable_tasks
+from atticus.scheduler.planner import budget_blockers, select_runnable_tasks
 from atticus.status.inspect import inspect_record
 from atticus.status.report import generate_status
 from atticus.validation.gates import run_validation
@@ -39,155 +47,254 @@ from atticus.workers.runtime import execute_local_work_order
 from atticus.workers.work_order import build_work_order
 
 
+JsonObject = dict[str, object]
+
+
+class CliArgs(Protocol):
+    command: str
+    db: str
+    type: str
+    id: str
+    question: str
+    matter: str
+    index_name: str
+    workspace: str
+    dry_run: bool
+    gate: str
+    target_type: str
+    target_id: str
+    subject_type: str
+    subject_id: str
+    certification_type: str
+    validator: str
+    capacity: int
+    task_id: str
+    candidate_id: str
+    worker_id: str
+    seconds: int
+    lease_id: str
+    output_dir: str
+    write: bool
+    scope_type: str
+    scope_id: str
+    limit: float | None
+    check: float
+    provider: str
+    model: str
+    policy_file: str | None
+    action: str
+    layer: str
+    stage: str
+    task_type: str
+    inventory: str
+    estimated_cost_usd: float
+    actual_provider: str | None
+    actual_model: str | None
+    allow_fallback: bool
+    probe: bool
+    probe_result_json: str | None
+    write_leases: bool
+    worker_prefix: str
+    max_ticks: int
+    runtime: str
+    allow_live: bool
+    add: bool
+    severity: str
+    reason: str
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="atticus")
     sub = parser.add_subparsers(dest="command", required=True)
 
     init = sub.add_parser("init", help="initialize an Atticus SQLite database")
-    init.add_argument("--db", default=str(DEFAULT_DB_PATH))
+    _ = init.add_argument("--db", default=str(DEFAULT_DB_PATH))
 
     status = sub.add_parser("status", help="read-only run status")
-    status.add_argument("--db", required=True)
+    _ = status.add_argument("--db", required=True)
 
     inspect = sub.add_parser("inspect", help="read-only record inspection")
-    inspect.add_argument("--db", required=True)
-    inspect.add_argument("--type", required=True, choices=["run", "task", "source", "artifact", "candidate", "context-pack", "certification"])
-    inspect.add_argument("--id", required=True)
+    _ = inspect.add_argument("--db", required=True)
+    _ = inspect.add_argument("--type", required=True, choices=["run", "task", "source", "artifact", "candidate", "context-pack", "certification"])
+    _ = inspect.add_argument("--id", required=True)
 
     ask = sub.add_parser("ask", help="read-only legal memory query")
-    ask.add_argument("question")
-    ask.add_argument("--db", required=True)
-    ask.add_argument("--matter", default="atticus")
+    _ = ask.add_argument("question")
+    _ = ask.add_argument("--db", required=True)
+    _ = ask.add_argument("--matter", default="atticus")
 
     rebuild_index = sub.add_parser("rebuild-search-index", help="rebuild durable legal-memory search projection")
-    rebuild_index.add_argument("--db", required=True)
-    rebuild_index.add_argument("--matter", default="atticus")
-    rebuild_index.add_argument("--index-name", default=DEFAULT_INDEX_NAME)
-    rebuild_index.add_argument("--dry-run", dest="dry_run", action="store_true", default=True)
-    rebuild_index.add_argument("--write", dest="dry_run", action="store_false", help="write rebuilt projection rows and audit record")
+    _ = rebuild_index.add_argument("--db", required=True)
+    _ = rebuild_index.add_argument("--matter", default="atticus")
+    _ = rebuild_index.add_argument("--index-name", default=DEFAULT_INDEX_NAME)
+    _ = rebuild_index.add_argument("--dry-run", dest="dry_run", action="store_true", default=True)
+    _ = rebuild_index.add_argument("--write", dest="dry_run", action="store_false", help="write rebuilt projection rows and audit record")
 
     imp = sub.add_parser("import-candidates", help="import legacy material as candidate artifacts")
-    imp.add_argument("--workspace", required=True)
-    imp.add_argument("--db", required=True)
-    imp.add_argument("--dry-run", dest="dry_run", action="store_true", default=True)
-    imp.add_argument("--write", dest="dry_run", action="store_false", help="actually write candidate artifacts and validation tasks")
+    _ = imp.add_argument("--workspace", required=True)
+    _ = imp.add_argument("--db", required=True)
+    _ = imp.add_argument("--dry-run", dest="dry_run", action="store_true", default=True)
+    _ = imp.add_argument("--write", dest="dry_run", action="store_false", help="actually write candidate artifacts and validation tasks")
+
+    seed = sub.add_parser("seed-matter", help="seed or repair a matter from a local workspace inventory")
+    _ = seed.add_argument("--db", required=True)
+    _ = seed.add_argument("--matter", required=True)
+    _ = seed.add_argument("--workspace", required=True)
+    _ = seed.add_argument("--inventory", required=True)
+    _ = seed.add_argument("--provider", required=True)
+    _ = seed.add_argument("--model", required=True)
+    _ = seed.add_argument("--estimated-cost-usd", dest="estimated_cost_usd", type=float, default=0.0)
+    _add_fallback_mode_args(seed)
+    _ = seed.add_argument("--write", action="store_true", help="write matter, source, snapshot, tracked-file, and foundation task rows")
 
     validate = sub.add_parser("validate", help="run a durable validation gate")
-    validate.add_argument("--db", required=True)
-    validate.add_argument("--gate", required=True)
-    validate.add_argument("--target-type", required=True)
-    validate.add_argument("--target-id", required=True)
+    _ = validate.add_argument("--db", required=True)
+    _ = validate.add_argument("--gate", required=True)
+    _ = validate.add_argument("--target-type", required=True)
+    _ = validate.add_argument("--target-id", required=True)
 
     certify = sub.add_parser("certify", help="issue a certification after a passing validation")
-    certify.add_argument("--db", required=True)
-    certify.add_argument("--subject-type", required=True)
-    certify.add_argument("--subject-id", required=True)
-    certify.add_argument("--type", "--certification-type", dest="certification_type", required=True)
-    certify.add_argument("--validator", default="atticus-cli")
+    _ = certify.add_argument("--db", required=True)
+    _ = certify.add_argument("--subject-type", required=True)
+    _ = certify.add_argument("--subject-id", required=True)
+    _ = certify.add_argument("--type", "--certification-type", dest="certification_type", required=True)
+    _ = certify.add_argument("--validator", default="atticus-cli")
 
     schedule = sub.add_parser("schedule", help="dependency-aware scheduling preview or write")
-    schedule.add_argument("--db", required=True)
-    schedule.add_argument("--capacity", type=int, default=5)
-    schedule.add_argument("--dry-run", dest="dry_run", action="store_true", default=True)
-    schedule.add_argument("--write", dest="dry_run", action="store_false", help="persist blocked reasons")
+    _ = schedule.add_argument("--db", required=True)
+    _ = schedule.add_argument("--capacity", type=int, default=5)
+    _ = schedule.add_argument("--dry-run", dest="dry_run", action="store_true", default=True)
+    _ = schedule.add_argument("--write", dest="dry_run", action="store_false", help="persist blocked reasons")
 
     lease = sub.add_parser("lease", help="acquire a fenced task lease without launching a worker")
-    lease.add_argument("--db", required=True)
-    lease.add_argument("--task-id", required=True)
-    lease.add_argument("--worker-id", default="atticus-cli")
-    lease.add_argument("--seconds", type=int, default=900)
-    lease.add_argument("--dry-run", dest="dry_run", action="store_true", default=True)
-    lease.add_argument("--write", dest="dry_run", action="store_false", help="write the lease")
+    _ = lease.add_argument("--db", required=True)
+    _ = lease.add_argument("--task-id", required=True)
+    _ = lease.add_argument("--worker-id", default="atticus-cli")
+    _ = lease.add_argument("--seconds", type=int, default=900)
+    _ = lease.add_argument("--dry-run", dest="dry_run", action="store_true", default=True)
+    _ = lease.add_argument("--write", dest="dry_run", action="store_false", help="write the lease")
 
     work_order = sub.add_parser("work-order", help="build a bounded worker work order; never launches workers")
-    work_order.add_argument("--db", required=True)
-    work_order.add_argument("--task-id", required=True)
-    work_order.add_argument("--lease-id")
-    work_order.add_argument("--dry-run", dest="dry_run", action="store_true", default=True)
-    work_order.add_argument("--write-context", dest="dry_run", action="store_false", help="persist the context pack")
+    _ = work_order.add_argument("--db", required=True)
+    _ = work_order.add_argument("--task-id", required=True)
+    _ = work_order.add_argument("--lease-id")
+    _ = work_order.add_argument("--dry-run", dest="dry_run", action="store_true", default=True)
+    _ = work_order.add_argument("--write-context", dest="dry_run", action="store_false", help="persist the context pack")
 
     run_local = sub.add_parser("run-local", help="execute a leased task through the local stub adapter only")
-    run_local.add_argument("--db", required=True)
-    run_local.add_argument("--task-id", required=True)
-    run_local.add_argument("--lease-id", required=True)
-    run_local.add_argument("--worker-id", default="atticus-local")
-    run_local.add_argument("--output-dir", required=True)
-    run_local.add_argument("--write", action="store_true", help="actually record the local candidate output")
+    _ = run_local.add_argument("--db", required=True)
+    _ = run_local.add_argument("--task-id", required=True)
+    _ = run_local.add_argument("--lease-id", required=True)
+    _ = run_local.add_argument("--worker-id", default="atticus-local")
+    _ = run_local.add_argument("--output-dir", required=True)
+    _ = run_local.add_argument("--write", action="store_true", help="actually record the local candidate output")
 
     reduce = sub.add_parser("reduce", help="reduce a candidate packet through reducer-only canonical path")
-    reduce.add_argument("--db", required=True)
-    reduce.add_argument("--candidate-id", required=True)
-    reduce.add_argument("--lease-id", required=True)
-    reduce.add_argument("--dry-run", dest="dry_run", action="store_true", default=True)
-    reduce.add_argument("--write", dest="dry_run", action="store_false", help="write reducer decision/canonical artifact")
+    _ = reduce.add_argument("--db", required=True)
+    _ = reduce.add_argument("--candidate-id", required=True)
+    _ = reduce.add_argument("--lease-id", required=True)
+    _ = reduce.add_argument("--dry-run", dest="dry_run", action="store_true", default=True)
+    _ = reduce.add_argument("--write", dest="dry_run", action="store_false", help="write reducer decision/canonical artifact")
 
     budget = sub.add_parser("budget", help="view, set, or check budget gates")
-    budget.add_argument("--db", required=True)
-    budget.add_argument("--scope-type", default="matter")
-    budget.add_argument("--scope-id", default="atticus")
-    budget.add_argument("--limit", type=float)
-    budget.add_argument("--check", type=float, default=0.0)
-    budget.add_argument("--write", action="store_true")
+    _ = budget.add_argument("--db", required=True)
+    _ = budget.add_argument("--scope-type", default="matter")
+    _ = budget.add_argument("--scope-id", default="atticus")
+    _ = budget.add_argument("--limit", type=float)
+    _ = budget.add_argument("--check", type=float, default=0.0)
+    _ = budget.add_argument("--write", action="store_true")
 
     provider_policy = sub.add_parser("provider-policy", help="check provider/model fallback policy")
     _add_provider_policy_args(provider_policy)
 
+    set_provider_policy = sub.add_parser("set-provider-policy", help="set provider/model policy on queued tasks for a matter")
+    _ = set_provider_policy.add_argument("--db", required=True)
+    _ = set_provider_policy.add_argument("--matter", required=True)
+    _ = set_provider_policy.add_argument("--provider")
+    _ = set_provider_policy.add_argument("--model")
+    _ = set_provider_policy.add_argument("--policy-file")
+    _ = set_provider_policy.add_argument("--estimated-cost-usd", dest="estimated_cost_usd", type=float, default=0.0)
+    _add_fallback_mode_args(set_provider_policy)
+    _ = set_provider_policy.add_argument("--write", action="store_true", help="write normalized provider policy to queued tasks")
+
+    model_policy = sub.add_parser("model-policy", help="validate or resolve a model routing policy file")
+    _ = model_policy.add_argument("action", choices=["validate", "resolve"])
+    _ = model_policy.add_argument("--policy-file", required=True)
+    _ = model_policy.add_argument("--layer", default="")
+    _ = model_policy.add_argument("--stage", default="")
+    _ = model_policy.add_argument("--task-type", default="")
+    _ = model_policy.add_argument("--task-id", default="")
+
     provider_probe = sub.add_parser("provider-probe", help="make a tiny OpenRouter probe before live resume")
-    provider_probe.add_argument("--provider", default="openrouter")
-    provider_probe.add_argument("--model", required=True)
-    provider_probe.add_argument("--allow-fallback", action="store_true")
+    _ = provider_probe.add_argument("--provider", default="openrouter")
+    _ = provider_probe.add_argument("--model", required=True)
+    _ = provider_probe.add_argument("--allow-fallback", action="store_true")
 
     live_resume = sub.add_parser("live-resume", help="prepare safe live OpenRouter leases without launching workers")
-    live_resume.add_argument("--db", required=True)
-    live_resume.add_argument("--capacity", type=int, default=15)
-    live_resume.add_argument("--model", default="deepseek/deepseek-v4-pro", help="OpenRouter model to probe for live resume")
-    live_resume.add_argument("--probe", action="store_true", help="run a live OpenRouter probe before planning")
-    live_resume.add_argument("--probe-result-json", help="preverified provider probe JSON from provider-probe")
-    live_resume.add_argument("--write-leases", action="store_true")
-    live_resume.add_argument("--worker-prefix", default="atticus-openrouter")
+    _ = live_resume.add_argument("--db", required=True)
+    _ = live_resume.add_argument("--capacity", type=int, default=15)
+    _ = live_resume.add_argument("--model", default="deepseek/deepseek-v4-pro", help="OpenRouter model to probe for live resume")
+    _ = live_resume.add_argument("--probe", action="store_true", help="run a live OpenRouter probe before planning")
+    _ = live_resume.add_argument("--probe-result-json", help="preverified provider probe JSON from provider-probe")
+    _ = live_resume.add_argument("--write-leases", action="store_true")
+    _ = live_resume.add_argument("--worker-prefix", default="atticus-openrouter")
+
+    free_loop = sub.add_parser("run-free-loop", help="run bounded OpenRouter-free autonomous supervisor ticks")
+    _ = free_loop.add_argument("--db", required=True)
+    _ = free_loop.add_argument("--output-dir", required=True)
+    _ = free_loop.add_argument("--capacity", type=int, default=15)
+    _ = free_loop.add_argument("--max-ticks", type=int, default=1)
+    _ = free_loop.add_argument("--runtime", choices=["openrouter", "local", "codex"], default="openrouter")
+    _ = free_loop.add_argument("--allow-live", action="store_true", help="permit live OpenRouter calls after normal runtime gates")
 
     reconcile = sub.add_parser("reconcile-foundation", help="validate/certify foundation before live resume")
-    reconcile.add_argument("--db", required=True)
-    reconcile.add_argument("--matter", default="atticus")
-    reconcile.add_argument("--dry-run", dest="dry_run", action="store_true", default=True)
-    reconcile.add_argument("--write", dest="dry_run", action="store_false")
-    reconcile.add_argument("--validator", default="atticus-cli")
+    _ = reconcile.add_argument("--db", required=True)
+    _ = reconcile.add_argument("--matter", default="atticus")
+    _ = reconcile.add_argument("--dry-run", dest="dry_run", action="store_true", default=True)
+    _ = reconcile.add_argument("--write", dest="dry_run", action="store_false")
+    _ = reconcile.add_argument("--validator", default="atticus-cli")
 
     policy = sub.add_parser("policy-check", help="check provider/model fallback policy")
     _add_provider_policy_args(policy)
 
     attention = sub.add_parser("human-attention", help="list or add human attention items")
-    attention.add_argument("--db", required=True)
-    attention.add_argument("--add", action="store_true")
-    attention.add_argument("--target-type", default="manual")
-    attention.add_argument("--target-id", default="manual")
-    attention.add_argument("--severity", default="info")
-    attention.add_argument("--reason", default="")
+    _ = attention.add_argument("--db", required=True)
+    _ = attention.add_argument("--add", action="store_true")
+    _ = attention.add_argument("--target-type", default="manual")
+    _ = attention.add_argument("--target-id", default="manual")
+    _ = attention.add_argument("--severity", default="info")
+    _ = attention.add_argument("--reason", default="")
 
     migrate = sub.add_parser("migrate-report", help="dry-run migration report for legacy workspace")
-    migrate.add_argument("--workspace", required=True)
-    migrate.add_argument("--db")
-    migrate.add_argument("--dry-run", dest="dry_run", action="store_true", default=True)
-    migrate.add_argument("--write", dest="dry_run", action="store_false", help="persist report metadata")
+    _ = migrate.add_argument("--workspace", required=True)
+    _ = migrate.add_argument("--db")
+    _ = migrate.add_argument("--dry-run", dest="dry_run", action="store_true", default=True)
+    _ = migrate.add_argument("--write", dest="dry_run", action="store_false", help="persist report metadata")
 
     doctor = sub.add_parser("doctor", help="safety and schema diagnostics")
-    doctor.add_argument("--db", required=True)
+    _ = doctor.add_argument("--db", required=True)
 
     return parser
 
 
 def _add_provider_policy_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--provider", required=True)
-    parser.add_argument("--model", required=True)
-    parser.add_argument("--actual-provider")
-    parser.add_argument("--actual-model")
-    parser.add_argument("--allow-fallback", action="store_true")
-    parser.add_argument("--db")
-    parser.add_argument("--task-id")
+    _ = parser.add_argument("--provider", required=True)
+    _ = parser.add_argument("--model", required=True)
+    _ = parser.add_argument("--actual-provider")
+    _ = parser.add_argument("--actual-model")
+    _ = parser.add_argument("--allow-fallback", action="store_true")
+    _ = parser.add_argument("--db")
+    _ = parser.add_argument("--task-id")
+
+
+def _add_fallback_mode_args(parser: argparse.ArgumentParser) -> None:
+    fallback = parser.add_mutually_exclusive_group()
+    _ = fallback.add_argument("--allow-fallback", dest="allow_fallback", action="store_true", default=False)
+    _ = fallback.add_argument("--no-fallback", dest="allow_fallback", action="store_false")
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    args = cast(CliArgs, cast(object, build_parser().parse_args(argv)))
 
     try:
         return _main(args)
@@ -196,7 +303,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
 
-def _main(args: argparse.Namespace) -> int:
+def _main(args: CliArgs) -> int:
     if args.command == "init":
         repo.initialize_database(args.db)
         with repo.db_connection(args.db) as conn:
@@ -234,7 +341,7 @@ def _main(args: argparse.Namespace) -> int:
     if args.command == "rebuild-search-index":
         authorized_matter_scope = authorized_matter_from_env()
         if args.dry_run:
-            require_matter_access(args.matter, authorized_matter_scope=authorized_matter_scope)
+            _ = require_matter_access(args.matter, authorized_matter_scope=authorized_matter_scope)
             print_json(
                 {
                     "dry_run": True,
@@ -265,6 +372,22 @@ def _main(args: argparse.Namespace) -> int:
                 "candidates": [c.__dict__ for c in result.candidates],
             }
         )
+        return 0
+
+    if args.command == "seed-matter":
+        with repo.db_connection(args.db, read_only=not args.write) as conn:
+            result = seed_matter_from_inventory(
+                conn,
+                matter_scope=args.matter,
+                workspace=args.workspace,
+                inventory=args.inventory,
+                provider=args.provider,
+                model=args.model,
+                allow_fallback=args.allow_fallback,
+                estimated_cost_usd=args.estimated_cost_usd,
+                dry_run=not args.write,
+            )
+        print_json(result.as_dict())
         return 0
 
     if args.command == "validate":
@@ -396,6 +519,49 @@ def _main(args: argparse.Namespace) -> int:
         print_json({"budget_id": budget_id, "decision": decision.__dict__, "status": status.__dict__})
         return 0 if decision.allowed else 2
 
+    if args.command == "set-provider-policy":
+        if args.policy_file:
+            with repo.db_connection(args.db, read_only=not args.write) as conn:
+                result = _set_model_policy_for_matter_from_file(
+                    conn,
+                    matter_scope=args.matter,
+                    policy_file=args.policy_file,
+                    dry_run=not args.write,
+                )
+            print_json(result)
+            return 0
+        if not args.provider or not args.model:
+            raise ValueError("set-provider-policy requires --provider/--model or --policy-file")
+        with repo.db_connection(args.db, read_only=not args.write) as conn:
+            result = set_provider_policy_for_matter(
+                conn,
+                matter_scope=args.matter,
+                provider=args.provider,
+                model=args.model,
+                allow_fallback=args.allow_fallback,
+                estimated_cost_usd=args.estimated_cost_usd,
+                dry_run=not args.write,
+            )
+        print_json(result.as_dict())
+        return 0
+
+    if args.command == "model-policy":
+        if args.policy_file is None:
+            raise ValueError("model-policy requires --policy-file")
+        policy = load_model_routing_policy(Path(args.policy_file))
+        if args.action == "validate":
+            print_json({"ok": True, "policy": policy.as_dict()})
+            return 0
+        resolved = provider_policy_for_route(
+            policy,
+            layer=args.layer,
+            stage=args.stage,
+            task_type=args.task_type,
+            task_id=args.task_id,
+        )
+        print_json({"ok": True, "resolved": resolved})
+        return 0
+
     if args.command in {"provider-policy", "policy-check"}:
         actual = None
         if args.actual_provider or args.actual_model:
@@ -416,6 +582,7 @@ def _main(args: argparse.Namespace) -> int:
 
     if args.command == "live-resume":
         env = dict(os.environ)
+        probe_result: object
         if args.probe_result_json:
             try:
                 probe_result = json.loads(args.probe_result_json)
@@ -439,6 +606,20 @@ def _main(args: argparse.Namespace) -> int:
             )
         print_json(plan)
         return 0 if plan["ready"] else 2
+
+    if args.command == "run-free-loop":
+        with repo.db_connection(args.db) as conn:
+            result = run_free_loop(
+                conn,
+                output_dir=args.output_dir,
+                capacity=args.capacity,
+                max_ticks=args.max_ticks,
+                runtime=args.runtime,
+                allow_live=args.allow_live,
+                env=dict(os.environ),
+            )
+        print_json(result)
+        return 0
 
     if args.command == "reconcile-foundation":
         with repo.db_connection(args.db) as conn:
@@ -464,7 +645,7 @@ def _main(args: argparse.Namespace) -> int:
                 print_json({"attention_id": attention_id})
             else:
                 rows = [
-                    dict(row)
+                    _row_to_dict(row)
                     for row in conn.execute(
                         "SELECT * FROM human_attention WHERE status = 'open' ORDER BY attention_id DESC LIMIT 50"
                     )
@@ -489,17 +670,18 @@ def _main(args: argparse.Namespace) -> int:
     if args.command == "doctor":
         with repo.db_connection(args.db, read_only=True) as conn:
             expired = [
-                row["lease_id"]
+                _row_str(row, "lease_id")
                 for row in conn.execute(
                     "SELECT lease_id FROM leases WHERE status = 'active' AND expires_at <= ? ORDER BY lease_id",
                     (utc_now(),),
                 )
             ]
             tables = {
-                name: int(conn.execute(f"SELECT COUNT(*) AS n FROM {name}").fetchone()["n"])
+                name: _count_table(conn, name)
                 for name in ("events", "runs", "sources", "artifacts", "tasks", "leases", "human_attention")
             }
-            schema_version = conn.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()["value"]
+            schema_row = conn.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()
+            schema_version = _row_str(schema_row, "value")
         print_json(
             {
                 "ok": True,
@@ -519,37 +701,113 @@ def _main(args: argparse.Namespace) -> int:
     return 1
 
 
-def _schedule_preview(conn: Any, *, capacity: int) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def _schedule_preview(conn: sqlite3.Connection, *, capacity: int) -> tuple[list[JsonObject], list[JsonObject]]:
     capacity_requested = max(0, capacity)
-    runnable: list[dict[str, Any]] = []
-    blocked: list[dict[str, Any]] = []
-    for task in conn.execute(
+    runnable: list[JsonObject] = []
+    blocked: list[JsonObject] = []
+    task_rows = cast(Iterable[sqlite3.Row], conn.execute(
         """
         SELECT * FROM tasks
         WHERE status IN ('queued', 'ready', 'blocked')
         ORDER BY expected_value DESC, created_at ASC
         """
-    ):
-        result = evaluate_task_gates(conn, task)
-        blockers = result.reasons + _budget_blockers(conn, task)
+    ))
+    for task in task_rows:
+        result = evaluate_task_gates(conn, cast(Mapping[str, object], cast(object, task)))
+        blockers = result.reasons + budget_blockers(conn, task)
         if blockers:
-            blocked.append({"task_id": task["task_id"], "title": task["title"], "reasons": blockers})
+            blocked.append({"task_id": _row_str(task, "task_id"), "title": _row_str(task, "title"), "reasons": blockers})
         elif len(runnable) < capacity_requested:
-            runnable.append(_task_summary(task))
+            runnable.append(_task_summary(cast(Mapping[str, object], cast(object, task))))
     return runnable, blocked
 
 
-def _task_summary(row: Any) -> dict[str, Any]:
+def _set_model_policy_for_matter_from_file(
+    conn: sqlite3.Connection,
+    *,
+    matter_scope: str,
+    policy_file: str,
+    dry_run: bool,
+) -> JsonObject:
+    policy = load_model_routing_policy(Path(policy_file))
+    rows = [
+        cast(Mapping[str, object], row)
+        for row in conn.execute(
+            """
+            SELECT task_id, stage, task_type, provider_policy_json
+            FROM tasks
+            WHERE matter_scope = ? AND status = 'queued'
+            ORDER BY task_id
+            """,
+            (matter_scope,),
+        )
+    ]
+    changed: list[str] = []
+    resolved: list[JsonObject] = []
+    for row in rows:
+        provider_policy = provider_policy_for_route(
+            policy,
+            layer="worker",
+            stage=str(row["stage"]),
+            task_type=str(row["task_type"]),
+            task_id=str(row["task_id"]),
+        )
+        resolved.append({"task_id": str(row["task_id"]), "provider_policy": provider_policy})
+        if str(row["provider_policy_json"] or "{}") != json.dumps(provider_policy, sort_keys=True, separators=(",", ":")):
+            changed.append(str(row["task_id"]))
+        if not dry_run:
+            _ = conn.execute(
+                "UPDATE tasks SET provider_policy_json = ?, updated_at = ? WHERE task_id = ?",
+                (json.dumps(provider_policy, sort_keys=True, separators=(",", ":")), utc_now(), str(row["task_id"])),
+            )
+    if not dry_run and rows:
+        _ = repo.emit_event(
+            conn,
+            "model_policy.set",
+            matter_scope=matter_scope,
+            payload={"policy_file": str(Path(policy_file).resolve()), "task_ids": [str(row["task_id"]) for row in rows]},
+        )
     return {
-        "task_id": row["task_id"],
-        "title": row["title"],
-        "stage": row["stage"],
-        "task_type": row["task_type"],
-        "expected_value": row["expected_value"],
+        "dry_run": dry_run,
+        "matter_scope": matter_scope,
+        "policy_file": str(Path(policy_file).resolve()),
+        "tasks_matched": len(rows),
+        "tasks_updated": 0 if dry_run else len(changed),
+        "task_ids": [str(row["task_id"]) for row in rows],
+        "resolved": resolved,
     }
 
 
-def print_json(value: Any) -> None:
+def _task_summary(row: Mapping[str, object]) -> JsonObject:
+    return {
+        "task_id": str(row["task_id"]),
+        "title": str(row["title"]),
+        "stage": str(row["stage"]),
+        "task_type": str(row["task_type"]),
+        "expected_value": int(float(str(row["expected_value"]))),
+    }
+
+
+def _row_value(row: sqlite3.Row | None, key: str, default: object = "") -> object:
+    if row is None:
+        return default
+    return cast(object, row[key])
+
+
+def _row_str(row: sqlite3.Row | None, key: str) -> str:
+    return str(_row_value(row, key))
+
+
+def _row_to_dict(row: sqlite3.Row) -> JsonObject:
+    return {str(key): _row_value(row, str(key)) for key in row.keys()}
+
+
+def _count_table(conn: sqlite3.Connection, name: str) -> int:
+    row = conn.execute(f"SELECT COUNT(*) AS n FROM {name}").fetchone()
+    return int(str(_row_value(row, "n", 0)))
+
+
+def print_json(value: object) -> None:
     print(json.dumps(value, indent=2, sort_keys=True))
 
 
