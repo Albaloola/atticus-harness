@@ -18,6 +18,7 @@ from atticus.context.diagnostics import build_context_diagnostics
 from atticus.core.events import utc_now
 from atticus.core.matters import authorized_matter_from_env, require_matter_access
 from atticus.db import repo
+from atticus.extraction.local import repair_source_extractions
 from atticus.graph.certifications import CertificationBlocked, certify_subject
 from atticus.matter_seed import seed_matter_from_inventory, set_provider_policy_for_matter
 from atticus.memory.consolidation import consolidate_case_memory
@@ -111,6 +112,7 @@ class CliArgs(Protocol):
     allow_live: bool
     codex_timeout_seconds: float
     codex_reasoning_effort: str
+    extraction_timeout_seconds: float
     add: bool
     severity: str
     reason: str
@@ -178,6 +180,14 @@ def build_parser() -> argparse.ArgumentParser:
     _ = seed.add_argument("--estimated-cost-usd", dest="estimated_cost_usd", type=float, default=0.0)
     _add_fallback_mode_args(seed)
     _ = seed.add_argument("--write", action="store_true", help="write matter, source, snapshot, tracked-file, and foundation task rows")
+
+    extract_sources = sub.add_parser("extract-sources", help="extract or OCR matter-local sources without provider calls")
+    _ = extract_sources.add_argument("--db", required=True)
+    _ = extract_sources.add_argument("--matter", required=True)
+    _ = extract_sources.add_argument("--workspace", required=True)
+    _ = extract_sources.add_argument("--source-id", action="append", default=[])
+    _ = extract_sources.add_argument("--timeout-seconds", dest="extraction_timeout_seconds", type=float, default=90.0)
+    _ = extract_sources.add_argument("--write", action="store_true", help="write extracted text artifacts and extraction/OCR records")
 
     validate = sub.add_parser("validate", help="run a durable validation gate")
     _ = validate.add_argument("--db", required=True)
@@ -493,6 +503,19 @@ def _main(args: CliArgs) -> int:
                 allow_fallback=args.allow_fallback,
                 estimated_cost_usd=args.estimated_cost_usd,
                 dry_run=not args.write,
+            )
+        print_json(result.as_dict())
+        return 0
+
+    if args.command == "extract-sources":
+        with repo.db_connection(args.db, read_only=not args.write) as conn:
+            result = repair_source_extractions(
+                conn,
+                matter_scope=args.matter,
+                workspace=args.workspace,
+                source_ids=args.source_id or [],
+                dry_run=not args.write,
+                timeout_seconds=args.extraction_timeout_seconds,
             )
         print_json(result.as_dict())
         return 0

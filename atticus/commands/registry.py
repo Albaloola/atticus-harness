@@ -32,6 +32,7 @@ def _commands() -> tuple[CommandDef, ...]:
         CommandDef("context", "Read-only context diagnostics for legal audit.", read_only_safe=True),
         CommandDef("coordinator", "Plan or create self-contained legal coordinator task graphs.", supports_dry_run=True),
         CommandDef("doctor", "Safety and schema diagnostics.", read_only_safe=True),
+        CommandDef("extract-sources", "Extract or OCR matter-local sources without provider calls.", supports_dry_run=True),
         CommandDef("human-attention", "List or add human attention items.", supports_dry_run=False),
         CommandDef("import-candidates", "Import legacy material as candidate artifacts.", supports_dry_run=True),
         CommandDef("init", "Initialize an Atticus SQLite database.", requires_write=True),

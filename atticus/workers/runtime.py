@@ -228,7 +228,7 @@ def execute_openrouter_work_order(
         _block_preflight_after_lease(conn, lease_id=lease_id, task_id=task_id, reason=str(exc))
         raise
     try:
-        max_tokens = _positive_int_provider_setting(provider_policy, "max_tokens", default=4096)
+        max_tokens = _positive_int_provider_setting(provider_policy, "max_tokens", default=16000)
         temperature = _nonnegative_float_provider_setting(provider_policy, "temperature", default=0.1)
         timeout_seconds = _positive_float_provider_setting(provider_policy, "timeout_seconds", default=None)
     except ValueError as exc:
@@ -469,11 +469,13 @@ def execute_openrouter_work_order(
         exact_policy_decision = check_provider_policy(requested, actual=actual)
         if exact_policy_decision.allowed:
             policy_decision = exact_policy_decision
-        elif requested.model in configured_models and actual.model == requested.model:
+        elif requested.model in configured_models and _openrouter_model_was_honored(requested.model, actual.model):
             # OpenRouter may expose the endpoint provider name (for example
             # DeepSeek or Novita) while still honoring the requested OpenRouter
-            # model. Allow provenance-only provider names when the exact
-            # requested model is still the configured model.
+            # model. It may also report a dated endpoint variant such as
+            # ``deepseek/deepseek-v4-pro-20260423``. Allow provenance-only
+            # provider names and versioned model suffixes when the requested
+            # configured OpenRouter model was still honored.
             policy_decision = ProviderDecision(True, "openrouter_endpoint_provenance", "requested OpenRouter model was honored; endpoint provider recorded as provenance")
         else:
             policy_decision = exact_policy_decision
@@ -751,6 +753,18 @@ def execute_codex_work_order(
         conn.commit()
         raise
 
+
+
+def _openrouter_model_was_honored(requested_model: str, actual_model: str) -> bool:
+    """Return true when OpenRouter reports the requested model or a dated variant.
+
+    OpenRouter may return endpoint-specific model metadata such as
+    ``deepseek/deepseek-v4-pro-20260423`` for a request to
+    ``deepseek/deepseek-v4-pro``. That is provenance, not fallback, as long as
+    the actual model is the requested model or a hyphen-suffixed variant.
+    """
+
+    return actual_model == requested_model or actual_model.startswith(f"{requested_model}-")
 
 def _require_runtime_lease_for_task(conn: sqlite3.Connection, *, lease_id: str, task_id: str) -> Mapping[str, object]:
     try:
