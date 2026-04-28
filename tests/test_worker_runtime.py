@@ -17,6 +17,7 @@ from atticus.reducer.reducer import reduce_candidate
 from atticus.scheduler.lease import acquire_lease
 from atticus.workers.outputs import record_worker_result
 from atticus.workers.runtime import WorkerExecutionBlocked, execute_codex_work_order, execute_local_work_order
+from atticus.workers.result_parser import RESULT_PACKET_SCHEMA_VERSION
 
 
 def init_db(tmp_path: Path) -> Path:
@@ -39,12 +40,35 @@ def _count(conn: sqlite3.Connection, sql: str) -> int:
 
 def valid_packet(task_id: str) -> dict[str, object]:
     return {
+        "schema_version": RESULT_PACKET_SCHEMA_VERSION,
         "task_id": task_id,
         "summary": "candidate summary",
-        "findings": [{"text": "finding", "citation_ids": []}],
+        "findings": [
+            {
+                "finding_id": "finding-1",
+                "text": "finding",
+                "finding_type": "drafting_note",
+                "citation_ids": [],
+                "confidence": 0.5,
+                "reasoning_status": "uncertain",
+            }
+        ],
         "citations": [],
-        "proposed_artifacts": [{"path": f"candidate/{task_id}.json", "artifact_type": "evidence_registry"}],
+        "proposed_artifacts": [
+            {
+                "path": f"candidate/{task_id}.json",
+                "artifact_type": "evidence_registry",
+                "stage": "S0",
+                "title": "Evidence registry",
+                "content": "{}",
+            }
+        ],
         "proposed_tasks": [],
+        "uncertainties": [],
+        "contradictions": [],
+        "risk_flags": [],
+        "redaction_flags": [],
+        "external_action_requests": [],
     }
 
 

@@ -10,7 +10,7 @@ import sqlite3
 from typing import cast, Protocol
 
 from atticus.db import repo
-from atticus.workers.result_parser import ResultPacketError, parse_result
+from atticus.workers.result_parser import RESULT_PACKET_SCHEMA_VERSION, ResultPacketError, parse_result
 
 SHA256_RE = re.compile(r"^[a-fA-F0-9]{64}$")
 AUTHORITY_CITATION_RE = re.compile(r"(\d{4}|\[[0-9]{4}\]|\b[A-Z][A-Za-z]+ v [A-Z])")
@@ -313,7 +313,7 @@ def validate_reducer_packet_schema(
         _ = parse_result({str(key): value for key, value in cast(Mapping[object, object], payload).items()})
     except ResultPacketError as exc:
         return False, {"error": str(exc)}
-    return True, {"schema": "worker_result_packet.v1"}
+    return True, {"schema": RESULT_PACKET_SCHEMA_VERSION}
 
 
 def validate_canonical_write_authorization(

@@ -23,6 +23,7 @@ from atticus.scheduler import live_orchestrator
 from atticus.scheduler.lease import acquire_lease
 from atticus.scheduler.live_orchestrator import prepare_live_resume
 from atticus.workers.runtime import WorkerExecutionBlocked, execute_openrouter_work_order
+from atticus.workers.result_parser import RESULT_PACKET_SCHEMA_VERSION
 
 
 def _object_dicts(value: object) -> list[dict[str, object]]:
@@ -51,18 +52,43 @@ def init_db(tmp_path: Path) -> Path:
     return db_path
 
 
+def _provider_packet(task_id: str, *, summary: str = "Fake OpenRouter worker completed the bounded work order.") -> dict[str, object]:
+    return {
+        "schema_version": RESULT_PACKET_SCHEMA_VERSION,
+        "task_id": task_id,
+        "summary": summary,
+        "findings": [
+            {
+                "finding_id": "finding-1",
+                "text": "candidate-only finding",
+                "finding_type": "drafting_note",
+                "citation_ids": [],
+                "confidence": 0.5,
+                "reasoning_status": "uncertain",
+            }
+        ],
+        "citations": [],
+        "proposed_artifacts": [
+            {
+                "path": f"candidate/{task_id}/openrouter_result.json",
+                "artifact_type": "provider_result",
+                "stage": "S0",
+                "title": "provider result",
+                "content": "{}",
+            }
+        ],
+        "proposed_tasks": [],
+        "uncertainties": [],
+        "contradictions": [],
+        "risk_flags": [],
+        "redaction_flags": [],
+        "external_action_requests": [],
+    }
+
+
 class FakeOpenRouterClient:
     def __init__(self, *, content: object | None = None, model: str = "deepseek/deepseek-v4-pro", usage: dict[str, object] | None = None) -> None:
-        self.content: object = content or {
-            "task_id": "live-task",
-            "summary": "Fake OpenRouter worker completed the bounded work order.",
-            "findings": [{"text": "candidate-only finding", "citation_ids": []}],
-            "citations": [],
-            "proposed_artifacts": [
-                {"path": "candidate/live-task/openrouter_result.json", "artifact_type": "provider_result", "stage": "S0", "title": "provider result"}
-            ],
-            "proposed_tasks": [],
-        }
+        self.content: object = content or _provider_packet("live-task")
         self.model: str = model
         self.usage: dict[str, object] = usage or {"prompt_tokens": 120, "completion_tokens": 40, "total_tokens": 160}
         self.calls: list[dict[str, object]] = []
@@ -483,18 +509,8 @@ def test_openrouter_runtime_records_candidate_and_provider_telemetry_with_fake_c
 def test_openrouter_runtime_honors_deepseek_profile_generation_settings(tmp_path: Path):
     class ConfigurableFakeOpenRouterClient(FakeOpenRouterClient):
         def __init__(self) -> None:
-            content: dict[str, object] = {
-                "task_id": "configured-deepseek",
-                "summary": "Configured DeepSeek profile completed.",
-                "findings": [{"text": "candidate-only finding", "citation_ids": []}],
-                "citations": [],
-                "proposed_artifacts": [
-                    {"path": "candidate/configured-deepseek/openrouter_result.json", "artifact_type": "provider_result", "stage": "S0", "title": "provider result"}
-                ],
-                "proposed_tasks": [],
-            }
             super().__init__(
-                content=content,
+                content=_provider_packet("configured-deepseek", summary="Configured DeepSeek profile completed."),
                 model="deepseek/deepseek-v4-flash",
             )
             self.timeout: float = 120.0
@@ -554,18 +570,8 @@ def test_openrouter_paid_deepseek_allows_endpoint_provider_provenance(tmp_path: 
             return response
 
     db_path = init_db(tmp_path)
-    content: dict[str, object] = {
-        "task_id": "endpoint-provider",
-        "summary": "Endpoint provider provenance accepted.",
-        "findings": [{"text": "candidate-only finding", "citation_ids": []}],
-        "citations": [],
-        "proposed_artifacts": [
-            {"path": "candidate/endpoint-provider/openrouter_result.json", "artifact_type": "provider_result", "stage": "S0", "title": "provider result"}
-        ],
-        "proposed_tasks": [],
-    }
     client = EndpointProviderClient(
-        content=content
+        content=_provider_packet("endpoint-provider", summary="Endpoint provider provenance accepted.")
     )
     with repo.db_connection(db_path) as conn:
         repo.add_task(
@@ -610,16 +616,7 @@ def test_openrouter_runtime_records_final_failover_requested_model_in_telemetry(
             return {
                 "provider": "openrouter",
                 "model": model,
-                "content": {
-                    "task_id": "runtime-failover",
-                    "summary": "Fake OpenRouter worker completed failover work.",
-                    "findings": [{"text": "candidate-only finding", "citation_ids": []}],
-                    "citations": [],
-                    "proposed_artifacts": [
-                        {"path": "candidate/runtime-failover/openrouter_result.json", "artifact_type": "provider_result", "stage": "S0", "title": "provider result"}
-                    ],
-                    "proposed_tasks": [],
-                },
+                "content": _provider_packet("runtime-failover", summary="Fake OpenRouter worker completed failover work."),
                 "usage": {"prompt_tokens": 12, "completion_tokens": 4, "total_tokens": 16},
                 "raw": {"id": "chatcmpl-failover"},
             }
@@ -1003,18 +1000,8 @@ def test_openrouter_runtime_blocks_malformed_usage_scalars_after_dispatch_with_t
 
 def test_openrouter_runtime_accepts_whole_number_usage_strings(tmp_path: Path):
     db_path = init_db(tmp_path)
-    content: dict[str, object] = {
-        "task_id": "string-usage-runtime",
-        "summary": "Fake OpenRouter worker completed the bounded work order.",
-        "findings": [{"text": "candidate-only finding", "citation_ids": []}],
-        "citations": [],
-        "proposed_artifacts": [
-            {"path": "candidate/string-usage-runtime/openrouter_result.json", "artifact_type": "provider_result", "stage": "S0", "title": "provider result"}
-        ],
-        "proposed_tasks": [],
-    }
     client = FakeOpenRouterClient(
-        content=content,
+        content=_provider_packet("string-usage-runtime"),
         usage={"prompt_tokens": "12", "completion_tokens": "4", "total_tokens": "16"},
     )
     with repo.db_connection(db_path) as conn:

@@ -11,7 +11,9 @@ import sys
 from pathlib import Path
 from typing import Protocol, cast
 
+from atticus.commands.registry import command_by_name, list_commands
 from atticus.config import DEFAULT_DB_PATH
+from atticus.context.diagnostics import build_context_diagnostics
 from atticus.core.events import utc_now
 from atticus.core.matters import authorized_matter_from_env, require_matter_access
 from atticus.db import repo
@@ -43,7 +45,10 @@ from atticus.scheduler.planner import budget_blockers, select_runnable_tasks
 from atticus.skills.registry import list_skills, load_skill
 from atticus.status.inspect import inspect_record
 from atticus.status.report import generate_status
+from atticus.tools.registry import list_tools
 from atticus.validation.gates import run_validation
+from atticus.verifier import verify_candidate
+from atticus.workflows.registry import list_workflows, load_workflow, plan_workflow
 from atticus.workers.outputs import reject_candidate_output
 from atticus.workers.runtime import execute_local_work_order
 from atticus.workers.work_order import build_work_order
@@ -106,6 +111,13 @@ class CliArgs(Protocol):
     add: bool
     severity: str
     reason: str
+    json_output: bool
+    token_budget: int
+    explain: bool
+    memory_id: str | None
+    session_id: str | None
+    status: str | None
+    name: str
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -114,6 +126,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     init = sub.add_parser("init", help="initialize an Atticus SQLite database")
     _ = init.add_argument("--db", default=str(DEFAULT_DB_PATH))
+
+    commands = sub.add_parser("commands", help="list command metadata")
+    _ = commands.add_argument("action", choices=["list"])
+    _ = commands.add_argument("--json", dest="json_output", action="store_true")
+
+    command = sub.add_parser("command", help="show command metadata")
+    _ = command.add_argument("action", choices=["show"])
+    _ = command.add_argument("name")
+    _ = command.add_argument("--json", dest="json_output", action="store_true")
 
     status = sub.add_parser("status", help="read-only run status")
     _ = status.add_argument("--db", required=True)
@@ -186,6 +207,13 @@ def build_parser() -> argparse.ArgumentParser:
     _ = work_order.add_argument("--dry-run", dest="dry_run", action="store_true", default=True)
     _ = work_order.add_argument("--write-context", dest="dry_run", action="store_false", help="persist the context pack")
 
+    context = sub.add_parser("context", help="read-only context pack diagnostics for legal audit")
+    _ = context.add_argument("--db", required=True)
+    _ = context.add_argument("--task-id", required=True)
+    _ = context.add_argument("--token-budget", type=int, default=16_000)
+    _ = context.add_argument("--json", dest="json_output", action="store_true")
+    _ = context.add_argument("--explain", action="store_true")
+
     run_local = sub.add_parser("run-local", help="execute a leased task through the local stub adapter only")
     _ = run_local.add_argument("--db", required=True)
     _ = run_local.add_argument("--task-id", required=True)
@@ -240,6 +268,43 @@ def build_parser() -> argparse.ArgumentParser:
     skill = sub.add_parser("skill", help="list or show bundled worker skills")
     _ = skill.add_argument("action", choices=["list", "show"])
     _ = skill.add_argument("--skill-id")
+
+    tools = sub.add_parser("tools", help="list Atticus legal tools")
+    _ = tools.add_argument("action", choices=["list"])
+    _ = tools.add_argument("--db")
+    _ = tools.add_argument("--matter", default="atticus")
+    _ = tools.add_argument("--json", dest="json_output", action="store_true")
+
+    verifier = sub.add_parser("verifier", help="run independent verifier checks against candidates")
+    _ = verifier.add_argument("action", choices=["run"])
+    _ = verifier.add_argument("--db", required=True)
+    _ = verifier.add_argument("--candidate-id", required=True)
+    _ = verifier.add_argument("--type", "--verifier-type", dest="type", required=True)
+    _ = verifier.add_argument("--write", action="store_true")
+    _ = verifier.add_argument("--json", dest="json_output", action="store_true")
+
+    workflow = sub.add_parser("workflow", help="list, show, or run markdown legal workflows")
+    _ = workflow.add_argument("action", choices=["list", "show", "run"])
+    _ = workflow.add_argument("name", nargs="?")
+    _ = workflow.add_argument("--db")
+    _ = workflow.add_argument("--matter", default="atticus")
+    _ = workflow.add_argument("--dry-run", dest="dry_run", action="store_true", default=True)
+    _ = workflow.add_argument("--write", dest="dry_run", action="store_false")
+
+    memory = sub.add_parser("memory", help="list, show, or update typed legal memory")
+    _ = memory.add_argument("action", choices=["list", "show", "mark-stale", "reject", "export-index"])
+    _ = memory.add_argument("--db", required=True)
+    _ = memory.add_argument("--matter", default="atticus")
+    _ = memory.add_argument("--memory-id")
+    _ = memory.add_argument("--reason", default="")
+    _ = memory.add_argument("--write", action="store_true")
+
+    session = sub.add_parser("session", help="list, show, resume, or export sensitive legal sessions")
+    _ = session.add_argument("action", choices=["list", "show", "resume", "export"])
+    _ = session.add_argument("session_id", nargs="?")
+    _ = session.add_argument("--db", required=True)
+    _ = session.add_argument("--matter", default="atticus")
+    _ = session.add_argument("--status")
 
     provider_probe = sub.add_parser("provider-probe", help="make a tiny OpenRouter probe before live resume")
     _ = provider_probe.add_argument("--provider", default="openrouter")
@@ -327,6 +392,14 @@ def _main(args: CliArgs) -> int:
         with repo.db_connection(args.db) as conn:
             repo.upsert_run(conn, "default", "initialized", "database initialized")
         print(f"initialized {Path(args.db)}")
+        return 0
+
+    if args.command == "commands":
+        print_json({"commands": [command.as_dict() for command in list_commands() if not command.hidden]})
+        return 0
+
+    if args.command == "command":
+        print_json(command_by_name(args.name).as_dict())
         return 0
 
     if args.command == "status":
@@ -464,6 +537,15 @@ def _main(args: CliArgs) -> int:
                 persist_context=not args.dry_run,
             )
         print_json({"dry_run": args.dry_run, "work_order": order.as_dict()})
+        return 0
+
+    if args.command == "context":
+        with repo.db_connection(args.db, read_only=True) as conn:
+            diagnostics = build_context_diagnostics(conn, task_id=args.task_id, token_budget=args.token_budget)
+        if args.explain and not args.json_output:
+            print(_context_markdown(diagnostics))
+        else:
+            print_json(diagnostics)
         return 0
 
     if args.command == "run-local":
@@ -612,6 +694,105 @@ def _main(args: CliArgs) -> int:
             raise ValueError("skill show requires --skill-id")
         print_json(load_skill(args.skill_id).as_work_order_context())
         return 0
+
+    if args.command == "tools":
+        tools_payload = {"tools": [tool.metadata.as_dict() for tool in list_tools() if not tool.hidden]}
+        print_json(tools_payload)
+        return 0
+
+    if args.command == "verifier":
+        with repo.db_connection(args.db, read_only=not args.write) as conn:
+            result = verify_candidate(
+                conn,
+                candidate_id=args.candidate_id,
+                verifier_type=args.type,
+                write=args.write,
+            )
+        print_json({"dry_run": not args.write, **result.as_dict()})
+        return 0 if result.passed else 2
+
+    if args.command == "workflow":
+        if args.action == "list":
+            print_json({"workflows": [{"name": workflow.name, "frontmatter": workflow.frontmatter} for workflow in list_workflows()]})
+            return 0
+        if not args.name:
+            raise ValueError(f"workflow {args.action} requires NAME")
+        if args.action == "show":
+            print_json(load_workflow(args.name).as_dict())
+            return 0
+        if not args.db:
+            raise ValueError("workflow run requires --db")
+        with repo.db_connection(args.db, read_only=args.dry_run) as conn:
+            result = plan_workflow(conn, name=args.name, matter_scope=args.matter, dry_run=args.dry_run)
+        print_json(result)
+        return 0
+
+    if args.command == "memory":
+        with repo.db_connection(args.db, read_only=not args.write) as conn:
+            if args.action == "list":
+                print_json({"matter_scope": args.matter, "memories": repo.list_legal_memories(conn, matter_scope=args.matter)})
+                return 0
+            if not args.memory_id:
+                raise ValueError(f"memory {args.action} requires --memory-id")
+            if args.action == "show":
+                memory = repo.get_legal_memory(conn, memory_id=args.memory_id, matter_scope=args.matter)
+                if memory is None:
+                    raise KeyError(f"memory not found: {args.memory_id}")
+                print_json(memory)
+                return 0
+            if args.action == "mark-stale":
+                if not args.write:
+                    print_json({"dry_run": True, "memory_id": args.memory_id, "would_mark_stale": True, "reason": args.reason})
+                    return 0
+                repo.mark_legal_memory_stale(conn, memory_id=args.memory_id, matter_scope=args.matter, reason=args.reason or "operator marked stale")
+                print_json({"dry_run": False, "memory_id": args.memory_id, "stale": True})
+                return 0
+            if args.action == "reject":
+                if not args.write:
+                    print_json({"dry_run": True, "memory_id": args.memory_id, "would_reject": True, "reason": args.reason})
+                    return 0
+                _ = conn.execute(
+                    "UPDATE legal_memories SET status = 'rejected', updated_at = ? WHERE memory_id = ? AND matter_scope = ?",
+                    (utc_now(), args.memory_id, args.matter),
+                )
+                _ = repo.emit_event(conn, "legal_memory.rejected", matter_scope=args.matter, payload={"memory_id": args.memory_id, "reason": args.reason})
+                print_json({"dry_run": False, "memory_id": args.memory_id, "status": "rejected"})
+                return 0
+            if args.action == "export-index":
+                memories = repo.list_legal_memories(conn, matter_scope=args.matter)
+                print_json({"matter_scope": args.matter, "memory_index": [{"memory_id": item["memory_id"], "type": item["type"], "name": item["name"], "stale": item["stale"]} for item in memories]})
+                return 0
+
+    if args.command == "session":
+        with repo.db_connection(args.db, read_only=True) as conn:
+            if args.action == "list":
+                print_json(
+                    {
+                        "matter_scope": args.matter,
+                        "sessions": repo.list_sessions(conn, matter_scope=args.matter, status=args.status),
+                    }
+                )
+                return 0
+            if not args.session_id:
+                raise ValueError(f"session {args.action} requires SESSION_ID")
+            export = repo.export_session(conn, session_id=args.session_id)
+            if args.action == "show":
+                print_json(export)
+                return 0
+            if args.action == "export":
+                print_json(export)
+                return 0
+            if args.action == "resume":
+                print_json(
+                    {
+                        **export,
+                        "resume": {
+                            "provider_replay": False,
+                            "note": "session resume is transcript-only; provider work must be started through normal gated commands",
+                        },
+                    }
+                )
+                return 0
 
     if args.command in {"provider-policy", "policy-check"}:
         actual = None
@@ -858,6 +1039,31 @@ def _row_to_dict(row: sqlite3.Row) -> JsonObject:
 def _count_table(conn: sqlite3.Connection, name: str) -> int:
     row = conn.execute(f"SELECT COUNT(*) AS n FROM {name}").fetchone()
     return int(str(_row_value(row, "n", 0)))
+
+
+def _context_markdown(diagnostics: Mapping[str, object]) -> str:
+    lines = [
+        f"# Atticus context diagnostics: {diagnostics.get('task_id')}",
+        "",
+        f"- Matter: `{diagnostics.get('matter_scope')}`",
+        f"- Context pack: `{diagnostics.get('context_pack_id')}`",
+        f"- Estimated tokens: `{diagnostics.get('estimated_tokens')}` / `{diagnostics.get('token_budget')}`",
+        f"- Result schema: `{diagnostics.get('result_schema_version')}`",
+        "",
+        "| Section | Kind | Tokens | Cache | Reason |",
+        "|---|---|---:|---|---|",
+    ]
+    for section in cast(list[Mapping[str, object]], diagnostics.get("sections") or []):
+        lines.append(
+            "| {name} | {kind} | {tokens} | {cache} | {reason} |".format(
+                name=section.get("name", ""),
+                kind=section.get("kind", ""),
+                tokens=section.get("estimated_tokens", ""),
+                cache=section.get("cache_scope", ""),
+                reason=str(section.get("inclusion_reason", "")).replace("|", "\\|"),
+            )
+        )
+    return "\n".join(lines)
 
 
 def print_json(value: object) -> None:

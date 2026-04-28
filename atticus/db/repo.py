@@ -14,6 +14,7 @@ from atticus.core.events import Event, utc_now
 from atticus.core.policies import LegalStage, TaskStatus, TrustStatus
 from atticus.core.tasks import TaskSpec
 from atticus.db.schema import DDL, SCHEMA_VERSION
+from atticus.memory.types import LEGAL_MEMORY_TYPES, SOURCE_REQUIRED_MEMORY_TYPES
 
 
 def connect(db_path: str | Path, *, read_only: bool = False) -> sqlite3.Connection:
@@ -972,6 +973,417 @@ def record_migration_report(
         (mid, workspace_path, 1 if dry_run else 0, _json(summary), utc_now()),
     )
     return mid
+
+
+def add_legal_memory(
+    conn: sqlite3.Connection,
+    *,
+    matter_scope: str,
+    memory_type: str,
+    name: str,
+    description: str = "",
+    content: str = "",
+    status: str = "active",
+    confidence: float = 0.0,
+    source_refs: list[dict[str, object]] | None = None,
+    last_verified_at: str | None = None,
+    stale: bool = False,
+    staleness_trigger: str = "",
+    memory_id: str | None = None,
+) -> str:
+    ensure_matter(conn, matter_scope)
+    _validate_legal_memory(
+        conn,
+        matter_scope=matter_scope,
+        memory_type=memory_type,
+        confidence=confidence,
+        source_refs=source_refs or [],
+    )
+    mid = memory_id or f"mem-{uuid4().hex}"
+    now = utc_now()
+    _ = conn.execute(
+        """
+        INSERT INTO legal_memories(memory_id, matter_scope, type, name, description, content,
+          status, confidence, source_refs_json, last_verified_at, stale, staleness_trigger, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            mid,
+            matter_scope,
+            memory_type,
+            name,
+            description,
+            content,
+            status,
+            confidence,
+            _json(source_refs or []),
+            last_verified_at,
+            1 if stale else 0,
+            staleness_trigger,
+            now,
+            now,
+        ),
+    )
+    _ = emit_event(
+        conn,
+        "legal_memory.added",
+        matter_scope=matter_scope,
+        payload={"memory_id": mid, "type": memory_type, "status": status, "stale": stale},
+    )
+    return mid
+
+
+def list_legal_memories(
+    conn: sqlite3.Connection,
+    *,
+    matter_scope: str,
+    status: str | None = "active",
+) -> list[dict[str, object]]:
+    if status is None:
+        rows = conn.execute(
+            "SELECT * FROM legal_memories WHERE matter_scope = ? ORDER BY type, name, memory_id",
+            (matter_scope,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM legal_memories WHERE matter_scope = ? AND status = ? ORDER BY type, name, memory_id",
+            (matter_scope, status),
+        ).fetchall()
+    return [_memory_row_to_dict(row) for row in rows]
+
+
+def get_legal_memory(conn: sqlite3.Connection, *, memory_id: str, matter_scope: str | None = None) -> dict[str, object] | None:
+    if matter_scope is None:
+        row = conn.execute("SELECT * FROM legal_memories WHERE memory_id = ?", (memory_id,)).fetchone()
+    else:
+        row = conn.execute("SELECT * FROM legal_memories WHERE memory_id = ? AND matter_scope = ?", (memory_id, matter_scope)).fetchone()
+    return _memory_row_to_dict(row) if row is not None else None
+
+
+def mark_legal_memory_stale(
+    conn: sqlite3.Connection,
+    *,
+    memory_id: str,
+    matter_scope: str,
+    reason: str,
+) -> None:
+    now = utc_now()
+    cur = conn.execute(
+        """
+        UPDATE legal_memories
+        SET stale = 1, staleness_trigger = ?, updated_at = ?
+        WHERE memory_id = ? AND matter_scope = ?
+        """,
+        (reason, now, memory_id, matter_scope),
+    )
+    if cur.rowcount != 1:
+        raise ValueError(f"memory not found for matter {matter_scope}: {memory_id}")
+    _ = emit_event(
+        conn,
+        "legal_memory.marked_stale",
+        matter_scope=matter_scope,
+        payload={"memory_id": memory_id, "reason": reason},
+    )
+
+
+def _validate_legal_memory(
+    conn: sqlite3.Connection,
+    *,
+    matter_scope: str,
+    memory_type: str,
+    confidence: float,
+    source_refs: list[dict[str, object]],
+) -> None:
+    if memory_type not in LEGAL_MEMORY_TYPES:
+        raise ValueError(f"unknown legal memory type: {memory_type}")
+    if confidence < 0 or confidence > 1:
+        raise ValueError("memory confidence must be between 0 and 1")
+    if memory_type in SOURCE_REQUIRED_MEMORY_TYPES and not source_refs:
+        raise ValueError(f"{memory_type} memory requires source_refs")
+    for index, ref in enumerate(source_refs):
+        target_type = str(ref.get("target_type") or "")
+        target_id = str(ref.get("target_id") or "")
+        if not target_type or not target_id:
+            raise ValueError(f"source_refs[{index}] requires target_type and target_id")
+        if not _memory_ref_exists(conn, matter_scope=matter_scope, target_type=target_type, target_id=target_id):
+            raise ValueError(f"source_refs[{index}] target does not exist in matter {matter_scope}: {target_type}:{target_id}")
+
+
+def _memory_ref_exists(conn: sqlite3.Connection, *, matter_scope: str, target_type: str, target_id: str) -> bool:
+    if target_type == "source":
+        sql = "SELECT 1 FROM sources WHERE source_id = ? AND matter_scope = ? LIMIT 1"
+    elif target_type == "artifact":
+        sql = "SELECT 1 FROM artifacts WHERE artifact_id = ? AND matter_scope = ? LIMIT 1"
+    elif target_type == "authority":
+        sql = "SELECT 1 FROM legal_authorities WHERE authority_id = ? AND matter_scope = ? LIMIT 1"
+    elif target_type == "claim":
+        sql = "SELECT 1 FROM claims WHERE claim_id = ? AND matter_scope = ? LIMIT 1"
+    elif target_type == "chronology_event":
+        sql = "SELECT 1 FROM chronology_events WHERE chronology_event_id = ? AND matter_scope = ? LIMIT 1"
+    elif target_type == "memory":
+        sql = "SELECT 1 FROM legal_memories WHERE memory_id = ? AND matter_scope = ? LIMIT 1"
+    elif target_type == "validation_result":
+        return conn.execute("SELECT 1 FROM validation_results WHERE validation_result_id = ? LIMIT 1", (target_id,)).fetchone() is not None
+    else:
+        return False
+    return conn.execute(sql, (target_id, matter_scope)).fetchone() is not None
+
+
+def _memory_row_to_dict(row: sqlite3.Row) -> dict[str, object]:
+    result: dict[str, object] = {str(key): row[key] for key in row.keys()}
+    result["source_refs"] = json.loads(str(result.pop("source_refs_json") or "[]"))
+    result["stale"] = bool(result["stale"])
+    return result
+
+
+SESSION_ROLES = {"user", "assistant", "system", "tool", "worker", "operator"}
+HOOK_SEVERITIES = {"info", "warning", "blocker"}
+
+
+def create_session(
+    conn: sqlite3.Connection,
+    *,
+    matter_scope: str,
+    title: str,
+    status: str = "active",
+    session_id: str | None = None,
+) -> str:
+    if status not in {"active", "paused", "closed", "archived"}:
+        raise ValueError(f"unsupported session status: {status}")
+    _ensure_session_hook_tables(conn)
+    ensure_matter(conn, matter_scope)
+    sid = session_id or f"sess-{uuid4().hex}"
+    now = utc_now()
+    _ = conn.execute(
+        """
+        INSERT INTO sessions(session_id, matter_scope, title, status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (sid, matter_scope, title, status, now, now),
+    )
+    _ = emit_event(
+        conn,
+        "session.created",
+        matter_scope=matter_scope,
+        payload={"session_id": sid, "status": status, "title": title},
+    )
+    return sid
+
+
+def record_session_message(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    role: str,
+    content: dict[str, object],
+    context_pack_id: str | None = None,
+    provider_run_id: str | None = None,
+    candidate_id: str | None = None,
+    reducer_packet_id: str | None = None,
+    session_message_id: str | None = None,
+) -> str:
+    _ensure_session_hook_tables(conn)
+    if role not in SESSION_ROLES:
+        raise ValueError(f"unsupported session message role: {role}")
+    session = conn.execute("SELECT * FROM sessions WHERE session_id = ?", (session_id,)).fetchone()
+    if session is None:
+        raise ValueError(f"session not found: {session_id}")
+    mid = session_message_id or f"smsg-{uuid4().hex}"
+    now = utc_now()
+    _ = conn.execute(
+        """
+        INSERT INTO session_messages(session_message_id, session_id, role, content_json,
+          context_pack_id, provider_run_id, candidate_id, reducer_packet_id, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            mid,
+            session_id,
+            role,
+            _json(content),
+            context_pack_id,
+            provider_run_id,
+            candidate_id,
+            reducer_packet_id,
+            now,
+        ),
+    )
+    _ = conn.execute("UPDATE sessions SET updated_at = ? WHERE session_id = ?", (now, session_id))
+    _ = emit_event(
+        conn,
+        "session.message_recorded",
+        matter_scope=str(session["matter_scope"]),
+        payload={
+            "session_id": session_id,
+            "session_message_id": mid,
+            "role": role,
+            "context_pack_id": context_pack_id or "",
+            "provider_run_id": provider_run_id or "",
+            "candidate_id": candidate_id or "",
+            "reducer_packet_id": reducer_packet_id or "",
+        },
+    )
+    return mid
+
+
+def list_sessions(
+    conn: sqlite3.Connection,
+    *,
+    matter_scope: str,
+    status: str | None = None,
+) -> list[dict[str, object]]:
+    if not _table_exists(conn, "sessions"):
+        return []
+    if status is None:
+        rows = conn.execute(
+            "SELECT * FROM sessions WHERE matter_scope = ? ORDER BY updated_at DESC, created_at DESC",
+            (matter_scope,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """
+            SELECT * FROM sessions
+            WHERE matter_scope = ? AND status = ?
+            ORDER BY updated_at DESC, created_at DESC
+            """,
+            (matter_scope, status),
+        ).fetchall()
+    return [_session_row_to_dict(row) for row in rows]
+
+
+def get_session(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    matter_scope: str | None = None,
+) -> dict[str, object] | None:
+    if not _table_exists(conn, "sessions"):
+        return None
+    if matter_scope is None:
+        row = conn.execute("SELECT * FROM sessions WHERE session_id = ?", (session_id,)).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT * FROM sessions WHERE session_id = ? AND matter_scope = ?",
+            (session_id, matter_scope),
+        ).fetchone()
+    return _session_row_to_dict(row) if row is not None else None
+
+
+def list_session_messages(conn: sqlite3.Connection, *, session_id: str) -> list[dict[str, object]]:
+    if not _table_exists(conn, "session_messages"):
+        return []
+    rows = conn.execute(
+        "SELECT * FROM session_messages WHERE session_id = ? ORDER BY created_at, session_message_id",
+        (session_id,),
+    ).fetchall()
+    return [_session_message_row_to_dict(row) for row in rows]
+
+
+def export_session(conn: sqlite3.Connection, *, session_id: str) -> dict[str, object]:
+    session = get_session(conn, session_id=session_id)
+    if session is None:
+        raise ValueError(f"session not found: {session_id}")
+    return {"session": session, "messages": list_session_messages(conn, session_id=session_id)}
+
+
+def record_hook_invocation(
+    conn: sqlite3.Connection,
+    *,
+    hook_event: str,
+    matter_scope: str,
+    allowed: bool,
+    severity: str,
+    message: str,
+    details: dict[str, object] | None = None,
+    hook_invocation_id: str | None = None,
+) -> str:
+    _ensure_session_hook_tables(conn)
+    if severity not in HOOK_SEVERITIES:
+        raise ValueError(f"unsupported hook severity: {severity}")
+    hid = hook_invocation_id or f"hook-{uuid4().hex}"
+    now = utc_now()
+    _ = conn.execute(
+        """
+        INSERT INTO hook_invocations(hook_invocation_id, hook_event, matter_scope,
+          allowed, severity, message, details_json, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (hid, hook_event, matter_scope, 1 if allowed else 0, severity, message, _json(details or {}), now),
+    )
+    _ = emit_event(
+        conn,
+        "hook.evaluated",
+        matter_scope=matter_scope,
+        payload={
+            "hook_invocation_id": hid,
+            "hook_event": hook_event,
+            "allowed": allowed,
+            "severity": severity,
+            "message": message,
+        },
+    )
+    return hid
+
+
+def _session_row_to_dict(row: sqlite3.Row) -> dict[str, object]:
+    return {str(key): row[key] for key in row.keys()}
+
+
+def _session_message_row_to_dict(row: sqlite3.Row) -> dict[str, object]:
+    result: dict[str, object] = {str(key): row[key] for key in row.keys()}
+    result["content"] = json.loads(str(result.pop("content_json") or "{}"))
+    return result
+
+
+def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table_name,),
+    ).fetchone() is not None
+
+
+def _ensure_session_hook_tables(conn: sqlite3.Connection) -> None:
+    for statement in (
+        """
+        CREATE TABLE IF NOT EXISTS sessions (
+          session_id TEXT PRIMARY KEY,
+          matter_scope TEXT NOT NULL,
+          title TEXT NOT NULL DEFAULT '',
+          status TEXT NOT NULL DEFAULT 'active',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        ) STRICT
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS session_messages (
+          session_message_id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+          role TEXT NOT NULL,
+          content_json TEXT NOT NULL CHECK(json_valid(content_json)),
+          context_pack_id TEXT REFERENCES context_packs(context_pack_id) ON DELETE SET NULL,
+          provider_run_id TEXT REFERENCES provider_runs(provider_run_id) ON DELETE SET NULL,
+          candidate_id TEXT REFERENCES candidate_outputs(candidate_id) ON DELETE SET NULL,
+          reducer_packet_id TEXT REFERENCES reducer_packets(reducer_packet_id) ON DELETE SET NULL,
+          created_at TEXT NOT NULL
+        ) STRICT
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS hook_invocations (
+          hook_invocation_id TEXT PRIMARY KEY,
+          hook_event TEXT NOT NULL,
+          matter_scope TEXT NOT NULL,
+          allowed INTEGER NOT NULL CHECK(allowed IN (0, 1)),
+          severity TEXT NOT NULL,
+          message TEXT NOT NULL,
+          details_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(details_json)),
+          created_at TEXT NOT NULL
+        ) STRICT
+        """,
+        "CREATE INDEX IF NOT EXISTS sessions_scope_status_idx ON sessions(matter_scope, status, updated_at)",
+        "CREATE INDEX IF NOT EXISTS session_messages_session_idx ON session_messages(session_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS hook_invocations_event_idx ON hook_invocations(hook_event, matter_scope, created_at)",
+    ):
+        _ = conn.execute(statement)
 
 
 def fetch_one(conn: sqlite3.Connection, query: str, params: tuple[object, ...] = ()) -> sqlite3.Row | None:

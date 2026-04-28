@@ -9,7 +9,9 @@ import hashlib
 import json
 import sqlite3
 
+from atticus.context.sections import build_default_sections, estimate_tokens as _estimate_tokens
 from atticus.db import repo
+from atticus.skills.registry import skills_for_task
 
 
 @dataclass(frozen=True)
@@ -39,7 +41,7 @@ def fingerprint_sections(sections: list[dict[str, object]]) -> str:
 
 
 def estimate_tokens(text: str) -> int:
-    return max(1, (len(text) + 3) // 4)
+    return _estimate_tokens(text)
 
 
 def build_context_pack(
@@ -57,33 +59,6 @@ def build_context_pack(
     source_ids = _load_string_list(task, "source_dependencies_json")
     artifact_ids = _load_string_list(task, "artifact_dependencies_json")
     matter_scope = str(task["matter_scope"])
-    required_certs = _load_json_value(str(task["required_certifications_json"]))
-
-    sections: list[dict[str, object]] = [
-        {
-            "name": "stable_prefix",
-            "kind": "system",
-            "content": (
-                "Atticus is the durable source of truth. Workers produce candidate packets only. "
-                "Reducers write canonical legal memory after validation. External legal actions are blocked."
-            ),
-        },
-        {
-            "name": "task_contract",
-            "kind": "task",
-            "content": {
-                "task_id": task["task_id"],
-                "title": task["title"],
-                "stage": task["stage"],
-                "task_type": task["task_type"],
-                "matter_scope": task["matter_scope"],
-                "validation_gates": _load_json_value(str(task["validation_gates_json"])),
-                "required_certifications": required_certs,
-                "provider_policy": _load_json_value(str(task["provider_policy_json"])),
-            },
-        },
-    ]
-
     source_rows = cast(list[Mapping[str, object]], conn.execute(
             """
             SELECT source_id, path, source_type, sha256, trust_status, stale
@@ -128,21 +103,41 @@ def build_context_pack(
         matter_scope=matter_scope,
     )
 
-    sections.extend(
-        [
-            {"name": "evidence_bundle", "kind": "sources", "content": sources},
-            {"name": "artifact_bundle", "kind": "artifacts", "content": artifacts},
-            {
-                "name": "result_packet_schema",
-                "kind": "schema",
-                "content": {
-                    "required_keys": ["task_id", "summary", "findings", "citations", "proposed_artifacts"],
-                    "citation_rule": "Every factual/legal assertion should cite a known source, artifact, or authority.",
-                    "canonical_write_rule": "Workers may not write canonical state.",
-                },
-            },
-        ]
-    )
+    authority_rows = cast(list[Mapping[str, object]], conn.execute(
+        """
+        SELECT authority_id, jurisdiction, citation, authority_type, title, status, source_url
+        FROM legal_authorities
+        WHERE matter_scope = ? AND status != 'rejected'
+        ORDER BY authority_id
+        """,
+        (matter_scope,),
+    ).fetchall())
+    authorities = [dict(row) for row in authority_rows]
+    memory_index = _load_memory_index(conn, matter_scope=matter_scope)
+    skills = [
+        skill.as_work_order_context()
+        for skill in skills_for_task(
+            task_type=str(task["task_type"]),
+            stage=str(task["stage"]),
+            title=str(task["title"]),
+        )
+    ]
+    tools = _available_tool_context()
+    sections = [
+        section.as_dict()
+        for section in build_default_sections(
+            task=dict(task),
+            sources=sources,
+            artifacts=artifacts,
+            authorities=authorities,
+            memory_index=memory_index,
+            skills=skills,
+            tools=tools,
+        )
+        if not section.exclusion_reason
+    ]
+
+    sections.sort(key=lambda section: (-_section_priority(section), str(section["name"])))
 
     canonical = canonicalize_sections(sections)
     estimated = estimate_tokens(canonical)
@@ -164,6 +159,63 @@ def build_context_pack(
             sections=sections,
         )
     return pack
+
+
+def _load_memory_index(conn: sqlite3.Connection, *, matter_scope: str) -> list[dict[str, object]]:
+    exists = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name = 'legal_memories'").fetchone()
+    if exists is None:
+        return []
+    return [
+        {
+            "memory_id": row["memory_id"],
+            "type": row["type"],
+            "name": row["name"],
+            "description": row["description"],
+            "status": row["status"],
+            "confidence": row["confidence"],
+            "stale": bool(row["stale"]),
+        }
+        for row in conn.execute(
+            """
+            SELECT memory_id, type, name, description, status, confidence, stale
+            FROM legal_memories
+            WHERE matter_scope = ? AND status = 'active'
+            ORDER BY type, name, memory_id
+            """,
+            (matter_scope,),
+        )
+    ]
+
+
+def _section_priority(section: Mapping[str, object]) -> int:
+    value = section.get("priority")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        return int(value)
+    raise ValueError(f"context section has non-integer priority: {value!r}")
+
+
+def _available_tool_context() -> list[dict[str, object]]:
+    # Keep this catalog import-free so context generation cannot cycle through
+    # tool implementations that themselves build context packs.
+    return [
+        {"name": "SearchLegalMemory", "read_only": True, "destructive": False, "concurrency_safe": True},
+        {"name": "InspectRecord", "read_only": True, "destructive": False, "concurrency_safe": True},
+        {"name": "BuildContextPack", "read_only": True, "destructive": False, "concurrency_safe": True},
+        {"name": "ValidateCitation", "read_only": True, "destructive": False, "concurrency_safe": True},
+        {"name": "ListMatterArtifacts", "read_only": True, "destructive": False, "concurrency_safe": True},
+        {"name": "ListMatterSources", "read_only": True, "destructive": False, "concurrency_safe": True},
+        {"name": "ExplainValidationGate", "read_only": True, "destructive": False, "concurrency_safe": True},
+        {"name": "ReadDraftArtifact", "read_only": True, "destructive": False, "concurrency_safe": True},
+        {"name": "RecordCandidate", "read_only": False, "destructive": False, "concurrency_safe": False},
+        {"name": "ReduceCandidate", "read_only": False, "destructive": False, "concurrency_safe": False},
+        {"name": "RejectCandidate", "read_only": False, "destructive": False, "concurrency_safe": False},
+        {"name": "WriteDraftArtifact", "read_only": False, "destructive": False, "concurrency_safe": False},
+        {"name": "EditDraftArtifact", "read_only": False, "destructive": True, "concurrency_safe": False},
+        {"name": "MarkMemoryStale", "read_only": False, "destructive": False, "concurrency_safe": True},
+        {"name": "CreateProposedTask", "read_only": False, "destructive": False, "concurrency_safe": True},
+    ]
 
 
 def _load_string_list(task: Mapping[str, object], field: str) -> list[str]:

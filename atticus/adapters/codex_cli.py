@@ -15,6 +15,7 @@ import subprocess
 from typing import cast
 
 from atticus.adapters.base import ExecutionAdapter
+from atticus.workers.result_parser import RESULT_PACKET_SCHEMA_VERSION, result_packet_json_schema
 
 
 LIVE_CODEX_ENV = "ATTICUS_ENABLE_LIVE_CODEX"
@@ -68,9 +69,10 @@ class CodexCliAdapter(ExecutionAdapter):
 
         prompt = (
             "You are a bounded Atticus legal harness worker. Read the work_order JSON below and return exactly one JSON "
-            "candidate result packet matching the supplied output schema. Do not write canonical artifacts. Do not send, "
+            f"candidate result packet matching {RESULT_PACKET_SCHEMA_VERSION} and the supplied output schema. "
+            "Do not write canonical artifacts. Do not send, "
             "file, upload, email, contact, or perform any external legal action. If uncertain, put uncertainty in the "
-            "summary/findings rather than acting externally.\n\n"
+            "uncertainties array and propose follow-up tasks rather than inventing citations.\n\n"
             f"work_order_json:\n{json.dumps(work_order, sort_keys=True)}\n"
         )
         cmd = [
@@ -145,102 +147,7 @@ class CodexCliAdapter(ExecutionAdapter):
 
 
 def _candidate_packet_schema() -> dict[str, object]:
-    return {
-        "type": "object",
-        "additionalProperties": False,
-        "required": ["task_id", "summary", "findings", "citations", "proposed_artifacts", "proposed_tasks"],
-        "properties": {
-            "task_id": {"type": "string"},
-            "summary": {"type": "string"},
-            "findings": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "required": ["text", "citation_ids"],
-                    "properties": {
-                        "text": {"type": "string"},
-                        "citation_ids": {"type": "array", "items": {"type": "string"}},
-                    },
-                },
-            },
-            "citations": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "required": ["target_type", "target_id", "locator"],
-                    "properties": {
-                        "target_type": {"type": "string"},
-                        "target_id": {"type": "string"},
-                        "locator": {"type": "string"},
-                    },
-                },
-            },
-            "proposed_artifacts": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "required": ["path", "artifact_type", "stage", "title", "content"],
-                    "properties": {
-                        "path": {"type": "string"},
-                        "artifact_type": {"type": "string"},
-                        "stage": {"type": "string"},
-                        "title": {"type": "string"},
-                        "content": {"type": "string"},
-                    },
-                },
-            },
-            "proposed_tasks": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "required": ["task_id", "title", "task_type", "stage", "matter_scope", "instructions"],
-                    "properties": {
-                        "task_id": {"type": "string"},
-                        "title": {"type": "string"},
-                        "task_type": {"type": "string"},
-                        "stage": {"type": "string"},
-                        "matter_scope": {"type": "string"},
-                        "instructions": {"type": "string"},
-                        "source_dependencies": {"type": "array", "items": {"type": "string"}},
-                        "artifact_dependencies": {"type": "array", "items": {"type": "string"}},
-                        "task_dependencies": {"type": "array", "items": {"type": "string"}},
-                        "matter_dependencies": {"type": "array", "items": {"type": "string"}},
-                        "validation_gates": {"type": "array", "items": {"type": "string"}},
-                        "required_certifications": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "additionalProperties": False,
-                                "required": ["subject_type", "subject_id", "certification_type"],
-                                "properties": {
-                                    "subject_type": {"type": "string"},
-                                    "subject_id": {"type": "string"},
-                                    "certification_type": {"type": "string"},
-                                },
-                            },
-                        },
-                        "provider_policy": {
-                            "type": "object",
-                            "additionalProperties": False,
-                            "required": ["provider", "model", "allow_fallback", "estimated_cost_usd"],
-                            "properties": {
-                                "provider": {"type": "string"},
-                                "model": {"type": "string"},
-                                "allow_fallback": {"type": "boolean"},
-                                "estimated_cost_usd": {"type": "number"},
-                            },
-                        },
-                        "expected_value": {"type": "number"},
-                        "cost_limit_usd": {"type": "number"},
-                    },
-                },
-            },
-        },
-    }
+    return result_packet_json_schema()
 
 
 def _write_diagnostics(

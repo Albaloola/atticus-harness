@@ -7,6 +7,7 @@ from typing import Protocol, cast
 
 from atticus.adapters.base import ExecutionAdapter
 from atticus.providers.openrouter import OpenRouterClient
+from atticus.workers.result_parser import RESULT_PACKET_SCHEMA_VERSION, result_packet_json_schema
 
 
 class ChatJsonClient(Protocol):
@@ -29,10 +30,10 @@ class DirectOpenRouterAdapter(ExecutionAdapter):
                 "content": (
                     "You are a bounded Atticus legal harness worker. Return only valid JSON. "
                     "Workers produce candidate result packets only. Do not claim to file, send, email, upload, "
-                    "contact, or perform external legal actions. The JSON content object must exactly follow this shape: "
-                    "task_id must equal work_order.task.task_id; summary is a string; findings is an array of objects; "
-                    "citations is an array of objects only, never strings; proposed_artifacts is an array of objects; "
-                    "proposed_tasks is an array of objects. If you have no citations or tasks, return an empty array."
+                    "contact, or perform external legal actions. The JSON content object must exactly follow "
+                    f"{RESULT_PACKET_SCHEMA_VERSION}. Every finding must have finding_id, finding_type, "
+                    "citation_ids, confidence, and reasoning_status. If evidence is insufficient, use "
+                    "uncertainties or propose a follow-up task; do not invent citations."
                 ),
             },
             {
@@ -40,7 +41,7 @@ class DirectOpenRouterAdapter(ExecutionAdapter):
                 "content": json.dumps(
                     {
                         "work_order": work_order,
-                        "required_result_packet_keys": ["task_id", "summary", "findings", "citations", "proposed_artifacts", "proposed_tasks"],
+                        "required_result_packet_schema": result_packet_json_schema(),
                     },
                     sort_keys=True,
                 ),

@@ -1,0 +1,1 @@
+"""Atticus legal tool kernel."""

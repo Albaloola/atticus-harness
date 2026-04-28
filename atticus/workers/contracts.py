@@ -57,7 +57,20 @@ class WorkOrder:
         }
 
 
-REQUIRED_RESULT_PACKET_KEYS = {"task_id", "summary", "findings", "citations", "proposed_artifacts"}
+REQUIRED_RESULT_PACKET_KEYS = {
+    "schema_version",
+    "task_id",
+    "summary",
+    "findings",
+    "citations",
+    "proposed_artifacts",
+    "proposed_tasks",
+    "uncertainties",
+    "contradictions",
+    "risk_flags",
+    "redaction_flags",
+    "external_action_requests",
+}
 _SAFE_COMPONENT_RE = re.compile(r"[^A-Za-z0-9_.-]+")
 
 

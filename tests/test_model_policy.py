@@ -24,6 +24,7 @@ from atticus.reducer.reducer import reduce_candidate
 from atticus.scheduler.free_loop import run_free_loop_once
 from atticus.scheduler.lease import acquire_lease
 from atticus.workers.outputs import record_worker_result
+from atticus.workers.result_parser import RESULT_PACKET_SCHEMA_VERSION
 from atticus.workers.work_order import build_work_order
 
 
@@ -42,6 +43,32 @@ def _json_mapping(text: str) -> Mapping[str, object]:
 def _mapping_value(value: object) -> Mapping[str, object]:
     assert isinstance(value, Mapping)
     return cast(Mapping[str, object], value)
+
+
+def _v2_packet(task_id: str, *, proposed_tasks: list[dict[str, object]] | None = None, path: str = "candidate/parent.json") -> dict[str, object]:
+    return {
+        "schema_version": RESULT_PACKET_SCHEMA_VERSION,
+        "task_id": task_id,
+        "summary": "done",
+        "findings": [
+            {
+                "finding_id": "finding-1",
+                "text": "finding",
+                "finding_type": "drafting_note",
+                "citation_ids": [],
+                "confidence": 0.5,
+                "reasoning_status": "uncertain",
+            }
+        ],
+        "citations": [],
+        "proposed_artifacts": [{"path": path, "artifact_type": "note", "stage": "S0", "title": "Note", "content": "{}"}],
+        "proposed_tasks": proposed_tasks or [],
+        "uncertainties": [],
+        "contradictions": [],
+        "risk_flags": [],
+        "redaction_flags": [],
+        "external_action_requests": [],
+    }
 
 
 def _text_value(conn: sqlite3.Connection, sql: str) -> str:
@@ -334,24 +361,24 @@ def test_proposed_tasks_inherit_or_normalize_against_parent_model_routing_policy
             task_id="parent-task",
             lease_id=lease_id,
             worker_id="worker-01",
-            payload={
-                "task_id": "parent-task",
-                "summary": "done",
-                "findings": [{"text": "finding", "citation_ids": []}],
-                "citations": [],
-                "proposed_artifacts": [{"path": "candidate/parent.json", "artifact_type": "note"}],
-                "proposed_tasks": [
+            payload=_v2_packet(
+                "parent-task",
+                proposed_tasks=[
                     {
                         "task_id": "inherits-subagent",
                         "title": "Inherits",
                         "task_type": "followup",
                         "stage": "S7",
+                        "matter_scope": "atticus",
+                        "instructions": "Follow up with inherited policy.",
                     },
                     {
                         "task_id": "bad-policy-subagent",
                         "title": "Bad policy",
                         "task_type": "followup",
                         "stage": "S7",
+                        "matter_scope": "atticus",
+                        "instructions": "Follow up with normalized policy.",
                         "provider_policy": {
                             "provider": "openrouter",
                             "model": "not/in-policy",
@@ -360,7 +387,7 @@ def test_proposed_tasks_inherit_or_normalize_against_parent_model_routing_policy
                         },
                     },
                 ],
-            },
+            ),
         )
 
         result = run_free_loop_once(conn, output_dir=tmp_path / "out", capacity=0, execute_workers=False)
@@ -399,21 +426,19 @@ def test_proposed_tasks_without_parent_or_explicit_policy_do_not_default_to_free
             task_id="parent-without-policy",
             lease_id=lease_id,
             worker_id="worker-01",
-            payload={
-                "task_id": "parent-without-policy",
-                "summary": "done",
-                "findings": [{"text": "finding", "citation_ids": []}],
-                "citations": [],
-                "proposed_artifacts": [{"path": "candidate/parent.json", "artifact_type": "note"}],
-                "proposed_tasks": [
+            payload=_v2_packet(
+                "parent-without-policy",
+                proposed_tasks=[
                     {
                         "task_id": "missing-policy-followup",
                         "title": "Missing policy followup",
                         "task_type": "followup",
                         "stage": "S0",
+                        "matter_scope": "atticus",
+                        "instructions": "Follow up without a policy.",
                     },
                 ],
-            },
+            ),
         )
 
         result = run_free_loop_once(conn, output_dir=tmp_path / "out", capacity=0, execute_workers=False)
@@ -436,17 +461,17 @@ def test_reducer_acceptance_rolls_back_if_proposed_task_import_crashes(tmp_path:
             task_id="atomic-parent",
             lease_id=worker_lease_id,
             worker_id="worker-01",
-            payload={
-                "task_id": "atomic-parent",
-                "summary": "done",
-                "findings": [{"text": "finding", "citation_ids": []}],
-                "citations": [],
-                "proposed_artifacts": [{"path": "canonical/atomic-parent.json", "artifact_type": "note"}],
-                "proposed_tasks": [
+            payload=_v2_packet(
+                "atomic-parent",
+                path="canonical/atomic-parent.json",
+                proposed_tasks=[
                     {
                         "task_id": "would-crash-import",
                         "title": "Would crash import",
                         "task_type": "followup",
+                        "stage": "S0",
+                        "matter_scope": "atticus",
+                        "instructions": "This import will be monkeypatched to fail.",
                         "provider_policy": {
                             "provider": "openrouter",
                             "model": "deepseek/deepseek-v4-flash",
@@ -455,7 +480,7 @@ def test_reducer_acceptance_rolls_back_if_proposed_task_import_crashes(tmp_path:
                         },
                     },
                 ],
-            },
+            ),
         )
         reducer_lease_id = acquire_lease(conn, task_id="atomic-parent", worker_id="reducer-01", dry_run=False)
 

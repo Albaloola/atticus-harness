@@ -9,16 +9,23 @@ from typing import cast
 import pytest
 
 from atticus.adapters.codex_cli import CodexCliAdapter, CodexCliAdapterError
+from atticus.workers.result_parser import RESULT_PACKET_SCHEMA_VERSION
 
 
 def _packet(task_id: str) -> dict[str, object]:
     return {
+        "schema_version": RESULT_PACKET_SCHEMA_VERSION,
         "task_id": task_id,
         "summary": "codex candidate",
         "findings": [],
         "citations": [],
         "proposed_artifacts": [],
         "proposed_tasks": [],
+        "uncertainties": [],
+        "contradictions": [],
+        "risk_flags": [],
+        "redaction_flags": [],
+        "external_action_requests": [],
     }
 
 

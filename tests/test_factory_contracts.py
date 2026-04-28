@@ -28,6 +28,7 @@ from atticus.scheduler.planner import select_runnable_tasks
 from atticus.validation.canonical_write_guard import CanonicalWriteDenied
 from atticus.validation.gates import run_validation
 from atticus.workers.outputs import record_worker_result
+from atticus.workers.result_parser import RESULT_PACKET_SCHEMA_VERSION
 
 
 def init_db(tmp_path: Path) -> Path:
@@ -50,11 +51,35 @@ def _count(conn: sqlite3.Connection, sql: str, params: tuple[object, ...] = ()) 
 
 def valid_packet(task_id: str) -> dict[str, object]:
     return {
+        "schema_version": RESULT_PACKET_SCHEMA_VERSION,
         "task_id": task_id,
         "summary": "candidate summary",
-        "findings": [{"text": "finding", "citation_ids": []}],
+        "findings": [
+            {
+                "finding_id": "finding-1",
+                "text": "finding",
+                "finding_type": "drafting_note",
+                "citation_ids": [],
+                "confidence": 0.5,
+                "reasoning_status": "uncertain",
+            }
+        ],
         "citations": [],
-        "proposed_artifacts": [{"path": f"canonical/{task_id}.json", "artifact_type": "evidence_registry"}],
+        "proposed_artifacts": [
+            {
+                "path": f"canonical/{task_id}.json",
+                "artifact_type": "evidence_registry",
+                "stage": "S0",
+                "title": "Evidence registry",
+                "content": "{}",
+            }
+        ],
+        "proposed_tasks": [],
+        "uncertainties": [],
+        "contradictions": [],
+        "risk_flags": [],
+        "redaction_flags": [],
+        "external_action_requests": [],
     }
 
 
@@ -313,11 +338,21 @@ def test_reducer_imports_accepted_candidate_proposed_tasks(tmp_path: Path):
             lease_id=worker_lease,
             worker_id="worker-1",
             payload={
+                "schema_version": RESULT_PACKET_SCHEMA_VERSION,
                 "task_id": "parent-reduce",
                 "summary": "candidate summary",
-                "findings": [{"text": "finding", "citation_ids": []}],
+                "findings": [
+                    {
+                        "finding_id": "finding-1",
+                        "text": "finding",
+                        "finding_type": "drafting_note",
+                        "citation_ids": [],
+                        "confidence": 0.5,
+                        "reasoning_status": "uncertain",
+                    }
+                ],
                 "citations": [],
-                "proposed_artifacts": [{"path": "canonical/parent.json", "artifact_type": "evidence_registry"}],
+                "proposed_artifacts": [{"path": "canonical/parent.json", "artifact_type": "evidence_registry", "stage": "S0", "title": "Parent", "content": "{}"}],
                 "proposed_tasks": [
                     {
                         "task_id": "accepted-followup",
@@ -336,6 +371,11 @@ def test_reducer_imports_accepted_candidate_proposed_tasks(tmp_path: Path):
                         "instructions": "Search the matter source inventory for missing priority documents.",
                     }
                 ],
+                "uncertainties": [],
+                "contradictions": [],
+                "risk_flags": [],
+                "redaction_flags": [],
+                "external_action_requests": [],
             },
         )
         reducer_lease = acquire_lease(conn, task_id="parent-reduce", worker_id="reducer-1")

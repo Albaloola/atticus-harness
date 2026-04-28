@@ -16,6 +16,7 @@ from atticus.scheduler import free_loop as free_loop_module
 from atticus.scheduler.free_loop import run_free_loop_once
 from atticus.scheduler.lease import acquire_lease
 from atticus.workers.outputs import record_worker_result
+from atticus.workers.result_parser import RESULT_PACKET_SCHEMA_VERSION
 
 
 def init_db(tmp_path: Path) -> Path:
@@ -34,9 +35,19 @@ def _scalar_int(conn: sqlite3.Connection, sql: str) -> int:
 
 def _packet(task_id: str) -> dict[str, object]:
     return {
+        "schema_version": RESULT_PACKET_SCHEMA_VERSION,
         "task_id": task_id,
         "summary": "foundation shard complete",
-        "findings": [{"text": "indexed source inventory shard", "citation_ids": []}],
+        "findings": [
+            {
+                "finding_id": "finding-1",
+                "text": "indexed source inventory shard",
+                "finding_type": "drafting_note",
+                "citation_ids": [],
+                "confidence": 0.5,
+                "reasoning_status": "uncertain",
+            }
+        ],
         "citations": [],
         "proposed_artifacts": [
             {
@@ -44,6 +55,7 @@ def _packet(task_id: str) -> dict[str, object]:
                 "artifact_type": "foundation_note",
                 "stage": str(LegalStage.S0_SOURCE_INVENTORY),
                 "title": f"Reduced {task_id}",
+                "content": "{}",
             }
         ],
         "proposed_tasks": [
@@ -52,6 +64,8 @@ def _packet(task_id: str) -> dict[str, object]:
                 "title": "Follow up source shard",
                 "task_type": "source_inventory",
                 "stage": str(LegalStage.S0_SOURCE_INVENTORY),
+                "matter_scope": "atticus",
+                "instructions": "Follow up the source inventory shard.",
                 "provider_policy": {
                     "provider": "openrouter",
                     "model": "inclusionai/ling-2.6-1t:free",
@@ -61,6 +75,11 @@ def _packet(task_id: str) -> dict[str, object]:
                 "expected_value": 5.0,
             }
         ],
+        "uncertainties": [],
+        "contradictions": [],
+        "risk_flags": [],
+        "redaction_flags": [],
+        "external_action_requests": [],
     }
 
 

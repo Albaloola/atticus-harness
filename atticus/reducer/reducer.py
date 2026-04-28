@@ -9,6 +9,7 @@ import sqlite3
 from typing import cast
 from atticus.core.policies import TaskStatus, TrustStatus
 from atticus.db import repo
+from atticus.hooks import run_hooks
 from atticus.scheduler.lease import complete_lease, require_active_lease
 from atticus.validation.canonical_write_guard import assert_canonical_write_allowed
 from atticus.validation.gates import run_validation
@@ -41,7 +42,10 @@ def reduce_candidate(
     if candidate["status"] != "candidate":
         raise ReductionBlocked(f"candidate {candidate_id} has status {candidate['status']}")
     task_id = str(candidate["task_id"])
-    task = cast(Mapping[str, object] | None, cast(object, conn.execute("SELECT matter_scope FROM tasks WHERE task_id = ?", (task_id,)).fetchone()))
+    task = cast(Mapping[str, object] | None, cast(object, conn.execute(
+        "SELECT matter_scope, stage, task_type, required_certifications_json FROM tasks WHERE task_id = ?",
+        (task_id,),
+    ).fetchone()))
     if task is None:
         raise ReductionBlocked(f"candidate {candidate_id} references unknown task: {task_id}")
     _ = require_active_lease(conn, lease_id=reducer_lease_id, task_id=task_id)
@@ -83,6 +87,19 @@ def reduce_candidate(
     )
     if not schema_validation.passed or not auth_validation.passed:
         raise ReductionBlocked("candidate failed reducer validations")
+    hook_outcomes = run_hooks(
+        conn,
+        event_name="PreReduce",
+        matter_scope=str(task["matter_scope"]),
+        payload={
+            "stage": str(task["stage"]),
+            "task_type": str(task["task_type"]),
+            "required_certifications": _load_string_list(str(task["required_certifications_json"] or "[]")),
+            "candidate_id": candidate_id,
+        },
+    )
+    if any(not outcome.allowed for outcome in hook_outcomes):
+        raise ReductionBlocked("candidate blocked by lifecycle hook")
 
     _ = conn.execute("SAVEPOINT reducer_accept_candidate")
     try:
@@ -133,3 +150,10 @@ def reduce_candidate(
         "imported_tasks": imported_tasks,
         "reducer_packet_id": reducer_packet_id,
     }
+
+
+def _load_string_list(text: str) -> list[str]:
+    value = json.loads(text or "[]")
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if str(item)]

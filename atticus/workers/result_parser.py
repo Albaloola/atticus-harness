@@ -6,45 +6,215 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import cast
 
-from atticus.workers.contracts import REQUIRED_RESULT_PACKET_KEYS
-
 
 class ResultPacketError(ValueError):
     """Raised when a worker result packet is not structurally usable."""
 
 
+RESULT_PACKET_SCHEMA_VERSION = "worker_result_packet.v2"
+FINDING_TYPES = frozenset({"fact", "law", "procedure", "inference", "drafting_note", "contradiction", "risk"})
+CITATION_TARGET_TYPES = frozenset(
+    {"source", "artifact", "authority", "chronology_event", "claim", "memory", "validation_result"}
+)
+REASONING_STATUSES = frozenset({"supported", "inferred", "uncertain", "needs_research", "contradicted"})
+RESULT_PACKET_REQUIRED_KEYS = frozenset(
+    {
+        "schema_version",
+        "task_id",
+        "summary",
+        "findings",
+        "citations",
+        "proposed_artifacts",
+        "proposed_tasks",
+        "uncertainties",
+        "contradictions",
+        "risk_flags",
+        "redaction_flags",
+        "external_action_requests",
+    }
+)
+RESULT_PACKET_ALLOWED_KEYS = RESULT_PACKET_REQUIRED_KEYS
+FINDING_REQUIRED_KEYS = frozenset({"finding_id", "text", "finding_type", "citation_ids", "confidence", "reasoning_status"})
+FINDING_ALLOWED_KEYS = FINDING_REQUIRED_KEYS
+CITATION_REQUIRED_KEYS = frozenset({"citation_id", "target_type", "target_id", "locator"})
+CITATION_ALLOWED_KEYS = CITATION_REQUIRED_KEYS | frozenset({"quoted_text_hash", "quote", "excerpt"})
+PROPOSED_ARTIFACT_REQUIRED_KEYS = frozenset({"path", "artifact_type", "stage", "title", "content"})
+PROPOSED_ARTIFACT_ALLOWED_KEYS = PROPOSED_ARTIFACT_REQUIRED_KEYS
+PROPOSED_TASK_REQUIRED_KEYS = frozenset({"task_id", "title", "task_type", "stage", "matter_scope", "instructions"})
+PROPOSED_TASK_ALLOWED_KEYS = PROPOSED_TASK_REQUIRED_KEYS | frozenset(
+    {
+        "source_dependencies",
+        "artifact_dependencies",
+        "task_dependencies",
+        "matter_dependencies",
+        "validation_gates",
+        "required_certifications",
+        "provider_policy",
+        "expected_value",
+        "cost_limit_usd",
+    }
+)
+SHA256_HEX_LEN = 64
+
+
 @dataclass(frozen=True)
 class ParsedResultPacket:
+    schema_version: str
     task_id: str
     summary: str
     findings: list[dict[str, object]]
     citations: list[dict[str, object]]
     proposed_artifacts: list[dict[str, object]]
     proposed_tasks: list[dict[str, object]]
+    uncertainties: list[dict[str, object]]
+    contradictions: list[dict[str, object]]
+    risk_flags: list[dict[str, object]]
+    redaction_flags: list[dict[str, object]]
+    external_action_requests: list[dict[str, object]]
     raw: dict[str, object]
 
 
-def parse_result(payload: Mapping[str, object]) -> ParsedResultPacket:
-    missing = sorted(REQUIRED_RESULT_PACKET_KEYS - set(payload))
+def parse_result(
+    payload: Mapping[str, object],
+    *,
+    strict: bool = True,
+    allowed_citation_targets: Mapping[str, set[str]] | None = None,
+) -> ParsedResultPacket:
+    missing = sorted(RESULT_PACKET_REQUIRED_KEYS - set(payload))
     if missing:
         raise ResultPacketError(f"missing worker result keys: {', '.join(missing)}")
-    findings = payload.get("findings")
-    citations = payload.get("citations")
-    proposed_artifacts = payload.get("proposed_artifacts")
-    if not isinstance(findings, list) or not isinstance(citations, list) or not isinstance(proposed_artifacts, list):
-        raise ResultPacketError("findings, citations, and proposed_artifacts must be lists")
-    proposed_tasks = payload.get("proposed_tasks", [])
-    if not isinstance(proposed_tasks, list):
-        raise ResultPacketError("proposed_tasks must be a list when present")
+    unexpected = sorted(set(payload) - RESULT_PACKET_ALLOWED_KEYS)
+    if strict and unexpected:
+        raise ResultPacketError(f"unexpected worker result keys: {', '.join(unexpected)}")
+    schema_version = payload.get("schema_version")
+    if schema_version != RESULT_PACKET_SCHEMA_VERSION:
+        raise ResultPacketError(f"schema_version must be {RESULT_PACKET_SCHEMA_VERSION}")
+    task_id = _required_string(payload, "task_id")
+    summary = _required_string(payload, "summary")
+    if not summary.strip():
+        raise ResultPacketError("summary must not be empty")
+
+    citations = _validate_citations(_list_value(payload, "citations"), allowed_citation_targets=allowed_citation_targets)
+    citation_ids = {str(item["citation_id"]) for item in citations}
+    findings = _validate_findings(_list_value(payload, "findings"), citation_ids=citation_ids)
+    proposed_artifacts = _validate_proposed_artifacts(_list_value(payload, "proposed_artifacts"))
+    proposed_tasks = _validate_proposed_tasks(_list_value(payload, "proposed_tasks"))
+    uncertainties = _mapping_list("uncertainties", _list_value(payload, "uncertainties"))
+    contradictions = _mapping_list("contradictions", _list_value(payload, "contradictions"))
+    risk_flags = _mapping_list("risk_flags", _list_value(payload, "risk_flags"))
+    redaction_flags = _mapping_list("redaction_flags", _list_value(payload, "redaction_flags"))
+    external_action_requests = _mapping_list("external_action_requests", _list_value(payload, "external_action_requests"))
+    if external_action_requests:
+        raise ResultPacketError("external action requests are blocked")
     return ParsedResultPacket(
-        task_id=str(payload["task_id"]),
-        summary=str(payload.get("summary") or ""),
-        findings=_mapping_list("findings", cast(list[object], findings)),
-        citations=_mapping_list("citations", cast(list[object], citations)),
-        proposed_artifacts=_mapping_list("proposed_artifacts", cast(list[object], proposed_artifacts)),
-        proposed_tasks=_mapping_list("proposed_tasks", cast(list[object], proposed_tasks)),
+        schema_version=RESULT_PACKET_SCHEMA_VERSION,
+        task_id=task_id,
+        summary=summary,
+        findings=findings,
+        citations=citations,
+        proposed_artifacts=proposed_artifacts,
+        proposed_tasks=proposed_tasks,
+        uncertainties=uncertainties,
+        contradictions=contradictions,
+        risk_flags=risk_flags,
+        redaction_flags=redaction_flags,
+        external_action_requests=external_action_requests,
         raw=dict(payload),
     )
+
+
+def result_packet_json_schema() -> dict[str, object]:
+    """Return the shared JSON schema used in prompts and Codex CLI output mode."""
+
+    object_list_schema = {"type": "array", "items": {"type": "object"}}
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": sorted(RESULT_PACKET_REQUIRED_KEYS),
+        "properties": {
+            "schema_version": {"const": RESULT_PACKET_SCHEMA_VERSION},
+            "task_id": {"type": "string", "minLength": 1},
+            "summary": {"type": "string", "minLength": 1},
+            "findings": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": sorted(FINDING_REQUIRED_KEYS),
+                    "properties": {
+                        "finding_id": {"type": "string", "minLength": 1},
+                        "text": {"type": "string", "minLength": 1},
+                        "finding_type": {"enum": sorted(FINDING_TYPES)},
+                        "citation_ids": {"type": "array", "items": {"type": "string"}},
+                        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                        "reasoning_status": {"enum": sorted(REASONING_STATUSES)},
+                    },
+                },
+            },
+            "citations": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": sorted(CITATION_REQUIRED_KEYS),
+                    "properties": {
+                        "citation_id": {"type": "string", "minLength": 1},
+                        "target_type": {"enum": sorted(CITATION_TARGET_TYPES)},
+                        "target_id": {"type": "string", "minLength": 1},
+                        "locator": {"type": "string"},
+                        "quoted_text_hash": {"type": "string"},
+                        "quote": {"type": "string"},
+                        "excerpt": {"type": "string"},
+                    },
+                },
+            },
+            "proposed_artifacts": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": sorted(PROPOSED_ARTIFACT_REQUIRED_KEYS),
+                    "properties": {
+                        "path": {"type": "string", "minLength": 1},
+                        "artifact_type": {"type": "string", "minLength": 1},
+                        "stage": {"type": "string"},
+                        "title": {"type": "string"},
+                        "content": {"type": "string"},
+                    },
+                },
+            },
+            "proposed_tasks": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": sorted(PROPOSED_TASK_REQUIRED_KEYS),
+                    "properties": {
+                        "task_id": {"type": "string", "minLength": 1},
+                        "title": {"type": "string", "minLength": 1},
+                        "task_type": {"type": "string", "minLength": 1},
+                        "stage": {"type": "string", "minLength": 1},
+                        "matter_scope": {"type": "string", "minLength": 1},
+                        "instructions": {"type": "string", "minLength": 1},
+                        "source_dependencies": {"type": "array", "items": {"type": "string"}},
+                        "artifact_dependencies": {"type": "array", "items": {"type": "string"}},
+                        "task_dependencies": {"type": "array", "items": {"type": "string"}},
+                        "matter_dependencies": {"type": "array", "items": {"type": "string"}},
+                        "validation_gates": {"type": "array", "items": {"type": "string"}},
+                        "required_certifications": object_list_schema,
+                        "provider_policy": {"type": "object"},
+                        "expected_value": {"type": "number"},
+                        "cost_limit_usd": {"type": "number"},
+                    },
+                },
+            },
+            "uncertainties": object_list_schema,
+            "contradictions": object_list_schema,
+            "risk_flags": object_list_schema,
+            "redaction_flags": object_list_schema,
+            "external_action_requests": {"type": "array", "maxItems": 0, "items": {"type": "object"}},
+        },
+    }
 
 
 def _mapping_list(field: str, value: list[object]) -> list[dict[str, object]]:
@@ -57,12 +227,142 @@ def _mapping_list(field: str, value: list[object]) -> list[dict[str, object]]:
     return items
 
 
+def _list_value(payload: Mapping[str, object], field: str) -> list[object]:
+    value = payload.get(field)
+    if not isinstance(value, list):
+        raise ResultPacketError(f"{field} must be a list")
+    return cast(list[object], value)
+
+
+def _required_string(payload: Mapping[str, object], field: str) -> str:
+    value = payload.get(field)
+    if not isinstance(value, str):
+        raise ResultPacketError(f"{field} must be a string")
+    return value
+
+
+def _validate_findings(value: list[object], *, citation_ids: set[str]) -> list[dict[str, object]]:
+    findings = _mapping_list("findings", value)
+    seen: set[str] = set()
+    for index, finding in enumerate(findings):
+        _require_no_extra_keys(f"findings[{index}]", finding, allowed=FINDING_ALLOWED_KEYS, required=FINDING_REQUIRED_KEYS)
+        finding_id = _required_item_string(f"findings[{index}]", finding, "finding_id")
+        if finding_id in seen:
+            raise ResultPacketError(f"duplicate finding_id: {finding_id}")
+        seen.add(finding_id)
+        _ = _required_item_string(f"findings[{index}]", finding, "text")
+        finding_type = _required_item_string(f"findings[{index}]", finding, "finding_type")
+        if finding_type not in FINDING_TYPES:
+            raise ResultPacketError(f"findings[{index}].finding_type is unsupported: {finding_type}")
+        reasoning_status = _required_item_string(f"findings[{index}]", finding, "reasoning_status")
+        if reasoning_status not in REASONING_STATUSES:
+            raise ResultPacketError(f"findings[{index}].reasoning_status is unsupported: {reasoning_status}")
+        confidence = finding.get("confidence")
+        if not isinstance(confidence, int | float) or isinstance(confidence, bool) or confidence < 0 or confidence > 1:
+            raise ResultPacketError(f"findings[{index}].confidence must be a number from 0 to 1")
+        citation_list = finding.get("citation_ids")
+        if not isinstance(citation_list, list) or not all(isinstance(item, str) and item for item in citation_list):
+            raise ResultPacketError(f"findings[{index}].citation_ids must be an array of non-empty strings")
+        missing = sorted(set(citation_list) - citation_ids)
+        if missing:
+            raise ResultPacketError(f"findings[{index}] references undefined citation ids: {', '.join(missing)}")
+        if finding_type in {"fact", "law", "procedure", "contradiction", "risk"} and not citation_list and reasoning_status not in {"uncertain", "needs_research"}:
+            raise ResultPacketError(f"findings[{index}] {finding_type} findings require citations or an uncertain reasoning_status")
+    return findings
+
+
+def _validate_citations(value: list[object], *, allowed_citation_targets: Mapping[str, set[str]] | None) -> list[dict[str, object]]:
+    citations = _mapping_list("citations", value)
+    seen: set[str] = set()
+    for index, citation in enumerate(citations):
+        _require_no_extra_keys(f"citations[{index}]", citation, allowed=CITATION_ALLOWED_KEYS, required=CITATION_REQUIRED_KEYS)
+        citation_id = _required_item_string(f"citations[{index}]", citation, "citation_id")
+        if citation_id in seen:
+            raise ResultPacketError(f"duplicate citation_id: {citation_id}")
+        seen.add(citation_id)
+        target_type = _required_item_string(f"citations[{index}]", citation, "target_type")
+        target_id = _required_item_string(f"citations[{index}]", citation, "target_id")
+        _ = _required_item_string(f"citations[{index}]", citation, "locator", allow_empty=True)
+        if target_type not in CITATION_TARGET_TYPES:
+            raise ResultPacketError(f"citations[{index}].target_type is unsupported: {target_type}")
+        quoted_text_hash = citation.get("quoted_text_hash")
+        if quoted_text_hash is not None and quoted_text_hash != "":
+            if not isinstance(quoted_text_hash, str) or not _is_sha256(quoted_text_hash):
+                raise ResultPacketError(f"citations[{index}].quoted_text_hash must be a sha256 hex digest when present")
+        if allowed_citation_targets is not None and target_id not in allowed_citation_targets.get(target_type, set()):
+            raise ResultPacketError(f"citations[{index}] target {target_type}:{target_id} is outside work order context")
+    return citations
+
+
+def _validate_proposed_artifacts(value: list[object]) -> list[dict[str, object]]:
+    artifacts = _mapping_list("proposed_artifacts", value)
+    for index, artifact in enumerate(artifacts):
+        _require_no_extra_keys(
+            f"proposed_artifacts[{index}]",
+            artifact,
+            allowed=PROPOSED_ARTIFACT_ALLOWED_KEYS,
+            required=PROPOSED_ARTIFACT_REQUIRED_KEYS,
+        )
+        path = _required_item_string(f"proposed_artifacts[{index}]", artifact, "path")
+        if path.startswith("/") or ".." in path.split("/"):
+            raise ResultPacketError(f"proposed_artifacts[{index}].path must be a relative safe path")
+        _ = _required_item_string(f"proposed_artifacts[{index}]", artifact, "artifact_type")
+        _ = _required_item_string(f"proposed_artifacts[{index}]", artifact, "stage", allow_empty=True)
+        _ = _required_item_string(f"proposed_artifacts[{index}]", artifact, "title", allow_empty=True)
+        _ = _required_item_string(f"proposed_artifacts[{index}]", artifact, "content", allow_empty=True)
+    return artifacts
+
+
+def _validate_proposed_tasks(value: list[object]) -> list[dict[str, object]]:
+    tasks = _mapping_list("proposed_tasks", value)
+    for index, task in enumerate(tasks):
+        _require_no_extra_keys(f"proposed_tasks[{index}]", task, allowed=PROPOSED_TASK_ALLOWED_KEYS, required=PROPOSED_TASK_REQUIRED_KEYS)
+        for key in PROPOSED_TASK_REQUIRED_KEYS:
+            _ = _required_item_string(f"proposed_tasks[{index}]", task, key)
+        for key in ("source_dependencies", "artifact_dependencies", "task_dependencies", "matter_dependencies", "validation_gates"):
+            if key in task:
+                value_raw = task[key]
+                if not isinstance(value_raw, list) or not all(isinstance(item, str) for item in value_raw):
+                    raise ResultPacketError(f"proposed_tasks[{index}].{key} must be an array of strings")
+        if "required_certifications" in task:
+            _ = _mapping_list(f"proposed_tasks[{index}].required_certifications", cast(list[object], task["required_certifications"]) if isinstance(task["required_certifications"], list) else [])
+    return tasks
+
+
+def _require_no_extra_keys(field: str, value: Mapping[str, object], *, allowed: frozenset[str], required: frozenset[str]) -> None:
+    missing = sorted(required - set(value))
+    if missing:
+        raise ResultPacketError(f"{field} missing required keys: {', '.join(missing)}")
+    extra = sorted(set(value) - allowed)
+    if extra:
+        raise ResultPacketError(f"{field} has unexpected keys: {', '.join(extra)}")
+
+
+def _required_item_string(field: str, value: Mapping[str, object], key: str, *, allow_empty: bool = False) -> str:
+    item = value.get(key)
+    if not isinstance(item, str):
+        raise ResultPacketError(f"{field}.{key} must be a string")
+    if not allow_empty and not item:
+        raise ResultPacketError(f"{field}.{key} must not be empty")
+    return item
+
+
+def _is_sha256(value: str) -> bool:
+    return len(value) == SHA256_HEX_LEN and all(ch in "0123456789abcdefABCDEF" for ch in value)
+
+
 def packet_as_dict(packet: ParsedResultPacket) -> dict[str, object]:
     return {
+        "schema_version": packet.schema_version,
         "task_id": packet.task_id,
         "summary": packet.summary,
         "findings": packet.findings,
         "citations": packet.citations,
         "proposed_artifacts": packet.proposed_artifacts,
         "proposed_tasks": packet.proposed_tasks,
+        "uncertainties": packet.uncertainties,
+        "contradictions": packet.contradictions,
+        "risk_flags": packet.risk_flags,
+        "redaction_flags": packet.redaction_flags,
+        "external_action_requests": packet.external_action_requests,
     }

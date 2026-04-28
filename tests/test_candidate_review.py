@@ -11,6 +11,7 @@ from atticus.core.tasks import TaskSpec
 from atticus.db import repo
 from atticus.scheduler.lease import acquire_lease
 from atticus.workers.outputs import record_worker_result
+from atticus.workers.result_parser import RESULT_PACKET_SCHEMA_VERSION
 
 
 def init_db(tmp_path: Path) -> Path:
@@ -27,12 +28,35 @@ def _count(conn: sqlite3.Connection, sql: str) -> int:
 
 def _candidate_packet(task_id: str) -> dict[str, object]:
     return {
+        "schema_version": RESULT_PACKET_SCHEMA_VERSION,
         "task_id": task_id,
         "summary": "valid but operator-rejected",
-        "findings": [{"text": "not enough source context", "citation_ids": []}],
+        "findings": [
+            {
+                "finding_id": "review-finding-1",
+                "text": "not enough source context",
+                "finding_type": "drafting_note",
+                "citation_ids": [],
+                "confidence": 0.25,
+                "reasoning_status": "uncertain",
+            }
+        ],
         "citations": [],
-        "proposed_artifacts": [],
+        "proposed_artifacts": [
+            {
+                "path": f"candidate/{task_id}.json",
+                "artifact_type": "review_note",
+                "stage": "S0",
+                "title": "Review note",
+                "content": "{}",
+            }
+        ],
         "proposed_tasks": [],
+        "uncertainties": [],
+        "contradictions": [],
+        "risk_flags": [],
+        "redaction_flags": [],
+        "external_action_requests": [],
     }
 
 

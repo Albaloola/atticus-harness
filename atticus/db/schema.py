@@ -431,6 +431,55 @@ CREATE TABLE IF NOT EXISTS search_index_entries (
   UNIQUE(index_name, record_type, record_id, content_hash)
 ) STRICT;
 
+CREATE TABLE IF NOT EXISTS legal_memories (
+  memory_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL,
+  type TEXT NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  content TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'candidate',
+  confidence REAL NOT NULL DEFAULT 0 CHECK(confidence >= 0 AND confidence <= 1),
+  source_refs_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(source_refs_json)),
+  last_verified_at TEXT,
+  stale INTEGER NOT NULL DEFAULT 0 CHECK(stale IN (0, 1)),
+  staleness_trigger TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS sessions (
+  session_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL,
+  title TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'active',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS session_messages (
+  session_message_id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+  role TEXT NOT NULL,
+  content_json TEXT NOT NULL CHECK(json_valid(content_json)),
+  context_pack_id TEXT REFERENCES context_packs(context_pack_id) ON DELETE SET NULL,
+  provider_run_id TEXT REFERENCES provider_runs(provider_run_id) ON DELETE SET NULL,
+  candidate_id TEXT REFERENCES candidate_outputs(candidate_id) ON DELETE SET NULL,
+  reducer_packet_id TEXT REFERENCES reducer_packets(reducer_packet_id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS hook_invocations (
+  hook_invocation_id TEXT PRIMARY KEY,
+  hook_event TEXT NOT NULL,
+  matter_scope TEXT NOT NULL,
+  allowed INTEGER NOT NULL CHECK(allowed IN (0, 1)),
+  severity TEXT NOT NULL,
+  message TEXT NOT NULL,
+  details_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(details_json)),
+  created_at TEXT NOT NULL
+) STRICT;
+
 CREATE TABLE IF NOT EXISTS provider_runs (
   provider_run_id TEXT PRIMARY KEY,
   task_id TEXT,
@@ -518,4 +567,8 @@ CREATE INDEX IF NOT EXISTS candidate_outputs_task_idx ON candidate_outputs(task_
 CREATE INDEX IF NOT EXISTS tracked_files_status_idx ON tracked_files(status, file_kind);
 CREATE INDEX IF NOT EXISTS search_index_entries_lookup_idx ON search_index_entries(index_name, record_type, record_id);
 CREATE INDEX IF NOT EXISTS search_index_entries_scope_lookup_idx ON search_index_entries(index_name, matter_scope, record_type, record_id);
+CREATE INDEX IF NOT EXISTS legal_memories_scope_type_idx ON legal_memories(matter_scope, type, status, stale);
+CREATE INDEX IF NOT EXISTS sessions_scope_status_idx ON sessions(matter_scope, status, updated_at);
+CREATE INDEX IF NOT EXISTS session_messages_session_idx ON session_messages(session_id, created_at);
+CREATE INDEX IF NOT EXISTS hook_invocations_event_idx ON hook_invocations(hook_event, matter_scope, created_at);
 """
