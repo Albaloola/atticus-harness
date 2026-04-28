@@ -12,6 +12,8 @@ def test_command_registry_classifies_safety_metadata():
     commands = {command.name: command for command in list_commands()}
 
     assert commands["context"].read_only_safe is True
+    assert commands["coordinator"].supports_dry_run is True
+    assert commands["coordinator"].read_only_safe is False
     assert commands["tools"].read_only_safe is True
     assert commands["session"].read_only_safe is True
     assert commands["run-free-loop"].requires_live is False

@@ -51,6 +51,10 @@ atticus model-policy validate --policy-file tests/fixtures/model_policies/layere
 atticus context --db atticus.sqlite3 --task-id task-1 --json
 atticus tools list --db atticus.sqlite3 --json
 atticus workflow list
+atticus coordinator plan --db atticus.sqlite3 --matter atticus --goal "Draft a cited complaint" --source-id SOURCE_ID
+atticus coordinator create-tasks --db atticus.sqlite3 --matter atticus --goal "Build a chronology and hostile review" --write
+atticus memory extract-candidates --db atticus.sqlite3 --matter atticus --candidate-id CANDIDATE_ID
+atticus memory consolidate --db atticus.sqlite3 --matter atticus
 atticus human-attention --db atticus.sqlite3
 atticus migrate-report --workspace /home/alba/.openclaw/workspace-atticus-legal --db atticus.sqlite3 --dry-run
 atticus doctor --db atticus.sqlite3

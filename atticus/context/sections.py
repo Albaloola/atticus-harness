@@ -108,6 +108,7 @@ def build_default_sections(
             content={
                 "task_id": task["task_id"],
                 "title": task["title"],
+                "instructions": str(task.get("instructions") or ""),
                 "stage": task["stage"],
                 "task_type": task["task_type"],
                 "matter_scope": task["matter_scope"],

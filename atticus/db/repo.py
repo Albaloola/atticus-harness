@@ -78,6 +78,7 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
             "dependency_type": "TEXT NOT NULL DEFAULT 'supports'",
         },
         "tasks": {
+            "instructions": "TEXT NOT NULL DEFAULT ''",
             "task_dependencies_json": "TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(task_dependencies_json))",
             "matter_dependencies_json": "TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(matter_dependencies_json))",
             "context_pack_id": "TEXT",
@@ -423,16 +424,17 @@ def add_artifact_from_file(
 
 
 def add_task(conn: sqlite3.Connection, task: TaskSpec) -> None:
+    _ensure_columns(conn)
     ensure_matter(conn, task.matter_scope)
     now = utc_now()
     _ = conn.execute(
         """
-        INSERT INTO tasks(task_id, matter_scope, stage, status, task_type, title,
+        INSERT INTO tasks(task_id, matter_scope, stage, status, task_type, title, instructions,
           source_dependencies_json, artifact_dependencies_json, task_dependencies_json,
           matter_dependencies_json, required_certifications_json, validation_gates_json,
           staleness_rules_json, provider_policy_json, cost_limit_usd, expected_value,
           human_attention_flags_json, blocked_reasons_json, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             task.task_id,
@@ -441,6 +443,7 @@ def add_task(conn: sqlite3.Connection, task: TaskSpec) -> None:
             str(task.status),
             task.task_type,
             task.title,
+            task.instructions,
             _json(task.source_dependencies),
             _json(task.artifact_dependencies),
             _json(task.task_dependencies),

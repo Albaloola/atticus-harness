@@ -31,6 +31,7 @@ def test_context_pack_sections_have_auditable_v2_metadata(tmp_path: Path):
                 task_id="ctx-v2",
                 title="Context v2",
                 task_type="extract",
+                instructions="Extract only the bounded issue list and preserve uncertainty.",
                 matter_scope="alpha",
                 source_dependencies=[source_id],
             ),
@@ -47,6 +48,9 @@ def test_context_pack_sections_have_auditable_v2_metadata(tmp_path: Path):
     assert "candidate, not canonical" in str(stable["content"])
     assert "Facts, law, procedure, inference, risk, contradiction, and uncertainty" in str(stable["content"])
     assert "finding_taxonomy" in schema_content
+    task_contract = next(section for section in pack.sections if section["name"] == "task_contract")
+    task_content = cast(Mapping[str, object], task_contract["content"])
+    assert "preserve uncertainty" in str(task_content["instructions"])
 
 
 def test_context_diagnostics_reports_stale_dependencies_and_counts(tmp_path: Path):

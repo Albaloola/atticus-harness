@@ -91,6 +91,7 @@ def plan_workflow(
                     task_id=str(task["task_id"]),
                     title=str(task["title"]),
                     task_type=str(task["task_type"]),
+                    instructions=str(task["instructions"]),
                     matter_scope=matter_scope,
                     stage=LegalStage(str(task["stage"])),
                     status=TaskStatus.QUEUED,

@@ -12,6 +12,7 @@ class TaskSpec:
     task_id: str
     title: str
     task_type: str
+    instructions: str = ""
     matter_scope: str = "atticus"
     stage: LegalStage = LegalStage.S0_SOURCE_INVENTORY
     status: TaskStatus = TaskStatus.QUEUED

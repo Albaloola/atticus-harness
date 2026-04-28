@@ -275,6 +275,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   status TEXT NOT NULL,
   task_type TEXT NOT NULL,
   title TEXT NOT NULL,
+  instructions TEXT NOT NULL DEFAULT '',
   source_dependencies_json TEXT NOT NULL CHECK(json_valid(source_dependencies_json)),
   artifact_dependencies_json TEXT NOT NULL CHECK(json_valid(artifact_dependencies_json)),
   task_dependencies_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(task_dependencies_json)),

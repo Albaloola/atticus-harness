@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Protocol, cast
 
 from atticus.commands.registry import command_by_name, list_commands
+from atticus.agents.coordinator import plan_coordinator_work
 from atticus.config import DEFAULT_DB_PATH
 from atticus.context.diagnostics import build_context_diagnostics
 from atticus.core.events import utc_now
@@ -19,6 +20,8 @@ from atticus.core.matters import authorized_matter_from_env, require_matter_acce
 from atticus.db import repo
 from atticus.graph.certifications import CertificationBlocked, certify_subject
 from atticus.matter_seed import seed_matter_from_inventory, set_provider_policy_for_matter
+from atticus.memory.consolidation import consolidate_case_memory
+from atticus.memory.extraction import extract_memory_candidates
 from atticus.migration.import_old_run import import_candidates
 from atticus.migration.reconcile import reconcile_foundation
 from atticus.migration.report import build_migration_report
@@ -118,6 +121,9 @@ class CliArgs(Protocol):
     session_id: str | None
     status: str | None
     name: str
+    goal: str
+    source_id: list[str] | None
+    artifact_id: list[str] | None
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -291,11 +297,21 @@ def build_parser() -> argparse.ArgumentParser:
     _ = workflow.add_argument("--dry-run", dest="dry_run", action="store_true", default=True)
     _ = workflow.add_argument("--write", dest="dry_run", action="store_false")
 
-    memory = sub.add_parser("memory", help="list, show, or update typed legal memory")
-    _ = memory.add_argument("action", choices=["list", "show", "mark-stale", "reject", "export-index"])
+    coordinator = sub.add_parser("coordinator", help="plan or create self-contained legal coordinator task graphs")
+    _ = coordinator.add_argument("action", choices=["plan", "create-tasks"])
+    _ = coordinator.add_argument("--db", required=True)
+    _ = coordinator.add_argument("--matter", required=True)
+    _ = coordinator.add_argument("--goal", required=True)
+    _ = coordinator.add_argument("--source-id", action="append", default=[])
+    _ = coordinator.add_argument("--artifact-id", action="append", default=[])
+    _ = coordinator.add_argument("--write", action="store_true", help="write queued coordinator-created tasks")
+
+    memory = sub.add_parser("memory", help="list, show, extract, consolidate, or update typed legal memory")
+    _ = memory.add_argument("action", choices=["list", "show", "mark-stale", "reject", "export-index", "extract-candidates", "consolidate"])
     _ = memory.add_argument("--db", required=True)
     _ = memory.add_argument("--matter", default="atticus")
     _ = memory.add_argument("--memory-id")
+    _ = memory.add_argument("--candidate-id")
     _ = memory.add_argument("--reason", default="")
     _ = memory.add_argument("--write", action="store_true")
 
@@ -727,10 +743,39 @@ def _main(args: CliArgs) -> int:
         print_json(result)
         return 0
 
+    if args.command == "coordinator":
+        dry_run = args.action == "plan" or not args.write
+        with repo.db_connection(args.db, read_only=dry_run) as conn:
+            result = plan_coordinator_work(
+                conn,
+                matter_scope=args.matter,
+                goal=args.goal,
+                source_ids=args.source_id or [],
+                artifact_ids=args.artifact_id or [],
+                dry_run=dry_run,
+            )
+        print_json(result)
+        return 0
+
     if args.command == "memory":
         with repo.db_connection(args.db, read_only=not args.write) as conn:
             if args.action == "list":
                 print_json({"matter_scope": args.matter, "memories": repo.list_legal_memories(conn, matter_scope=args.matter)})
+                return 0
+            if args.action == "extract-candidates":
+                if not args.candidate_id:
+                    raise ValueError("memory extract-candidates requires --candidate-id")
+                result = extract_memory_candidates(
+                    conn,
+                    candidate_id=args.candidate_id,
+                    matter_scope=args.matter,
+                    dry_run=not args.write,
+                )
+                print_json(result)
+                return 0
+            if args.action == "consolidate":
+                result = consolidate_case_memory(conn, matter_scope=args.matter, dry_run=not args.write)
+                print_json(result)
                 return 0
             if not args.memory_id:
                 raise ValueError(f"memory {args.action} requires --memory-id")

@@ -38,6 +38,10 @@ def build_work_order(
     if task is None:
         raise KeyError(f"unknown task: {task_id}")
     context_pack = build_context_pack(conn, task_id=task_id, persist=persist_context)
+    task_instructions = _optional_task_text(task, "instructions")
+    instructions = WORK_ORDER_INSTRUCTIONS
+    if task_instructions:
+        instructions = f"{WORK_ORDER_INSTRUCTIONS}\n\nTask-specific coordinator contract:\n{task_instructions}"
     return WorkOrder(
         task_id=str(task["task_id"]),
         title=str(task["title"]),
@@ -46,7 +50,7 @@ def build_work_order(
         matter_scope=str(task["matter_scope"]),
         lease_id=lease_id,
         context_pack_id=context_pack.context_pack_id,
-        instructions=WORK_ORDER_INSTRUCTIONS,
+        instructions=instructions,
         source_dependencies=_load_string_list(task, "source_dependencies_json"),
         artifact_dependencies=_load_string_list(task, "artifact_dependencies_json"),
         required_certifications=_load_mapping_list(task, "required_certifications_json"),
@@ -65,6 +69,12 @@ def build_work_order(
 
 def _load_json_value(text: str) -> object:
     return json.loads(text)
+
+
+def _optional_task_text(task: Mapping[str, object], field: str) -> str:
+    if field not in task.keys():
+        return ""
+    return str(task[field] or "").strip()
 
 
 def _load_string_list(task: Mapping[str, object], field: str) -> list[str]:

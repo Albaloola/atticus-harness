@@ -97,7 +97,16 @@ python -m atticus.cli memory list --db data/atticus.sqlite3 --matter MATTER
 python -m atticus.cli memory show MEMORY_ID --db data/atticus.sqlite3 --matter MATTER
 python -m atticus.cli memory mark-stale --db data/atticus.sqlite3 --matter MATTER --memory-id MEMORY_ID --reason "newer evidence" --write
 python -m atticus.cli memory export-index --db data/atticus.sqlite3 --matter MATTER
+python -m atticus.cli memory extract-candidates --db data/atticus.sqlite3 --matter MATTER --candidate-id CANDIDATE_ID
+python -m atticus.cli memory consolidate --db data/atticus.sqlite3 --matter MATTER
 ```
+
+Memory extraction is reducer-gated. It only proposes candidate legal memories
+from a `reduced` candidate with an accepted reducer packet; raw worker output is
+refused. Write mode stores extracted items as `status='candidate'` memory, not
+active trusted memory. Consolidation is also dry-run-first: it gathers active,
+candidate, stale, duplicate, and contradictory memories and creates review
+tasks rather than silently merging, deleting, or certifying memory.
 
 ## Verifier And Workflows
 
@@ -121,6 +130,24 @@ Built-in workflows cover chronology, complaint drafting, witness statement
 preparation, bundle preparation, authority mapping, SAR/disclosure review,
 contradiction detection, hostile review, pleading review, and court
 correspondence drafting.
+
+## Coordinator Mode
+
+The coordinator creates self-contained task graphs from an operator goal. It is
+deterministic local planning, not a provider call:
+
+```bash
+python -m atticus.cli coordinator plan --db data/atticus.sqlite3 --matter MATTER --goal "Draft a cited complaint" --source-id SOURCE_ID
+python -m atticus.cli coordinator create-tasks --db data/atticus.sqlite3 --matter MATTER --goal "Build chronology and hostile review" --write
+```
+
+The plan is dry-run by default. Write mode creates queued tasks only. It does
+not create leases, provider runs, candidate outputs, canonical artifacts, or
+external actions. Coordinator tasks carry persisted task-specific instructions
+into the work order and context pack, including matter scope, dependencies,
+deliverable, validation gates, citation discipline, verifier role, and blocked
+external-action rules. Drafting goals automatically include citation audit,
+hostile review, privacy/redaction audit, and a final quality-gate task.
 
 ## Sessions And Hooks
 
