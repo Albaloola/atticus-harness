@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 import hashlib
 import json
-from typing import Any
+
 
 
 def utc_now() -> str:
@@ -17,7 +17,7 @@ def utc_now() -> str:
 class Event:
     event_type: str
     actor: str
-    payload: dict[str, Any]
+    payload: dict[str, object]
     matter_scope: str = "atticus"
 
     def canonical_payload(self) -> str:

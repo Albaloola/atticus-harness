@@ -10,13 +10,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import logging
+import math
 import os
 import random
 import time
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import Protocol, cast
 
-from atticus.providers.deepseek import OPENROUTER_FREE_MODEL_ORDER
 from atticus.providers.openrouter import OpenRouterClient, OpenRouterError, validate_usage_tokens
 
 FAILOVER_POLICY_KEY = "openrouter_failover"
@@ -37,7 +37,13 @@ DEFAULT_BACKOFF_SECONDS = 0.25
 DEFAULT_JITTER_SECONDS = 0.25
 
 _LOGGER = logging.getLogger("atticus.providers.openrouter_failover")
-_SHARED_FAILOVER_CLIENTS: dict[tuple[Any, ...], "OpenRouterModelFailover"] = {}
+_SHARED_FAILOVER_CLIENTS: dict[tuple[object, ...], "OpenRouterModelFailover"] = {}
+
+
+class ChatJsonClient(Protocol):
+    timeout: float
+
+    def chat_json(self, *, model: str, messages: list[dict[str, str]], max_tokens: int = 4096, temperature: float = 0.1) -> dict[str, object]: ...
 
 
 class OpenRouterFailoverHardError(OpenRouterError):
@@ -55,7 +61,7 @@ class OpenRouterFailoverConfig:
     jitter_seconds: float = DEFAULT_JITTER_SECONDS
     log_events: bool = False
 
-    def cache_key(self) -> tuple[Any, ...]:
+    def cache_key(self) -> tuple[object, ...]:
         return (
             self.provider,
             self.models,
@@ -75,20 +81,20 @@ class OpenRouterModelFailover:
         self,
         *,
         config: OpenRouterFailoverConfig,
-        client: Any | None = None,
-        client_factory: Callable[[float], Any] | None = None,
+        client: object | None = None,
+        client_factory: Callable[[float], object] | None = None,
         sleep: Callable[[float], None] = time.sleep,
         jitter: Callable[[float, float], float] = random.uniform,
-        event_sink: Callable[[dict[str, Any]], None] | None = None,
+        event_sink: Callable[[dict[str, object]], None] | None = None,
     ) -> None:
         _validate_failover_config(config)
-        self.config = config
-        self.client = client
-        self.client_factory = client_factory
-        self.sleep = sleep
-        self.jitter = jitter
-        self.event_sink = event_sink
-        self.current_index = 0
+        self.config: OpenRouterFailoverConfig = config
+        self.client: object | None = client
+        self.client_factory: Callable[[float], object] | None = client_factory
+        self.sleep: Callable[[float], None] = sleep
+        self.jitter: Callable[[float, float], float] = jitter
+        self.event_sink: Callable[[dict[str, object]], None] | None = event_sink
+        self.current_index: int = 0
 
     @property
     def current_model(self) -> str:
@@ -102,7 +108,7 @@ class OpenRouterModelFailover:
         max_tokens: int = 4096,
         temperature: float = 0.1,
         max_total_attempts: int | None = None,
-    ) -> dict[str, Any]:
+    ) -> dict[str, object]:
         del model
         self._validate_request(messages=messages)
         if max_total_attempts is not None and max_total_attempts < 1:
@@ -120,10 +126,7 @@ class OpenRouterModelFailover:
                     failed_cycle_count=failed_cycles,
                     reason=f"max_total_attempts {max_total_attempts} reached",
                 )
-                raise OpenRouterError(
-                    "OpenRouter failover max_total_attempts exceeded "
-                    f"after {attempt_number} attempts across {len(self.config.models)} configured models"
-                )
+                raise OpenRouterError(f"OpenRouter failover max_total_attempts exceeded after {attempt_number} attempts across {len(self.config.models)} configured models")
             attempted_model = self.current_model
             attempt_number += 1
             attempts_in_cycle += 1
@@ -185,31 +188,35 @@ class OpenRouterModelFailover:
             )
             return normalized
 
-    def _validate_request(self, *, messages: list[dict[str, str]]) -> None:
+    def _validate_request(self, *, messages: object) -> None:
         if not isinstance(messages, list) or not messages:
             raise OpenRouterFailoverHardError("OpenRouter failover request must include non-empty messages")
-        for index, message in enumerate(messages):
+        message_items = cast(list[object], messages)
+        for index, message in enumerate(message_items):
             if not isinstance(message, Mapping):
                 raise OpenRouterFailoverHardError(f"OpenRouter failover messages[{index}] must be a JSON object")
-            if not str(message.get("content") or "").strip():
+            message_map = cast(Mapping[object, object], message)
+            if not str(message_map.get("content") or "").strip():
                 raise OpenRouterFailoverHardError(f"OpenRouter failover messages[{index}] must include non-empty content")
 
-    def _call_model(self, *, model: str, messages: list[dict[str, str]], max_tokens: int, temperature: float) -> Any:
+    def _call_model(self, *, model: str, messages: list[dict[str, str]], max_tokens: int, temperature: float) -> dict[str, object]:
         client = self._client_for_attempt()
         return client.chat_json(model=model, messages=messages, max_tokens=max_tokens, temperature=temperature)
 
-    def _client_for_attempt(self) -> Any:
+    def _client_for_attempt(self) -> ChatJsonClient:
         if self.client_factory is not None:
-            return self.client_factory(self.config.per_model_timeout_seconds)
+            return cast(ChatJsonClient, self.client_factory(self.config.per_model_timeout_seconds))
         if self.client is not None:
-            if hasattr(self.client, "timeout"):
-                self.client.timeout = self.config.per_model_timeout_seconds
-            return self.client
+            client_obj = self.client
+            if hasattr(client_obj, "timeout"):
+                setattr(client_obj, "timeout", self.config.per_model_timeout_seconds)
+            return cast(ChatJsonClient, client_obj)
         return OpenRouterClient(timeout=self.config.per_model_timeout_seconds)
 
-    def _normalize_success_response(self, response: Any, *, requested_model: str) -> dict[str, Any]:
+    def _normalize_success_response(self, response: object, *, requested_model: str) -> dict[str, object]:
         if not isinstance(response, Mapping):
             raise OpenRouterError("OpenRouter response must be a JSON object")
+        response = cast(Mapping[object, object], response)
         provider = response.get("provider")
         actual_model = response.get("model")
         content = response.get("content")
@@ -220,12 +227,13 @@ class OpenRouterModelFailover:
             raise OpenRouterError("OpenRouter response content was empty")
         if not isinstance(usage, Mapping):
             raise OpenRouterError("OpenRouter usage metadata must be a JSON object")
-        validate_usage_tokens(dict(usage))
-        normalized = dict(response)
+        usage_dict = _mapping_to_dict(cast(Mapping[object, object], usage))
+        _ = validate_usage_tokens(usage_dict)
+        normalized = _mapping_to_dict(response)
         normalized["provider"] = str(provider)
         normalized["model"] = str(actual_model)
         normalized["requested_model"] = requested_model
-        normalized["usage"] = dict(usage)
+        normalized["usage"] = usage_dict
         return normalized
 
     def _advance_after_failure(self, *, attempt_number: int, failed_cycle_count: int, reason: str) -> None:
@@ -266,12 +274,20 @@ class OpenRouterModelFailover:
             reason="retrying from first configured model",
         )
 
-    def _emit(self, event: str, **fields: Any) -> None:
+    def _emit(self, event: str, **fields: object) -> None:
         payload = {"event": event, "provider": self.config.provider, **fields}
         if self.event_sink is not None:
             self.event_sink(payload)
         if self.config.log_events:
             _LOGGER.info(json.dumps(payload, sort_keys=True))
+
+
+def clear_shared_failover_clients_for_tests() -> None:
+    _SHARED_FAILOVER_CLIENTS.clear()
+
+
+def shared_failover_cache_keys_for_tests() -> tuple[tuple[object, ...], ...]:
+    return tuple(_SHARED_FAILOVER_CLIENTS)
 
 
 def classify_openrouter_failure(exc: OpenRouterError) -> tuple[bool, str]:
@@ -341,13 +357,13 @@ def safe_openrouter_error_message(exc: BaseException) -> str:
 
 
 def openrouter_failover_config_from_policy(
-    provider_policy: Mapping[str, Any],
+    provider_policy: Mapping[str, object],
     *,
     env: Mapping[str, str] | None = None,
 ) -> OpenRouterFailoverConfig | None:
     env = env if env is not None else os.environ
     raw = provider_policy.get(FAILOVER_POLICY_KEY)
-    raw_config = raw if isinstance(raw, Mapping) else {}
+    raw_config = _mapping_to_dict(cast(Mapping[object, object], raw)) if isinstance(raw, Mapping) else {}
     enabled = _bool_value(raw_config.get("enabled"), default=False)
     if not enabled:
         enabled = _env_bool(env.get(ENV_FAILOVER_ENABLED), default=False)
@@ -359,7 +375,9 @@ def openrouter_failover_config_from_policy(
     elif ENV_FAILOVER_MODELS in env:
         models = _models_value(env.get(ENV_FAILOVER_MODELS), source="env")
     else:
-        models = tuple(OPENROUTER_FREE_MODEL_ORDER)
+        raise OpenRouterFailoverHardError(
+            f"OpenRouter failover requires explicit OpenRouter failover models; set {ENV_FAILOVER_MODELS} or openrouter_failover.models"
+        )
     config = OpenRouterFailoverConfig(
         provider=provider,
         models=models,
@@ -375,17 +393,24 @@ def openrouter_failover_config_from_policy(
 
 
 def openrouter_client_for_policy(
-    provider_policy: Mapping[str, Any],
+    provider_policy: Mapping[str, object],
     *,
     env: Mapping[str, str] | None = None,
-    client: Any | None = None,
-) -> Any:
+    client: object | None = None,
+    event_sink: Callable[[dict[str, object]], None] | None = None,
+) -> object:
     config = openrouter_failover_config_from_policy(provider_policy, env=env)
     if config is None:
         return client
     if client is not None:
-        return OpenRouterModelFailover(config=config, client=client)
+        return OpenRouterModelFailover(config=config, client=client, event_sink=event_sink)
     env = env if env is not None else os.environ
+    if event_sink is not None:
+        return OpenRouterModelFailover(
+            config=config,
+            client=OpenRouterClient(api_key=env.get(OPENROUTER_KEY_ENV, ""), timeout=config.per_model_timeout_seconds),
+            event_sink=event_sink,
+        )
     key = config.cache_key()
     failover_client = _SHARED_FAILOVER_CLIENTS.get(key)
     if failover_client is None:
@@ -397,12 +422,12 @@ def openrouter_client_for_policy(
     return failover_client
 
 
-def primary_model_for_policy(provider_policy: Mapping[str, Any], *, env: Mapping[str, str] | None = None) -> str:
+def primary_model_for_policy(provider_policy: Mapping[str, object], *, env: Mapping[str, str] | None = None) -> str:
     models = openrouter_models_for_policy(provider_policy, env=env)
     return models[0] if models else ""
 
 
-def openrouter_models_for_policy(provider_policy: Mapping[str, Any], *, env: Mapping[str, str] | None = None) -> tuple[str, ...]:
+def openrouter_models_for_policy(provider_policy: Mapping[str, object], *, env: Mapping[str, str] | None = None) -> tuple[str, ...]:
     config = openrouter_failover_config_from_policy(provider_policy, env=env)
     if config is not None:
         return config.models
@@ -427,7 +452,7 @@ def _validate_failover_config(config: OpenRouterFailoverConfig) -> None:
         raise OpenRouterFailoverHardError("OpenRouter failover jitter_seconds must be non-negative")
 
 
-def _models_value(value: Any, *, source: str) -> tuple[str, ...]:
+def _models_value(value: object, *, source: str) -> tuple[str, ...]:
     if value is None:
         raise OpenRouterFailoverHardError(f"OpenRouter failover {source} models must be a non-empty string or list")
     if isinstance(value, str):
@@ -436,10 +461,11 @@ def _models_value(value: Any, *, source: str) -> tuple[str, ...]:
             raise OpenRouterFailoverHardError(f"OpenRouter failover {source} models must not be empty")
         return parsed_models
     if isinstance(value, list | tuple):
-        if not value:
+        items = cast(list[object] | tuple[object, ...], value)
+        if not items:
             raise OpenRouterFailoverHardError(f"OpenRouter failover {source} models must not be empty")
         models: list[str] = []
-        for index, item in enumerate(value):
+        for index, item in enumerate(items):
             if not isinstance(item, str) or not item.strip():
                 raise OpenRouterFailoverHardError(f"OpenRouter failover {source} models[{index}] must be a non-empty string")
             models.append(item.strip())
@@ -447,7 +473,7 @@ def _models_value(value: Any, *, source: str) -> tuple[str, ...]:
     raise OpenRouterFailoverHardError(f"OpenRouter failover {source} models must be a non-empty string or list")
 
 
-def _bool_value(value: Any, *, default: bool) -> bool:
+def _bool_value(value: object, *, default: bool) -> bool:
     if value is None:
         return default
     if isinstance(value, bool):
@@ -461,15 +487,30 @@ def _env_bool(value: str | None, *, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _int_value(primary: Any, fallback: Any, *, default: int) -> int:
+def _int_value(primary: object, fallback: object, *, default: int) -> int:
     raw = primary if primary is not None else fallback
     if raw is None:
         return default
-    return int(raw)
+    if isinstance(raw, bool):
+        return int(raw)
+    if isinstance(raw, int | str):
+        return int(raw)
+    raise OpenRouterFailoverHardError(f"OpenRouter failover integer value is invalid: {raw!r}")
 
 
-def _float_value(primary: Any, fallback: Any, *, default: float) -> float:
+def _float_value(primary: object, fallback: object, *, default: float) -> float:
     raw = primary if primary is not None else fallback
     if raw is None:
         return default
-    return float(raw)
+    if isinstance(raw, bool):
+        return float(raw)
+    if isinstance(raw, int | float | str):
+        value = float(raw)
+        if not math.isfinite(value):
+            raise OpenRouterFailoverHardError("OpenRouter failover float value must be finite")
+        return value
+    raise OpenRouterFailoverHardError(f"OpenRouter failover float value is invalid: {raw!r}")
+
+
+def _mapping_to_dict(value: Mapping[object, object]) -> dict[str, object]:
+    return {str(key): item for key, item in value.items()}

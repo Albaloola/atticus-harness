@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import json
 from pathlib import Path
 import sqlite3
 from typing import cast
 
+import pytest
+
+from atticus.cli import main as cli_main
 from atticus.core.policies import LegalStage, TaskStatus
 from atticus.core.tasks import TaskSpec
 from atticus.db import repo
+from atticus.scheduler import free_loop as free_loop_module
 from atticus.scheduler.free_loop import run_free_loop_once
 from atticus.scheduler.lease import acquire_lease
 from atticus.workers.outputs import record_worker_result
@@ -154,8 +159,185 @@ def test_free_loop_once_codex_runtime_fails_closed_without_provider_fallback(tmp
     assert result["executed_tasks"] == []
     assert result["worker_errors"]
     assert task["status"] == str(TaskStatus.BLOCKED)
-    assert "Codex provider is policy-configurable" in str(task["blocked_reasons_json"])
+    assert "ATTICUS_ENABLE_LIVE_CODEX" in str(task["blocked_reasons_json"])
     assert active_leases == 0
     assert failed_leases == 1
     assert provider_runs == 0
     assert candidates == 0
+
+
+def test_free_loop_once_closes_active_lease_if_worker_crashes_before_cleanup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    db_path = init_db(tmp_path)
+    captured: dict[str, object] = {}
+
+    def fake_execute_codex_work_order(
+        conn: sqlite3.Connection,
+        *,
+        task_id: str,
+        lease_id: str,
+        worker_id: str,
+        output_dir: Path,
+        env: Mapping[str, str] | None,
+        allow_live: bool,
+        timeout_seconds: float,
+        reasoning_effort: str,
+    ) -> None:
+        del conn, output_dir, env, allow_live
+        captured.update(
+            {
+                "task_id": task_id,
+                "lease_id": lease_id,
+                "worker_id": worker_id,
+                "timeout_seconds": timeout_seconds,
+                "reasoning_effort": reasoning_effort,
+            }
+        )
+        raise RuntimeError("simulated worker crash before cleanup")
+
+    monkeypatch.setattr(free_loop_module, "execute_codex_work_order", fake_execute_codex_work_order)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="codex-crash",
+                title="Codex crash",
+                task_type="source_inventory",
+                stage=LegalStage.S0_SOURCE_INVENTORY,
+                provider_policy={
+                    "provider": "openai-codex",
+                    "model": "gpt-5.5",
+                    "allow_fallback": False,
+                    "estimated_cost_usd": 0.0,
+                },
+            ),
+        )
+
+        result = run_free_loop_once(
+            conn,
+            output_dir=tmp_path / "out",
+            capacity=1,
+            execute_workers=True,
+            runtime="codex",
+            env={"ATTICUS_ENABLE_LIVE_CODEX": "1"},
+            allow_live=True,
+            codex_timeout_seconds=12.5,
+            codex_reasoning_effort="medium",
+        )
+
+        task = cast(Mapping[str, object], conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'codex-crash'").fetchone())
+        active_leases = _scalar_int(conn, "SELECT COUNT(*) FROM leases WHERE status = 'active'")
+        failed_leases = _scalar_int(conn, "SELECT COUNT(*) FROM leases WHERE status = 'failed'")
+
+    assert result["worker_errors"] == [{"task_id": "codex-crash", "error": "simulated worker crash before cleanup"}]
+    assert captured["timeout_seconds"] == 12.5
+    assert captured["reasoning_effort"] == "medium"
+    assert task["status"] == str(TaskStatus.BLOCKED)
+    assert "simulated worker crash before cleanup" in str(task["blocked_reasons_json"])
+    assert active_leases == 0
+    assert failed_leases == 1
+
+
+def test_run_free_loop_cli_returns_nonzero_on_worker_errors(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="codex-no-live",
+                title="Codex no live",
+                task_type="source_inventory",
+                stage=LegalStage.S0_SOURCE_INVENTORY,
+                provider_policy={
+                    "provider": "openai-codex",
+                    "model": "gpt-5.5",
+                    "allow_fallback": False,
+                    "estimated_cost_usd": 0.0,
+                },
+            ),
+        )
+
+    code = cli_main(
+        [
+            "run-free-loop",
+            "--db",
+            str(db_path),
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--capacity",
+            "1",
+            "--max-ticks",
+            "1",
+            "--runtime",
+            "codex",
+        ]
+    )
+    stdout = capsys.readouterr().out
+    payload_raw = json.loads(stdout)
+    assert isinstance(payload_raw, Mapping)
+    payload = cast(Mapping[str, object], payload_raw)
+    ticks = cast(list[Mapping[str, object]], payload["ticks"])
+    worker_errors = cast(list[Mapping[str, object]], ticks[0]["worker_errors"])
+
+    assert code == 2
+    assert payload["ok"] is False
+    assert ticks[0]["ok"] is False
+    assert worker_errors[0]["task_id"] == "codex-no-live"
+
+
+def test_run_free_loop_cli_openrouter_without_live_gate_does_not_dispatch(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="openrouter-no-live",
+                title="OpenRouter no live",
+                task_type="source_inventory",
+                stage=LegalStage.S0_SOURCE_INVENTORY,
+                provider_policy={
+                    "provider": "openrouter",
+                    "model": "deepseek/deepseek-v4-flash",
+                    "allow_fallback": False,
+                    "estimated_cost_usd": 0.0,
+                },
+            ),
+        )
+
+    code = cli_main(
+        [
+            "run-free-loop",
+            "--db",
+            str(db_path),
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--capacity",
+            "1",
+            "--max-ticks",
+            "1",
+            "--runtime",
+            "openrouter",
+        ]
+    )
+    stdout = capsys.readouterr().out
+    payload_raw = json.loads(stdout)
+    assert isinstance(payload_raw, Mapping)
+    payload = cast(Mapping[str, object], payload_raw)
+    ticks = cast(list[Mapping[str, object]], payload["ticks"])
+    worker_errors = cast(list[Mapping[str, object]], ticks[0]["worker_errors"])
+
+    with repo.db_connection(db_path) as conn:
+        provider_runs = _scalar_int(conn, "SELECT COUNT(*) FROM provider_runs")
+        candidates = _scalar_int(conn, "SELECT COUNT(*) FROM candidate_outputs")
+        active_leases = _scalar_int(conn, "SELECT COUNT(*) FROM leases WHERE status = 'active'")
+        failed_leases = _scalar_int(conn, "SELECT COUNT(*) FROM leases WHERE status = 'failed'")
+        task = cast(Mapping[str, object], conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'openrouter-no-live'").fetchone())
+
+    assert code == 2
+    assert payload["ok"] is False
+    assert worker_errors[0]["task_id"] == "openrouter-no-live"
+    assert provider_runs == 0
+    assert candidates == 0
+    assert active_leases == 0
+    assert failed_leases == 1
+    assert task["status"] == str(TaskStatus.BLOCKED)
+    assert "ATTICUS_ENABLE_LIVE_OPENROUTER" in str(task["blocked_reasons_json"])

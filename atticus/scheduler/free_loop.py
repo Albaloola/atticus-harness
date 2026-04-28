@@ -8,25 +8,19 @@ bounded by caller-provided ticks so tests and operators can run it safely.
 from __future__ import annotations
 
 from collections.abc import Mapping
-import json
 from pathlib import Path
 import sqlite3
 from typing import cast
 from uuid import uuid4
 
-from atticus.core.policies import LegalStage, TaskStatus
-from atticus.core.tasks import TaskSpec
+from atticus.core.events import utc_now
+from atticus.core.policies import TaskStatus
 from atticus.db import repo
-from atticus.providers.deepseek import OPENROUTER_FREE_MODEL_ORDER
-from atticus.providers.model_policy import validate_proposed_task_provider_policy
-from atticus.providers.policy import canonical_provider_policy
 from atticus.reducer.reducer import ReductionBlocked, reduce_candidate
 from atticus.scheduler.lease import LeaseError, acquire_lease
 from atticus.scheduler.planner import select_runnable_tasks
+from atticus.workers.proposed_tasks import import_proposed_tasks_from_candidate
 from atticus.workers.runtime import execute_codex_work_order, execute_local_work_order, execute_openrouter_work_order
-
-DEFAULT_FREE_MODEL = OPENROUTER_FREE_MODEL_ORDER[0]
-
 
 def run_free_loop_once(
     conn: sqlite3.Connection,
@@ -37,6 +31,8 @@ def run_free_loop_once(
     runtime: str = "openrouter",
     allow_live: bool = False,
     env: Mapping[str, str] | None = None,
+    codex_timeout_seconds: float = 180.0,
+    codex_reasoning_effort: str = "low",
 ) -> dict[str, object]:
     """Run one safe supervisor tick.
 
@@ -60,14 +56,18 @@ def run_free_loop_once(
                 seconds=900,
                 dry_run=False,
             )
-            _ = reduce_candidate(
+            reduction = reduce_candidate(
                 conn,
                 candidate_id=candidate_id,
                 reducer_lease_id=reducer_lease_id,
                 dry_run=False,
             )
             reduced_candidates.append(candidate_id)
-            imported_tasks.extend(_import_proposed_tasks_from_candidate(conn, candidate))
+            reducer_imported = reduction.get("imported_tasks", [])
+            if isinstance(reducer_imported, list):
+                imported_tasks.extend(str(imported_task_id) for imported_task_id in cast(list[object], reducer_imported))
+            else:
+                imported_tasks.extend(import_proposed_tasks_from_candidate(conn, candidate))
         except (LeaseError, ReductionBlocked, ValueError, KeyError) as exc:
             reduction_errors.append({"candidate_id": candidate_id, "task_id": task_id, "error": str(exc)})
             _ = repo.record_human_attention(
@@ -86,6 +86,7 @@ def run_free_loop_once(
     for index, task in enumerate(runnable, start=1):
         task_id = str(task["task_id"])
         worker_id = f"atticus-free-{index:02d}-{_short_id()}"
+        lease_id: str | None = None
         try:
             lease_id = acquire_lease(conn, task_id=task_id, worker_id=worker_id, seconds=900, dry_run=False)
             leased_tasks.append(task_id)
@@ -104,11 +105,23 @@ def run_free_loop_once(
                     allow_live=allow_live,
                 )
             elif runtime == "codex":
-                _ = execute_codex_work_order(conn, task_id=task_id, lease_id=lease_id, worker_id=worker_id, output_dir=output_dir)
+                _ = execute_codex_work_order(
+                    conn,
+                    task_id=task_id,
+                    lease_id=lease_id,
+                    worker_id=worker_id,
+                    output_dir=output_dir,
+                    env=env,
+                    allow_live=allow_live,
+                    timeout_seconds=codex_timeout_seconds,
+                    reasoning_effort=codex_reasoning_effort,
+                )
             else:
                 raise ValueError(f"unsupported free loop runtime: {runtime}")
             executed_tasks.append(task_id)
         except Exception as exc:
+            if lease_id is not None:
+                _fail_active_lease_after_worker_exception(conn, lease_id=lease_id, task_id=task_id, reason=str(exc))
             worker_errors.append({"task_id": task_id, "error": str(exc)})
             _ = repo.record_human_attention(
                 conn,
@@ -118,10 +131,12 @@ def run_free_loop_once(
                 reason=f"free loop worker failed: {exc}",
             )
 
+    ok = not reduction_errors and not worker_errors
     _ = repo.emit_event(
         conn,
         "free_loop.tick",
         payload={
+            "ok": ok,
             "reduced_candidates": reduced_candidates,
             "imported_tasks": imported_tasks,
             "leased_tasks": leased_tasks,
@@ -131,6 +146,7 @@ def run_free_loop_once(
         },
     )
     return {
+        "ok": ok,
         "reduced_candidates": reduced_candidates,
         "imported_tasks": imported_tasks,
         "leased_tasks": leased_tasks,
@@ -149,6 +165,8 @@ def run_free_loop(
     runtime: str = "openrouter",
     allow_live: bool = False,
     env: Mapping[str, str] | None = None,
+    codex_timeout_seconds: float = 180.0,
+    codex_reasoning_effort: str = "low",
 ) -> dict[str, object]:
     """Run a bounded autonomous free loop and return per-tick summaries."""
 
@@ -162,11 +180,26 @@ def run_free_loop(
             runtime=runtime,
             allow_live=allow_live,
             env=env,
+            codex_timeout_seconds=codex_timeout_seconds,
+            codex_reasoning_effort=codex_reasoning_effort,
         )
         ticks.append(tick)
         if not tick["reduced_candidates"] and not tick["leased_tasks"]:
             break
-    return {"ticks": ticks, "tick_count": len(ticks)}
+    ok = all(bool(tick.get("ok")) for tick in ticks)
+    return {"ok": ok, "ticks": ticks, "tick_count": len(ticks)}
+
+
+def _fail_active_lease_after_worker_exception(conn: sqlite3.Connection, *, lease_id: str, task_id: str, reason: str) -> None:
+    """Defensively close capacity if a worker crashes before its runtime cleanup."""
+
+    row = cast(Mapping[str, object] | None, conn.execute("SELECT status FROM leases WHERE lease_id = ? AND task_id = ?", (lease_id, task_id)).fetchone())
+    if row is None or row["status"] != "active":
+        return
+    now = utc_now()
+    _ = conn.execute("UPDATE leases SET status = 'failed', updated_at = ? WHERE lease_id = ?", (now, lease_id))
+    repo.update_task_blocked(conn, task_id, [reason])
+    _ = repo.emit_event(conn, "lease.failed", payload={"lease_id": lease_id, "task_id": task_id, "reason": reason})
 
 
 def _pending_candidates(conn: sqlite3.Connection) -> list[Mapping[str, object]]:
@@ -182,107 +215,6 @@ def _pending_candidates(conn: sqlite3.Connection) -> list[Mapping[str, object]]:
             (TaskStatus.REDUCER_PENDING,),
         )
     ]
-
-
-def _import_proposed_tasks_from_candidate(conn: sqlite3.Connection, candidate: Mapping[str, object]) -> list[str]:
-    payload = json.loads(str(candidate["payload_json"]))
-    if not isinstance(payload, Mapping):
-        return []
-    raw_tasks = payload.get("proposed_tasks", [])
-    if not isinstance(raw_tasks, list):
-        return []
-    imported: list[str] = []
-    parent_task_id = str(candidate["task_id"])
-    parent_task = cast(Mapping[str, object] | None, conn.execute("SELECT provider_policy_json FROM tasks WHERE task_id = ?", (parent_task_id,)).fetchone())
-    parent_policy = _load_parent_provider_policy(parent_task)
-    for index, raw_task in enumerate(raw_tasks, start=1):
-        if not isinstance(raw_task, Mapping):
-            continue
-        task_map = cast(Mapping[object, object], raw_task)
-        task_id = str(task_map.get("task_id") or f"{parent_task_id}-followup-{index}")
-        if _task_exists(conn, task_id):
-            continue
-        stage = str(task_map.get("stage") or LegalStage.S0_SOURCE_INVENTORY)
-        provider_policy = _provider_policy(task_map, parent_policy=parent_policy)
-        repo.add_task(
-            conn,
-            TaskSpec(
-                task_id=task_id,
-                title=str(task_map.get("title") or task_id),
-                task_type=str(task_map.get("task_type") or "followup"),
-                matter_scope=str(task_map.get("matter_scope") or "atticus"),
-                stage=cast(LegalStage, cast(object, stage)),
-                status=TaskStatus.QUEUED,
-                source_dependencies=_string_list(task_map.get("source_dependencies")),
-                artifact_dependencies=_string_list(task_map.get("artifact_dependencies")),
-                task_dependencies=_string_list(task_map.get("task_dependencies")),
-                matter_dependencies=_string_list(task_map.get("matter_dependencies")),
-                required_certifications=_mapping_list(task_map.get("required_certifications")),
-                validation_gates=_string_list(task_map.get("validation_gates")),
-                staleness_rules=_dict(task_map.get("staleness_rules")),
-                provider_policy=provider_policy,
-                cost_limit_usd=_optional_float(task_map.get("cost_limit_usd")),
-                expected_value=_optional_float(task_map.get("expected_value")) or 0.0,
-            ),
-        )
-        imported.append(task_id)
-    return imported
-
-
-def _provider_policy(task_map: Mapping[object, object], *, parent_policy: Mapping[str, object] | None = None) -> dict[str, object]:
-    if parent_policy:
-        return validate_proposed_task_provider_policy(parent_provider_policy=parent_policy, proposed_task=task_map)
-    raw = task_map.get("provider_policy")
-    policy = dict(cast(Mapping[str, object], raw)) if isinstance(raw, Mapping) else {}
-    provider = str(policy.get("provider") or task_map.get("provider") or "openrouter")
-    model = str(policy.get("model") or task_map.get("model") or DEFAULT_FREE_MODEL)
-    return canonical_provider_policy(
-        provider=provider,
-        model=model,
-        allow_fallback=bool(policy.get("allow_fallback") or False),
-        estimated_cost_usd=_optional_float(policy.get("estimated_cost_usd")) or 0.0,
-    )
-
-
-def _load_parent_provider_policy(parent_task: Mapping[str, object] | None) -> dict[str, object]:
-    if parent_task is None:
-        return {}
-    try:
-        raw = json.loads(str(parent_task["provider_policy_json"] or "{}"))
-    except (json.JSONDecodeError, TypeError):
-        return {}
-    if not isinstance(raw, Mapping):
-        return {}
-    return {str(key): value for key, value in cast(Mapping[object, object], raw).items()}
-
-
-def _task_exists(conn: sqlite3.Connection, task_id: str) -> bool:
-    return conn.execute("SELECT 1 FROM tasks WHERE task_id = ?", (task_id,)).fetchone() is not None
-
-
-def _string_list(value: object) -> list[str]:
-    return [str(item) for item in cast(list[object], value)] if isinstance(value, list) else []
-
-
-def _mapping_list(value: object) -> list[dict[str, object]]:
-    if not isinstance(value, list):
-        return []
-    return [dict(cast(Mapping[str, object], item)) for item in cast(list[object], value) if isinstance(item, Mapping)]
-
-
-def _dict(value: object) -> dict[str, object]:
-    return dict(cast(Mapping[str, object], value)) if isinstance(value, Mapping) else {}
-
-
-def _optional_float(value: object) -> float | None:
-    if value is None or value == "":
-        return None
-    if isinstance(value, bool):
-        return None
-    try:
-        return float(str(value))
-    except (TypeError, ValueError):
-        return None
 
 
 def _short_id() -> str:

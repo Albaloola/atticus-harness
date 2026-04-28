@@ -6,9 +6,7 @@ from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 import hashlib
-import os
 import sqlite3
-from typing import Any
 
 from atticus.db import repo
 from atticus.migration.salvage_indexes import iter_classified_files
@@ -24,9 +22,9 @@ class MigrationReport:
     candidate_count: int
     rough_note_count: int
     rejected_count: int
-    examples: list[dict[str, Any]]
+    examples: list[dict[str, object]]
 
-    def as_dict(self) -> dict[str, Any]:
+    def as_dict(self) -> dict[str, object]:
         return {
             "dry_run": self.dry_run,
             "workspace": self.workspace,
@@ -53,7 +51,7 @@ def build_migration_report(
     classified = iter_classified_files(root)
     by_classification = Counter(item.artifact_type for _, item in classified)
     by_trust = Counter(item.trust_status for _, item in classified)
-    examples: list[dict[str, Any]] = []
+    examples: list[dict[str, object]] = []
     for path, item in classified[:limit_examples]:
         stat = path.stat()
         examples.append(
@@ -83,7 +81,7 @@ def build_migration_report(
         examples=examples,
     )
     if persist and conn is not None:
-        repo.record_migration_report(conn, workspace_path=str(root), dry_run=dry_run, summary=report.as_dict())
+        _ = repo.record_migration_report(conn, workspace_path=str(root), dry_run=dry_run, summary=report.as_dict())
     return report
 
 

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import re
-from typing import Any
+
 
 
 @dataclass(frozen=True)
@@ -33,11 +33,12 @@ class WorkOrder:
     instructions: str
     source_dependencies: list[str] = field(default_factory=list)
     artifact_dependencies: list[str] = field(default_factory=list)
-    required_certifications: list[dict[str, Any]] = field(default_factory=list)
+    required_certifications: list[dict[str, object]] = field(default_factory=list)
     validation_gates: list[str] = field(default_factory=list)
-    provider_policy: dict[str, Any] = field(default_factory=dict)
+    provider_policy: dict[str, object] = field(default_factory=dict)
+    skills: list[dict[str, object]] = field(default_factory=list)
 
-    def as_dict(self) -> dict[str, Any]:
+    def as_dict(self) -> dict[str, object]:
         return {
             "task_id": self.task_id,
             "title": self.title,
@@ -52,6 +53,7 @@ class WorkOrder:
             "required_certifications": self.required_certifications,
             "validation_gates": self.validation_gates,
             "provider_policy": self.provider_policy,
+            "skills": self.skills,
         }
 
 

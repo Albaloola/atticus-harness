@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from typing import cast
+from collections.abc import Mapping
+from pathlib import Path
 import inspect
 import sqlite3
 
 import pytest
 
-from atticus.core.policies import LegalStage, TaskStatus, TrustStatus
+from atticus.core.policies import TaskStatus, TrustStatus
 from atticus.core.tasks import TaskSpec
 from atticus.db import repo
 from atticus.graph.certifications import CertificationBlocked, certify_subject
@@ -26,16 +29,22 @@ from atticus.validation.canonical_write_guard import (
 )
 
 
-def init_db(tmp_path):
+def _count(conn: sqlite3.Connection, sql: str, params: tuple[object, ...] = ()) -> int:
+    row = conn.execute(sql, params).fetchone()
+    assert row is not None
+    return int(float(str(row["n"])))
+
+
+def init_db(tmp_path: Path) -> Path:
     db_path = tmp_path / "atticus.sqlite3"
     repo.initialize_database(db_path)
     return db_path
 
 
-def test_read_only_ask_mode_never_launches_workers(tmp_path):
+def test_read_only_ask_mode_never_launches_workers(tmp_path: Path):
     db_path = init_db(tmp_path)
     with repo.db_connection(db_path) as conn:
-        repo.add_artifact(
+        _ = repo.add_artifact(
             conn,
             path="/evidence/source_index.json",
             artifact_type="source_index",
@@ -43,10 +52,10 @@ def test_read_only_ask_mode_never_launches_workers(tmp_path):
             content="production status source index",
             trust_status=TrustStatus.CANDIDATE,
         )
-        before_events = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
+        before_events = _count(conn, "SELECT COUNT(*) AS n FROM events")
 
     class Launcher:
-        launched = False
+        launched: bool = False
 
         def launch(self):
             self.launched = True
@@ -59,14 +68,14 @@ def test_read_only_ask_mode_never_launches_workers(tmp_path):
     assert answer.citations
     assert answer.trust_level == "candidate-only"
     with repo.db_connection(db_path) as conn:
-        after_events = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
+        after_events = _count(conn, "SELECT COUNT(*) AS n FROM events")
     assert after_events == before_events
 
 
-def test_read_only_ask_prefers_tokenized_match_over_recent_fallback(tmp_path):
+def test_read_only_ask_prefers_tokenized_match_over_recent_fallback(tmp_path: Path):
     db_path = init_db(tmp_path)
     with repo.db_connection(db_path) as conn:
-        repo.add_artifact(
+        _ = repo.add_artifact(
             conn,
             path="/recent/unrelated.txt",
             artifact_type="note",
@@ -90,7 +99,7 @@ def test_read_only_ask_prefers_tokenized_match_over_recent_fallback(tmp_path):
     assert "recent/unrelated" not in answer.citations[0].path
 
 
-def test_read_only_ask_returns_authority_records(tmp_path):
+def test_read_only_ask_returns_authority_records(tmp_path: Path):
     db_path = init_db(tmp_path)
     with repo.db_connection(db_path) as conn:
         authority_id = add_authority(
@@ -110,7 +119,7 @@ def test_read_only_ask_returns_authority_records(tmp_path):
     assert answer.citations[0].record_id == authority_id
 
 
-def test_search_index_rebuild_is_durable_and_ask_uses_projection(tmp_path):
+def test_search_index_rebuild_is_durable_and_ask_uses_projection(tmp_path: Path):
     db_path = init_db(tmp_path)
     with repo.db_connection(db_path) as conn:
         artifact_id = repo.add_artifact(
@@ -123,9 +132,9 @@ def test_search_index_rebuild_is_durable_and_ask_uses_projection(tmp_path):
         )
         first = rebuild_search_index(conn)
         second = rebuild_search_index(conn)
-        entries = conn.execute("SELECT record_type, record_id FROM search_index_entries ORDER BY record_type, record_id").fetchall()
-        rebuild_count = conn.execute("SELECT COUNT(*) AS n FROM index_rebuilds WHERE index_name = ?", (first["index_name"],)).fetchone()["n"]
-        event_count = conn.execute("SELECT COUNT(*) AS n FROM events WHERE event_type = 'search_index.rebuilt'").fetchone()["n"]
+        entries = cast(list[Mapping[str, object]], conn.execute("SELECT record_type, record_id FROM search_index_entries ORDER BY record_type, record_id").fetchall())
+        rebuild_count = _count(conn, "SELECT COUNT(*) AS n FROM index_rebuilds WHERE index_name = ?", (first["index_name"],))
+        event_count = _count(conn, "SELECT COUNT(*) AS n FROM events WHERE event_type = 'search_index.rebuilt'")
 
     answer = answer_question(str(db_path), "Bates UOG-001 disclosure bundle")
 
@@ -137,7 +146,7 @@ def test_search_index_rebuild_is_durable_and_ask_uses_projection(tmp_path):
     assert answer.citations[0].record_id == artifact_id
 
 
-def test_indexed_ask_is_limited_to_requested_matter(tmp_path):
+def test_indexed_ask_is_limited_to_requested_matter(tmp_path: Path):
     db_path = init_db(tmp_path)
     with repo.db_connection(db_path) as conn:
         alpha_artifact = repo.add_artifact(
@@ -158,8 +167,8 @@ def test_indexed_ask_is_limited_to_requested_matter(tmp_path):
             content="betaexclusive privileged settlement memo",
             trust_status=TrustStatus.VALIDATED,
         )
-        rebuild_search_index(conn, matter_scope="alpha", authorized_matter_scope="alpha")
-        rebuild_search_index(conn, matter_scope="beta", authorized_matter_scope="beta")
+        _ = rebuild_search_index(conn, matter_scope="alpha", authorized_matter_scope="alpha")
+        _ = rebuild_search_index(conn, matter_scope="beta", authorized_matter_scope="beta")
 
     blocked = answer_question(str(db_path), "alphaexclusive", matter_scope="beta", authorized_matter_scope="beta")
     beta = answer_question(str(db_path), "betaexclusive", matter_scope="beta", authorized_matter_scope="beta")
@@ -171,7 +180,7 @@ def test_indexed_ask_is_limited_to_requested_matter(tmp_path):
     assert beta.citations[0].record_id != alpha_artifact
 
 
-def test_fallback_ask_is_limited_to_requested_matter(tmp_path):
+def test_fallback_ask_is_limited_to_requested_matter(tmp_path: Path):
     db_path = init_db(tmp_path)
     with repo.db_connection(db_path) as conn:
         alpha_artifact = repo.add_artifact(
@@ -203,7 +212,7 @@ def test_fallback_ask_is_limited_to_requested_matter(tmp_path):
     assert beta.citations[0].record_id != alpha_artifact
 
 
-def test_legacy_queued_tasks_cannot_bypass_dependency_gates(tmp_path):
+def test_legacy_queued_tasks_cannot_bypass_dependency_gates(tmp_path: Path):
     db_path = init_db(tmp_path)
     with repo.db_connection(db_path) as conn:
         repo.add_task(
@@ -217,26 +226,24 @@ def test_legacy_queued_tasks_cannot_bypass_dependency_gates(tmp_path):
             ),
         )
         runnable = select_runnable_tasks(conn, capacity=5)
-        task = conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = ?", ("task-missing-source",)).fetchone()
-
+        task = cast(Mapping[str, object], conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = ?", ("task-missing-source",)).fetchone())
     assert runnable == []
     assert task["status"] == "blocked"
-    assert "missing source dependency" in task["blocked_reasons_json"]
+    assert "missing source dependency" in str(task["blocked_reasons_json"])
 
 
-def test_scheduler_capacity_zero_selects_no_tasks_without_mutating(tmp_path):
+def test_scheduler_capacity_zero_selects_no_tasks_without_mutating(tmp_path: Path):
     db_path = init_db(tmp_path)
     with repo.db_connection(db_path) as conn:
         repo.add_task(conn, TaskSpec(task_id="capacity-zero", title="Capacity zero", task_type="extract"))
         runnable = select_runnable_tasks(conn, capacity=0)
-        task = conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'capacity-zero'").fetchone()
-
+        task = cast(Mapping[str, object], conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'capacity-zero'").fetchone())
     assert runnable == []
     assert task["status"] == TaskStatus.QUEUED
     assert task["blocked_reasons_json"] == "[]"
 
 
-def test_scheduler_rechecks_blocked_tasks_after_dependency_is_satisfied(tmp_path):
+def test_scheduler_rechecks_blocked_tasks_after_dependency_is_satisfied(tmp_path: Path):
     db_path = init_db(tmp_path)
     with repo.db_connection(db_path) as conn:
         repo.add_task(
@@ -249,33 +256,31 @@ def test_scheduler_rechecks_blocked_tasks_after_dependency_is_satisfied(tmp_path
             ),
         )
         assert select_runnable_tasks(conn, capacity=5) == []
-        blocked = conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'recheck-blocked'").fetchone()
-        repo.add_source(conn, source_id="src-now-present", path="/raw/now-present.pdf", sha256="c" * 64)
+        blocked = cast(Mapping[str, object], conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'recheck-blocked'").fetchone())
+        _ = repo.add_source(conn, source_id="src-now-present", path="/raw/now-present.pdf", sha256="c" * 64)
         runnable = select_runnable_tasks(conn, capacity=5)
-        requeued = conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'recheck-blocked'").fetchone()
-
+        requeued = cast(Mapping[str, object], conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'recheck-blocked'").fetchone())
     assert blocked["status"] == TaskStatus.BLOCKED
-    assert "missing source dependency" in blocked["blocked_reasons_json"]
+    assert "missing source dependency" in str(blocked["blocked_reasons_json"])
     assert [task["task_id"] for task in runnable] == ["recheck-blocked"]
     assert requeued["status"] == TaskStatus.QUEUED
     assert requeued["blocked_reasons_json"] == "[]"
 
 
-def test_scheduler_fails_closed_on_malformed_provider_policy_cost(tmp_path):
+def test_scheduler_fails_closed_on_malformed_provider_policy_cost(tmp_path: Path):
     db_path = init_db(tmp_path)
     with repo.db_connection(db_path) as conn:
         repo.add_task(conn, TaskSpec(task_id="bad-scheduler-policy", title="Bad policy", task_type="extract"))
-        conn.execute("PRAGMA ignore_check_constraints = ON")
-        conn.execute("UPDATE tasks SET provider_policy_json = ? WHERE task_id = ?", ("{not valid json", "bad-scheduler-policy"))
+        _ = conn.execute("PRAGMA ignore_check_constraints = ON")
+        _ = conn.execute("UPDATE tasks SET provider_policy_json = ? WHERE task_id = ?", ("{not valid json", "bad-scheduler-policy"))
         runnable = select_runnable_tasks(conn, capacity=5)
-        task = conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'bad-scheduler-policy'").fetchone()
-
+        task = cast(Mapping[str, object], conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'bad-scheduler-policy'").fetchone())
     assert runnable == []
     assert task["status"] == TaskStatus.BLOCKED
-    assert "malformed provider policy" in task["blocked_reasons_json"]
+    assert "malformed provider policy" in str(task["blocked_reasons_json"])
 
 
-def test_manual_lease_cannot_bypass_dependency_gates(tmp_path):
+def test_manual_lease_cannot_bypass_dependency_gates(tmp_path: Path):
     db_path = init_db(tmp_path)
     with repo.db_connection(db_path) as conn:
         repo.add_task(
@@ -283,19 +288,19 @@ def test_manual_lease_cannot_bypass_dependency_gates(tmp_path):
             TaskSpec(task_id="lease-missing-source", title="Lease missing source", task_type="extract", source_dependencies=["src-missing"]),
         )
         with pytest.raises(LeaseError, match="blocked by gates"):
-            acquire_lease(conn, task_id="lease-missing-source", worker_id="worker-1")
-        task = conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'lease-missing-source'").fetchone()
-        lease_count = conn.execute("SELECT COUNT(*) AS n FROM leases WHERE task_id = 'lease-missing-source'").fetchone()["n"]
+            _ = acquire_lease(conn, task_id="lease-missing-source", worker_id="worker-1")
+        task = cast(Mapping[str, object], conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'lease-missing-source'").fetchone())
+        lease_count = _count(conn, "SELECT COUNT(*) AS n FROM leases WHERE task_id = 'lease-missing-source'")
 
     assert task["status"] == TaskStatus.BLOCKED
-    assert "missing source dependency" in task["blocked_reasons_json"]
+    assert "missing source dependency" in str(task["blocked_reasons_json"])
     assert lease_count == 0
 
 
-def test_task_gates_block_cross_matter_source_dependencies(tmp_path):
+def test_task_gates_block_cross_matter_source_dependencies(tmp_path: Path):
     db_path = init_db(tmp_path)
     with repo.db_connection(db_path) as conn:
-        repo.add_source(conn, source_id="src-alpha-only", matter_scope="alpha", path="/alpha/source.pdf", sha256="d" * 64)
+        _ = repo.add_source(conn, source_id="src-alpha-only", matter_scope="alpha", path="/alpha/source.pdf", sha256="d" * 64)
         repo.add_task(
             conn,
             TaskSpec(
@@ -307,14 +312,13 @@ def test_task_gates_block_cross_matter_source_dependencies(tmp_path):
             ),
         )
         runnable = select_runnable_tasks(conn, capacity=5)
-        task = conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'beta-cross-source'").fetchone()
-
+        task = cast(Mapping[str, object], conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'beta-cross-source'").fetchone())
     assert runnable == []
     assert task["status"] == TaskStatus.BLOCKED
-    assert "cross-matter source dependency" in task["blocked_reasons_json"]
+    assert "cross-matter source dependency" in str(task["blocked_reasons_json"])
 
 
-def test_provider_fallback_is_blocked_unless_explicitly_allowed():
+def test_flat_provider_fallback_is_blocked_without_explicit_pool():
     decision = check_provider_policy(
         ProviderRequest("openrouter", "deepseek/deepseek-v4-pro", allow_fallback=False),
         ProviderActual("openrouter", "deepseek/deepseek-v4-flash"),
@@ -322,30 +326,60 @@ def test_provider_fallback_is_blocked_unless_explicitly_allowed():
     assert not decision.allowed
     assert decision.result == "failed_closed"
 
-    allowed = check_provider_policy(
+    fallback = check_provider_policy(
         ProviderRequest("openrouter", "deepseek/deepseek-v4-pro", allow_fallback=True),
         ProviderActual("openrouter", "deepseek/deepseek-v4-flash"),
     )
-    assert allowed.allowed
-    assert allowed.result == "allowed"
+    assert not fallback.allowed
+    assert fallback.result == "failed_closed"
+    assert "explicit OpenRouter model pool" in fallback.reason
 
 
-def test_old_indexes_import_as_candidate_artifacts_not_certified(tmp_path):
+def test_codex_provider_policy_accepts_only_codex_55_without_fallback():
+    decision = check_provider_policy(ProviderRequest("openai-codex", "gpt-5.5", allow_fallback=False))
+    assert decision.allowed
+    assert decision.result == "not_needed"
+
+    alias = check_provider_policy(
+        ProviderRequest("openai-codex", "openai-codex/gpt-5.5", allow_fallback=False),
+        ProviderActual("openai-codex", "gpt-5.5"),
+    )
+    assert alias.allowed
+
+    drift = check_provider_policy(
+        ProviderRequest("openai-codex", "gpt-5.5", allow_fallback=False),
+        ProviderActual("openrouter", "deepseek/deepseek-v4-pro"),
+    )
+    assert not drift.allowed
+    assert drift.result == "failed_closed"
+
+    forced_fallback = check_provider_policy(
+        ProviderRequest("openai-codex", "gpt-5.5", allow_fallback=True),
+        ProviderActual("openrouter", "deepseek/deepseek-v4-pro"),
+    )
+    assert not forced_fallback.allowed
+    assert forced_fallback.result == "failed_closed"
+
+    unknown = check_provider_policy(ProviderRequest("openai-codex", "gpt-5.4", allow_fallback=False))
+    assert not unknown.allowed
+    assert unknown.result == "blocked"
+
+
+def test_old_indexes_import_as_candidate_artifacts_not_certified(tmp_path: Path):
     db_path = init_db(tmp_path)
     workspace = tmp_path / "legacy"
     workspace.mkdir()
-    (workspace / "source_index.json").write_text('{"sources": ["a.pdf"]}', encoding="utf-8")
+    _ = (workspace / "source_index.json").write_text('{"sources": ["a.pdf"]}', encoding="utf-8")
 
     with repo.db_connection(db_path) as conn:
         result = import_candidates(conn, workspace=workspace, dry_run=False)
-        artifact = conn.execute("SELECT artifact_type, trust_status FROM artifacts").fetchone()
-
+        artifact = cast(Mapping[str, object], conn.execute("SELECT artifact_type, trust_status FROM artifacts").fetchone())
     assert len(result.candidates) == 1
     assert artifact["artifact_type"] == "source_index"
     assert artifact["trust_status"] == "candidate"
 
 
-def test_certifications_require_validation(tmp_path):
+def test_certifications_require_validation(tmp_path: Path):
     db_path = init_db(tmp_path)
     with repo.db_connection(db_path) as conn:
         artifact_id = repo.add_artifact(
@@ -355,14 +389,14 @@ def test_certifications_require_validation(tmp_path):
             trust_status=TrustStatus.CANDIDATE,
         )
         with pytest.raises(CertificationBlocked):
-            certify_subject(
+            _ = certify_subject(
                 conn,
                 subject_type="artifact",
                 subject_id=artifact_id,
                 certification_type="foundation",
                 validator="test",
             )
-        repo.record_validation(
+        _ = repo.record_validation(
             conn,
             target_type="artifact",
             target_id=artifact_id,
@@ -380,7 +414,7 @@ def test_certifications_require_validation(tmp_path):
     assert certification_id.startswith("cert-")
 
 
-def test_non_reducer_workers_cannot_write_canonical_files(tmp_path):
+def test_non_reducer_workers_cannot_write_canonical_files():
     with pytest.raises(CanonicalWriteDenied):
         assert_canonical_write_allowed(writer_role="worker", target_path="/canonical/facts.json")
 
@@ -388,11 +422,12 @@ def test_non_reducer_workers_cannot_write_canonical_files(tmp_path):
         assert_canonical_write_allowed(writer_role="reducer", target_path="/canonical/facts.json")
 
     signature = inspect.signature(write_canonical_text)
-    required_params = {name for name, parameter in signature.parameters.items() if parameter.default is inspect.Parameter.empty}
+    empty: object = inspect.Signature.empty
+    required_params = {name for name, parameter in signature.parameters.items() if cast(object, parameter.default) is empty}
     assert {"conn", "lease_id", "task_id"} <= required_params
 
 
-def test_canonical_writer_requires_active_reducer_lease_context(tmp_path):
+def test_canonical_writer_requires_active_reducer_lease_context(tmp_path: Path):
     db_path = init_db(tmp_path)
     target_path = tmp_path / "canonical.txt"
     with repo.db_connection(db_path) as conn:
@@ -407,8 +442,8 @@ def test_canonical_writer_requires_active_reducer_lease_context(tmp_path):
                 target_path=str(target_path),
                 text="unsafe",
             )
-        conn.execute("UPDATE leases SET status = 'failed' WHERE lease_id = ?", (worker_lease,))
-        conn.execute("UPDATE tasks SET status = ? WHERE task_id = ?", (TaskStatus.QUEUED, "canonical-task"))
+        _ = conn.execute("UPDATE leases SET status = 'failed' WHERE lease_id = ?", (worker_lease,))
+        _ = conn.execute("UPDATE tasks SET status = ? WHERE task_id = ?", (TaskStatus.QUEUED, "canonical-task"))
         reducer_lease = acquire_lease(conn, task_id="canonical-task", worker_id="reducer-1")
         write_canonical_text(
             conn=conn,
@@ -422,7 +457,7 @@ def test_canonical_writer_requires_active_reducer_lease_context(tmp_path):
     assert target_path.read_text(encoding="utf-8") == "safe"
 
 
-def test_scheduler_under_fills_capacity_when_only_fewer_tasks_are_safe(tmp_path):
+def test_scheduler_under_fills_capacity_when_only_fewer_tasks_are_safe(tmp_path: Path):
     db_path = init_db(tmp_path)
     with repo.db_connection(db_path) as conn:
         source_id = repo.add_source(
@@ -459,7 +494,7 @@ def test_scheduler_under_fills_capacity_when_only_fewer_tasks_are_safe(tmp_path)
     assert [task["task_id"] for task in runnable] == ["safe"]
 
 
-def test_cost_provider_metadata_can_be_recorded(tmp_path):
+def test_cost_provider_metadata_can_be_recorded(tmp_path: Path):
     db_path = init_db(tmp_path)
     cost = estimate_cost_usd(
         provider="openrouter",
@@ -482,15 +517,14 @@ def test_cost_provider_metadata_can_be_recorded(tmp_path):
             estimated_cost_usd=cost,
             fallback_policy_result="not_needed",
         )
-        row = conn.execute("SELECT * FROM provider_runs WHERE provider_run_id = ?", (run_id,)).fetchone()
-
+        row = cast(Mapping[str, object], conn.execute("SELECT * FROM provider_runs WHERE provider_run_id = ?", (run_id,)).fetchone())
     assert row["requested_model"] == "deepseek/deepseek-v4-pro"
     assert row["actual_model"] == "deepseek/deepseek-v4-pro"
     assert row["cache_hit_tokens"] == 1000
-    assert row["estimated_cost_usd"] > 0
+    assert float(str(row["estimated_cost_usd"])) > 0
 
 
-def test_stale_source_hash_marks_dependent_artifacts_stale(tmp_path):
+def test_stale_source_hash_marks_dependent_artifacts_stale(tmp_path: Path):
     db_path = init_db(tmp_path)
     with repo.db_connection(db_path) as conn:
         source_id = repo.add_source(
@@ -511,14 +545,13 @@ def test_stale_source_hash_marks_dependent_artifacts_stale(tmp_path):
             source_id=source_id,
             new_sha256="b" * 64,
         )
-        artifact = conn.execute("SELECT stale, trust_status FROM artifacts WHERE artifact_id = ?", (artifact_id,)).fetchone()
-
+        artifact = cast(Mapping[str, object], conn.execute("SELECT stale, trust_status FROM artifacts WHERE artifact_id = ?", (artifact_id,)).fetchone())
     assert changed == [artifact_id]
     assert artifact["stale"] == 1
     assert artifact["trust_status"] == "stale"
 
 
-def test_status_reports_blocked_reasons_and_run_state(tmp_path):
+def test_status_reports_blocked_reasons_and_run_state(tmp_path: Path):
     db_path = init_db(tmp_path)
     with repo.db_connection(db_path) as conn:
         repo.upsert_run(conn, "run-1", "paused", "waiting on human attention")
@@ -541,7 +574,7 @@ def test_status_reports_blocked_reasons_and_run_state(tmp_path):
     assert report.blocked_tasks[0]["reasons"] == ["missing certification: artifact:a:foundation"]
 
 
-def test_ask_blocks_external_action_intent(tmp_path):
+def test_ask_blocks_external_action_intent(tmp_path: Path):
     db_path = init_db(tmp_path)
     answer = answer_question(str(db_path), "email the filing to opposing counsel")
 

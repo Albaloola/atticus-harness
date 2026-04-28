@@ -12,9 +12,16 @@ from typing import cast, Protocol
 
 from atticus.providers.deepseek import known_model
 from atticus.providers.budget import check_budget
-from atticus.providers.openrouter_failover import openrouter_client_for_policy, openrouter_models_for_policy, primary_model_for_policy, safe_openrouter_error_message
+from atticus.providers.openrouter_failover import (
+    ENV_FAILOVER_ENABLED,
+    ENV_FAILOVER_MODELS,
+    openrouter_client_for_policy,
+    openrouter_models_for_policy,
+    primary_model_for_policy,
+    safe_openrouter_error_message,
+)
 from atticus.providers.openrouter import OpenRouterClient, OpenRouterError, validate_usage_tokens
-from atticus.providers.policy import ProviderActual, ProviderRequest, check_provider_policy
+from atticus.providers.policy import ProviderActual, ProviderDecision, ProviderRequest, check_provider_policy
 from atticus.scheduler.gates import evaluate_task_gates
 
 LIVE_ENABLE_ENV = "ATTICUS_ENABLE_LIVE_OPENROUTER"
@@ -51,7 +58,7 @@ def check_live_provider_policy(provider_policy: Mapping[str, object], *, env: Ma
     elif provider == "openrouter":
         try:
             models = openrouter_models_for_policy(provider_policy, env=env)
-            explicit_failover = _has_explicit_openrouter_failover(provider_policy)
+            explicit_failover = _has_explicit_openrouter_failover(provider_policy) or _has_explicit_env_openrouter_failover(env)
         except (OpenRouterError, TypeError, ValueError) as exc:
             reasons.append(str(exc))
         if not models:
@@ -76,7 +83,14 @@ def _has_explicit_openrouter_failover(provider_policy: Mapping[str, object]) -> 
     raw = provider_policy.get("openrouter_failover")
     if not isinstance(raw, Mapping):
         return False
-    return bool(raw.get("enabled"))
+    failover = _mapping_to_dict(cast(Mapping[object, object], raw))
+    return bool(failover.get("enabled"))
+
+
+def _has_explicit_env_openrouter_failover(env: Mapping[str, str]) -> bool:
+    enabled = str(env.get(ENV_FAILOVER_ENABLED) or "").strip().lower() in {"1", "true", "yes", "on"}
+    models = str(env.get(ENV_FAILOVER_MODELS) or "").strip()
+    return enabled and bool(models)
 
 
 def probe_live_openrouter(
@@ -200,15 +214,16 @@ def probe_live_openrouter(
             "usage": usage,
         }
     request = ProviderRequest("openrouter", requested_model, allow_fallback=False)
-    # OpenRouter free routes can legitimately report the endpoint provider name
-    # (for example Novita) and a dated model alias while still honoring the
-    # requested OpenRouter free model. Treat that as acceptable provenance when
-    # the requested model is explicitly in the configured free-model list; still
-    # require provider/model metadata to be present so drift is visible.
-    if requested_model.endswith(":free") and requested_model in configured_models:
-        decision = check_provider_policy(request, actual=ProviderActual("openrouter", requested_model))
+    exact_decision = check_provider_policy(request, actual=actual)
+    if exact_decision.allowed:
+        decision = exact_decision
+    elif requested_model in configured_models and actual.model == requested_model:
+        # OpenRouter can report the concrete endpoint provider name while still
+        # honoring the exact requested model. Preserve that endpoint provenance
+        # without treating it as an unauthorized model fallback.
+        decision = ProviderDecision(True, "openrouter_endpoint_provenance", "requested OpenRouter model was honored; endpoint provider recorded as provenance")
     else:
-        decision = check_provider_policy(request, actual=actual)
+        decision = exact_decision
     content_raw = response_map.get("content")
     content = _mapping_to_dict(cast(Mapping[object, object], content_raw)) if isinstance(content_raw, Mapping) else {}
     ok_content = content.get("ok") is True

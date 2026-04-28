@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Generator, Iterable
 from contextlib import contextmanager
 from pathlib import Path
 import hashlib
 import json
 import sqlite3
-from typing import Any, Iterable, Iterator
 from uuid import uuid4
 
 from atticus.core.events import Event, utc_now
@@ -25,12 +25,12 @@ def connect(db_path: str | Path, *, read_only: bool = False) -> sqlite3.Connecti
         path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
+    _ = conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
 
 @contextmanager
-def db_connection(db_path: str | Path, *, read_only: bool = False) -> Iterator[sqlite3.Connection]:
+def db_connection(db_path: str | Path, *, read_only: bool = False) -> Generator[sqlite3.Connection, None, None]:
     conn = connect(db_path, read_only=read_only)
     try:
         yield conn
@@ -42,9 +42,9 @@ def db_connection(db_path: str | Path, *, read_only: bool = False) -> Iterator[s
 
 def initialize_database(db_path: str | Path) -> None:
     with db_connection(db_path) as conn:
-        conn.executescript(DDL)
+        _ = conn.executescript(DDL)
         _ensure_columns(conn)
-        conn.execute(
+        _ = conn.execute(
             "INSERT OR REPLACE INTO schema_meta(key, value) VALUES (?, ?)",
             ("schema_version", str(SCHEMA_VERSION)),
         )
@@ -102,11 +102,11 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
             continue
         for name, ddl in columns.items():
             if name not in existing:
-                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
+                _ = conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
 
 
-def _json(value: Any) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+def _json(value: object) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
 
 
 def _hash_file(path: Path) -> tuple[str, int]:
@@ -127,9 +127,9 @@ def add_event(conn: sqlite3.Connection, event: Event) -> str:
     previous = conn.execute(
         "SELECT event_hash FROM events ORDER BY event_id DESC LIMIT 1"
     ).fetchone()
-    previous_hash = previous["event_hash"] if previous else ""
+    previous_hash = str(previous["event_hash"]) if previous else ""
     event_hash = event.hash(previous_hash)
-    conn.execute(
+    _ = conn.execute(
         """
         INSERT INTO events(event_type, actor, matter_scope, payload_json, previous_hash, event_hash, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -153,14 +153,14 @@ def emit_event(
     *,
     actor: str = "atticus",
     matter_scope: str = "atticus",
-    payload: dict[str, Any] | None = None,
+    payload: dict[str, object] | None = None,
 ) -> str:
     return add_event(conn, Event(event_type=event_type, actor=actor, matter_scope=matter_scope, payload=payload or {}))
 
 
 def ensure_matter(conn: sqlite3.Connection, matter_scope: str, title: str = "") -> None:
     now = utc_now()
-    conn.execute(
+    _ = conn.execute(
         """
         INSERT INTO matters(matter_scope, title, status, created_at, updated_at)
         VALUES (?, ?, 'active', ?, ?)
@@ -183,7 +183,7 @@ def upsert_run(
 ) -> None:
     ensure_matter(conn, matter_scope)
     now = utc_now()
-    conn.execute(
+    _ = conn.execute(
         """
         INSERT INTO runs(run_id, matter_scope, state, reason, budget_limit_usd, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -196,7 +196,7 @@ def upsert_run(
         """,
         (run_id, matter_scope, state, reason, budget_limit_usd, now, now),
     )
-    emit_event(
+    _ = emit_event(
         conn,
         "run.upserted",
         matter_scope=matter_scope,
@@ -217,12 +217,12 @@ def add_source(
     stage: str = LegalStage.S0_SOURCE_INVENTORY,
     imported_from: str | None = None,
     stale: bool = False,
-    chain_of_custody: dict[str, Any] | None = None,
+    chain_of_custody: dict[str, object] | None = None,
 ) -> str:
     ensure_matter(conn, matter_scope)
     sid = source_id or f"src-{uuid4().hex}"
     now = utc_now()
-    conn.execute(
+    _ = conn.execute(
         """
         INSERT INTO sources(source_id, matter_scope, path, source_type, sha256, size_bytes,
           trust_status, stage, imported_from, chain_of_custody_json, stale, created_at, updated_at)
@@ -244,7 +244,7 @@ def add_source(
             now,
         ),
     )
-    add_source_snapshot(
+    _ = add_source_snapshot(
         conn,
         source_id=sid,
         sha256=sha256,
@@ -252,7 +252,7 @@ def add_source(
         captured_by="importer" if imported_from else "atticus",
         custody_note=f"initial registration from {imported_from}" if imported_from else "initial registration",
     )
-    emit_event(
+    _ = emit_event(
         conn,
         "source.registered",
         matter_scope=matter_scope,
@@ -269,11 +269,11 @@ def add_source_snapshot(
     size_bytes: int = 0,
     captured_by: str,
     custody_note: str = "",
-    metadata: dict[str, Any] | None = None,
+    metadata: dict[str, object] | None = None,
     snapshot_id: str | None = None,
 ) -> str:
     snap_id = snapshot_id or f"snap-{uuid4().hex}"
-    conn.execute(
+    _ = conn.execute(
         """
         INSERT INTO source_snapshots(snapshot_id, source_id, sha256, size_bytes, captured_by,
           custody_note, metadata_json, created_at)
@@ -305,7 +305,7 @@ def add_artifact(
     ensure_matter(conn, matter_scope)
     aid = artifact_id or f"art-{uuid4().hex}"
     now = utc_now()
-    conn.execute(
+    _ = conn.execute(
         """
         INSERT INTO artifacts(artifact_id, matter_scope, path, artifact_type, stage, trust_status,
           sha256, title, content, imported_from, produced_by_task_id, stale, created_at, updated_at)
@@ -329,19 +329,19 @@ def add_artifact(
         ),
     )
     for source_id in source_ids:
-        conn.execute(
+        _ = conn.execute(
             "INSERT OR IGNORE INTO artifact_sources(artifact_id, source_id, dependency_type) VALUES (?, ?, 'supports')",
             (aid, source_id),
         )
     for dep_id in artifact_dependency_ids:
-        conn.execute(
+        _ = conn.execute(
             """
             INSERT OR IGNORE INTO artifact_dependencies(artifact_id, dependency_artifact_id, dependency_type, created_at)
             VALUES (?, ?, 'derived_from', ?)
             """,
             (aid, dep_id, now),
         )
-    add_artifact_version(
+    _ = add_artifact_version(
         conn,
         artifact_id=aid,
         version_number=1,
@@ -351,7 +351,7 @@ def add_artifact(
         created_by_task_id=produced_by_task_id,
         created_by_role="importer" if imported_from else "atticus",
     )
-    emit_event(
+    _ = emit_event(
         conn,
         "artifact.registered",
         matter_scope=matter_scope,
@@ -373,7 +373,7 @@ def add_artifact_version(
     artifact_version_id: str | None = None,
 ) -> str:
     version_id = artifact_version_id or f"aver-{uuid4().hex}"
-    conn.execute(
+    _ = conn.execute(
         """
         INSERT INTO artifact_versions(artifact_version_id, artifact_id, version_number, sha256,
           content_hash, status, created_by_task_id, created_by_role, created_at)
@@ -424,7 +424,7 @@ def add_artifact_from_file(
 def add_task(conn: sqlite3.Connection, task: TaskSpec) -> None:
     ensure_matter(conn, task.matter_scope)
     now = utc_now()
-    conn.execute(
+    _ = conn.execute(
         """
         INSERT INTO tasks(task_id, matter_scope, stage, status, task_type, title,
           source_dependencies_json, artifact_dependencies_json, task_dependencies_json,
@@ -456,7 +456,7 @@ def add_task(conn: sqlite3.Connection, task: TaskSpec) -> None:
             now,
         ),
     )
-    emit_event(
+    _ = emit_event(
         conn,
         "task.created",
         matter_scope=task.matter_scope,
@@ -465,7 +465,7 @@ def add_task(conn: sqlite3.Connection, task: TaskSpec) -> None:
 
 
 def update_task_status(conn: sqlite3.Connection, task_id: str, status: str, reason: str = "") -> None:
-    conn.execute(
+    _ = conn.execute(
         """
         UPDATE tasks
         SET status = ?, updated_at = ?
@@ -473,11 +473,11 @@ def update_task_status(conn: sqlite3.Connection, task_id: str, status: str, reas
         """,
         (str(status), utc_now(), task_id),
     )
-    emit_event(conn, "task.status_changed", payload={"task_id": task_id, "status": str(status), "reason": reason})
+    _ = emit_event(conn, "task.status_changed", payload={"task_id": task_id, "status": str(status), "reason": reason})
 
 
 def update_task_blocked(conn: sqlite3.Connection, task_id: str, reasons: list[str]) -> None:
-    conn.execute(
+    _ = conn.execute(
         """
         UPDATE tasks
         SET status = ?, blocked_reasons_json = ?, updated_at = ?
@@ -485,14 +485,14 @@ def update_task_blocked(conn: sqlite3.Connection, task_id: str, reasons: list[st
         """,
         (TaskStatus.BLOCKED, _json(reasons), utc_now(), task_id),
     )
-    record_human_attention(
+    _ = record_human_attention(
         conn,
         target_type="task",
         target_id=task_id,
         severity="blocker",
         reason="; ".join(reasons),
     )
-    emit_event(conn, "task.blocked", payload={"task_id": task_id, "reasons": reasons})
+    _ = emit_event(conn, "task.blocked", payload={"task_id": task_id, "reasons": reasons})
 
 
 def record_validation(
@@ -502,7 +502,7 @@ def record_validation(
     target_id: str,
     gate_name: str,
     passed: bool,
-    details: dict[str, Any] | None = None,
+    details: dict[str, object] | None = None,
     severity: str = "info",
 ) -> int:
     cur = conn.execute(
@@ -524,7 +524,7 @@ def record_validation(
     if lastrowid is None:
         raise RuntimeError("validation insert did not produce a row id")
     validation_id = int(lastrowid)
-    emit_event(
+    _ = emit_event(
         conn,
         "validation.recorded",
         payload={
@@ -536,7 +536,7 @@ def record_validation(
         },
     )
     if not passed:
-        record_human_attention(
+        _ = record_human_attention(
             conn,
             target_type=target_type,
             target_id=target_id,
@@ -554,11 +554,11 @@ def add_certification(
     certification_type: str,
     validator: str,
     validation_result_id: int,
-    evidence: dict[str, Any] | None = None,
+    evidence: dict[str, object] | None = None,
     certification_id: str | None = None,
 ) -> str:
     cid = certification_id or f"cert-{uuid4().hex}"
-    conn.execute(
+    _ = conn.execute(
         """
         INSERT INTO certifications(certification_id, subject_type, subject_id, certification_type,
           status, validator, validation_result_id, evidence_json, created_at)
@@ -576,7 +576,7 @@ def add_certification(
             utc_now(),
         ),
     )
-    emit_event(
+    _ = emit_event(
         conn,
         "certification.issued",
         payload={
@@ -610,10 +610,10 @@ def record_provider_run(
     retries: int = 0,
     fallback_allowed: bool = False,
     fallback_policy_result: str = "not_needed",
-    raw_usage: dict[str, Any] | None = None,
+    raw_usage: dict[str, object] | None = None,
 ) -> str:
     rid = provider_run_id or f"prun-{uuid4().hex}"
-    conn.execute(
+    _ = conn.execute(
         """
         INSERT INTO provider_runs(provider_run_id, task_id, run_id, stage, requested_provider,
           requested_model, actual_provider, actual_model, input_tokens, output_tokens,
@@ -644,7 +644,7 @@ def record_provider_run(
             utc_now(),
         ),
     )
-    emit_event(
+    _ = emit_event(
         conn,
         "provider.run_recorded",
         payload={
@@ -687,17 +687,17 @@ def record_external_action_block(
     action_type: str,
     requested_by: str = "user",
     reason: str = "external legal actions are blocked",
-    payload: dict[str, Any] | None = None,
+    payload: dict[str, object] | None = None,
 ) -> str:
     block_id = f"block-{uuid4().hex}"
-    conn.execute(
+    _ = conn.execute(
         """
         INSERT INTO external_action_blocks(block_id, action_type, requested_by, reason, payload_json, created_at)
         VALUES (?, ?, ?, ?, ?, ?)
         """,
         (block_id, action_type, requested_by, reason, _json(payload or {}), utc_now()),
     )
-    emit_event(conn, "external_action.blocked", payload={"block_id": block_id, "action_type": action_type})
+    _ = emit_event(conn, "external_action.blocked", payload={"block_id": block_id, "action_type": action_type})
     return block_id
 
 
@@ -717,7 +717,7 @@ def add_citation_span(
     citation_span_id: str | None = None,
 ) -> str:
     span_id = citation_span_id or f"cite-{uuid4().hex}"
-    conn.execute(
+    _ = conn.execute(
         """
         INSERT INTO citation_spans(citation_span_id, target_type, target_id, source_id,
           artifact_id, authority_id, start_offset, end_offset, quoted_text_hash, locator, status, created_at)
@@ -753,7 +753,7 @@ def add_claim(
 ) -> str:
     cid = claim_id or f"claim-{uuid4().hex}"
     now = utc_now()
-    conn.execute(
+    _ = conn.execute(
         """
         INSERT INTO claims(claim_id, matter_scope, claim_text, issue_id, support_status,
           created_by_artifact_id, created_at, updated_at)
@@ -774,11 +774,11 @@ def add_context_pack(
     fingerprint: str,
     token_budget: int,
     estimated_tokens: int,
-    sections: list[dict[str, Any]],
+    sections: list[dict[str, object]],
     cache_hit_tokens: int = 0,
     cache_miss_tokens: int = 0,
 ) -> str:
-    conn.execute(
+    _ = conn.execute(
         """
         INSERT OR IGNORE INTO context_packs(context_pack_id, matter_scope, task_id, pack_type,
           fingerprint, token_budget, estimated_tokens, cache_hit_tokens, cache_miss_tokens,
@@ -800,11 +800,11 @@ def add_context_pack(
         ),
     )
     if task_id:
-        conn.execute(
+        _ = conn.execute(
             "UPDATE tasks SET context_pack_id = ?, updated_at = ? WHERE task_id = ?",
             (context_pack_id, utc_now(), task_id),
         )
-    emit_event(
+    _ = emit_event(
         conn,
         "context_pack.created",
         matter_scope=matter_scope,
@@ -824,7 +824,7 @@ def add_budget(
 ) -> str:
     bid = budget_id or f"budget-{uuid4().hex}"
     now = utc_now()
-    conn.execute(
+    _ = conn.execute(
         """
         INSERT INTO budgets(budget_id, scope_type, scope_id, limit_usd, hard_stop, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -839,7 +839,9 @@ def add_budget(
         "SELECT budget_id FROM budgets WHERE scope_type = ? AND scope_id = ?",
         (scope_type, scope_id),
     ).fetchone()
-    return row["budget_id"]
+    if row is None:
+        raise RuntimeError(f"budget upsert failed for {scope_type}:{scope_id}")
+    return str(row["budget_id"])
 
 
 def add_budget_entry(
@@ -852,7 +854,7 @@ def add_budget_entry(
     budget_entry_id: str | None = None,
 ) -> str:
     entry_id = budget_entry_id or f"bent-{uuid4().hex}"
-    conn.execute(
+    _ = conn.execute(
         """
         INSERT INTO budget_entries(budget_entry_id, budget_id, provider_run_id, amount_usd, entry_type, created_at)
         VALUES (?, ?, ?, ?, ?, ?)
@@ -872,7 +874,7 @@ def budget_spent(conn: sqlite3.Connection, *, scope_type: str, scope_id: str) ->
         """,
         (scope_type, scope_id),
     ).fetchone()
-    return float(row["spent"] if row else 0)
+    return float(str(row["spent"] if row else 0))
 
 
 def record_candidate_output(
@@ -882,14 +884,14 @@ def record_candidate_output(
     lease_id: str | None,
     worker_id: str,
     output_type: str,
-    payload: dict[str, Any],
+    payload: dict[str, object],
     status: str = "candidate",
     quarantined_reason: str = "",
     candidate_id: str | None = None,
 ) -> str:
     cid = candidate_id or f"cand-{uuid4().hex}"
     payload_json = _json(payload)
-    conn.execute(
+    _ = conn.execute(
         """
         INSERT INTO candidate_outputs(candidate_id, task_id, lease_id, worker_id, status,
           output_type, payload_json, payload_hash, created_at, quarantined_reason)
@@ -908,7 +910,7 @@ def record_candidate_output(
             quarantined_reason,
         ),
     )
-    emit_event(
+    _ = emit_event(
         conn,
         "candidate_output.recorded",
         payload={"candidate_id": cid, "task_id": task_id, "status": status, "quarantined_reason": quarantined_reason},
@@ -924,11 +926,11 @@ def record_reducer_packet(
     reducer_lease_id: str | None = None,
     validation_result_id: int | None = None,
     canonical_artifact_id: str | None = None,
-    dissent: list[dict[str, Any]] | None = None,
+    dissent: list[dict[str, object]] | None = None,
     reducer_packet_id: str | None = None,
 ) -> str:
     rid = reducer_packet_id or f"red-{uuid4().hex}"
-    conn.execute(
+    _ = conn.execute(
         """
         INSERT INTO reducer_packets(reducer_packet_id, candidate_id, reducer_lease_id, decision,
           validation_result_id, canonical_artifact_id, dissent_json, created_at)
@@ -945,7 +947,7 @@ def record_reducer_packet(
             utc_now(),
         ),
     )
-    emit_event(
+    _ = emit_event(
         conn,
         "reducer_packet.recorded",
         payload={"reducer_packet_id": rid, "candidate_id": candidate_id, "decision": decision},
@@ -958,11 +960,11 @@ def record_migration_report(
     *,
     workspace_path: str,
     dry_run: bool,
-    summary: dict[str, Any],
+    summary: dict[str, object],
     migration_report_id: str | None = None,
 ) -> str:
     mid = migration_report_id or f"mig-{uuid4().hex}"
-    conn.execute(
+    _ = conn.execute(
         """
         INSERT INTO migration_reports(migration_report_id, workspace_path, dry_run, summary_json, created_at)
         VALUES (?, ?, ?, ?, ?)
@@ -972,9 +974,9 @@ def record_migration_report(
     return mid
 
 
-def fetch_one(conn: sqlite3.Connection, query: str, params: tuple[Any, ...] = ()) -> sqlite3.Row | None:
+def fetch_one(conn: sqlite3.Connection, query: str, params: tuple[object, ...] = ()) -> sqlite3.Row | None:
     return conn.execute(query, params).fetchone()
 
 
-def fetch_all(conn: sqlite3.Connection, query: str, params: tuple[Any, ...] = ()) -> list[sqlite3.Row]:
+def fetch_all(conn: sqlite3.Connection, query: str, params: tuple[object, ...] = ()) -> list[sqlite3.Row]:
     return list(conn.execute(query, params))

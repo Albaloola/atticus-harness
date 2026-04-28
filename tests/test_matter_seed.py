@@ -13,6 +13,7 @@ from atticus.core.policies import TaskStatus
 from atticus.core.tasks import TaskSpec
 from atticus.db import repo
 from atticus.providers.policy import ProviderActual, ProviderRequest, check_provider_policy
+from atticus.workers.work_order import build_work_order
 
 
 MATTER = "napier-accommodation-arrears"
@@ -179,10 +180,53 @@ def test_seed_matter_cli_is_dry_run_by_default_and_idempotent_with_write(tmp_pat
     assert tasks[0]["matter_scope"] == MATTER
     assert tasks[0]["stage"] == "S0"
     assert tasks[0]["status"] == str(TaskStatus.QUEUED)
+    assert json.loads(str(tasks[0]["source_dependencies_json"])) == ["napier-src-001", "napier-src-002"]
     assert dict(_json_mapping(str(tasks[0]["provider_policy_json"]))) == PINNED_POLICY
     assert lease_count == 0
     assert candidate_count == 0
     assert provider_run_count == 0
+
+    with repo.db_connection(db_path) as conn:
+        order = build_work_order(conn, task_id=str(tasks[0]["task_id"]), persist_context=False)
+    assert order.source_dependencies == ["napier-src-001", "napier-src-002"]
+
+
+def test_seed_matter_repairs_existing_source_inventory_task_dependencies(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    workspace = tmp_path / "matter-workspace"
+    inventory = _write_inventory(workspace)
+    write_args = [
+        "seed-matter",
+        "--db",
+        str(db_path),
+        "--matter",
+        MATTER,
+        "--workspace",
+        str(workspace),
+        "--inventory",
+        str(inventory),
+        "--provider",
+        "openai-codex",
+        "--model",
+        "gpt-5.5",
+        "--no-fallback",
+        "--write",
+    ]
+    assert cli_main(write_args) == 0
+    with repo.db_connection(db_path) as conn:
+        _ = conn.execute(
+            "UPDATE tasks SET source_dependencies_json = '[]' WHERE matter_scope = ? AND task_type = 'source_inventory'",
+            (MATTER,),
+        )
+
+    assert cli_main(write_args) == 0
+
+    with repo.db_connection(db_path) as conn:
+        deps = json.loads(_text_value(conn, "SELECT source_dependencies_json FROM tasks WHERE matter_scope = 'napier-accommodation-arrears'"))
+        events = _count(conn, "SELECT COUNT(*) AS n FROM events WHERE event_type = 'matter.seeded'")
+
+    assert deps == ["napier-src-001", "napier-src-002"]
+    assert events == 2
 
 
 def test_set_provider_policy_updates_only_queued_tasks_for_matter(tmp_path: Path):
@@ -328,3 +372,138 @@ def test_codex_provider_policy_rejects_fallback_unknowns_and_drift_before_live(t
     assert fallback_request.result == "failed_closed"
     assert policy == {}
     assert provider_runs == 0
+
+
+def test_direct_deepseek_provider_is_rejected_on_flat_policy_surfaces(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="napier-queued-deepseek",
+                title="Napier queued DeepSeek",
+                task_type="source_inventory",
+                matter_scope=MATTER,
+            ),
+        )
+
+    provider_policy_code = cli_main(
+        [
+            "provider-policy",
+            "--provider",
+            "deepseek",
+            "--model",
+            "deepseek-v4-pro",
+        ]
+    )
+    set_policy_code = cli_main(
+        [
+            "set-provider-policy",
+            "--db",
+            str(db_path),
+            "--matter",
+            MATTER,
+            "--provider",
+            "deepseek",
+            "--model",
+            "deepseek-v4-pro",
+            "--no-fallback",
+            "--write",
+        ]
+    )
+
+    with repo.db_connection(db_path) as conn:
+        policy = _json_mapping(_text_value(conn, "SELECT provider_policy_json FROM tasks WHERE task_id = 'napier-queued-deepseek'"))
+
+    assert provider_policy_code == 2
+    assert set_policy_code == 2
+    assert policy == {}
+
+
+def test_flat_openrouter_fallback_is_rejected_without_model_pool(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="napier-queued-openrouter",
+                title="Napier queued OpenRouter",
+                task_type="source_inventory",
+                matter_scope=MATTER,
+            ),
+        )
+
+    provider_policy_code = cli_main(
+        [
+            "provider-policy",
+            "--provider",
+            "openrouter",
+            "--model",
+            "deepseek/deepseek-v4-pro",
+            "--actual-provider",
+            "openrouter",
+            "--actual-model",
+            "deepseek/deepseek-v4-flash",
+            "--allow-fallback",
+        ]
+    )
+    set_policy_code = cli_main(
+        [
+            "set-provider-policy",
+            "--db",
+            str(db_path),
+            "--matter",
+            MATTER,
+            "--provider",
+            "openrouter",
+            "--model",
+            "deepseek/deepseek-v4-pro",
+            "--allow-fallback",
+            "--write",
+        ]
+    )
+
+    with repo.db_connection(db_path) as conn:
+        policy = _json_mapping(_text_value(conn, "SELECT provider_policy_json FROM tasks WHERE task_id = 'napier-queued-openrouter'"))
+
+    assert provider_policy_code == 2
+    assert set_policy_code == 2
+    assert policy == {}
+
+
+def test_set_provider_policy_rejects_non_finite_estimated_cost(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="napier-nan-cost",
+                title="Napier NaN cost",
+                task_type="source_inventory",
+                matter_scope=MATTER,
+            ),
+        )
+
+    code = cli_main(
+        [
+            "set-provider-policy",
+            "--db",
+            str(db_path),
+            "--matter",
+            MATTER,
+            "--provider",
+            "openrouter",
+            "--model",
+            "deepseek/deepseek-v4-pro",
+            "--no-fallback",
+            "--estimated-cost-usd",
+            "nan",
+            "--write",
+        ]
+    )
+
+    with repo.db_connection(db_path) as conn:
+        policy = _json_mapping(_text_value(conn, "SELECT provider_policy_json FROM tasks WHERE task_id = 'napier-nan-cost'"))
+
+    assert code == 2
+    assert policy == {}

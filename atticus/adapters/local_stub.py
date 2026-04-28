@@ -8,22 +8,24 @@ launching OpenClaw.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import cast
 
 from atticus.workers.contracts import safe_path_component
 
 
 class LocalStubAdapter:
-    name = "local_stub"
+    name: str = "local_stub"
 
-    def run(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def run(self, payload: dict[str, object]) -> dict[str, object]:
         task_id = str(payload.get("task_id") or "")
         if not task_id:
             raise ValueError("local_stub requires a task_id")
         task_component = safe_path_component(task_id)
 
-        source_dependencies = list(payload.get("source_dependencies") or [])
-        artifact_dependencies = list(payload.get("artifact_dependencies") or [])
+        source_dependencies_raw = payload.get("source_dependencies")
+        source_dependencies = [str(item) for item in cast(list[object], source_dependencies_raw)] if isinstance(source_dependencies_raw, list) else []
+        artifact_dependencies_raw = payload.get("artifact_dependencies")
+        artifact_dependencies = [str(item) for item in cast(list[object], artifact_dependencies_raw)] if isinstance(artifact_dependencies_raw, list) else []
         citations = [
             {"target_type": "source", "target_id": source_id, "locator": "work_order.source_dependencies"}
             for source_id in source_dependencies

@@ -8,7 +8,7 @@ class AdapterBlocked(RuntimeError):
 
 
 class ExecutionAdapter:
-    name = "base"
+    name: str = "base"
 
     def launch(self, *_args: object, **_kwargs: object) -> None:
         raise AdapterBlocked("adapter launch requires an explicit approved work order")

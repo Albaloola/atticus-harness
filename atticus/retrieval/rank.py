@@ -8,7 +8,8 @@ TOKEN_RE = re.compile(r"[a-zA-Z0-9_./:-]+")
 
 
 def tokens(text: str) -> set[str]:
-    return {t.lower() for t in TOKEN_RE.findall(text)}
+    matches: list[str] = TOKEN_RE.findall(text)
+    return {token.lower() for token in matches}
 
 
 def lexical_score(query: str, text: str) -> float:

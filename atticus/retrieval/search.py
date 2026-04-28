@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import sqlite3
-from typing import Any
 
+from typing import cast
 from atticus.core.matters import require_matter_access
 from atticus.retrieval.rank import lexical_score
 
@@ -26,7 +27,7 @@ def search_memory(
     limit: int = 5,
     matter_scope: str = "atticus",
     authorized_matter_scope: str = "atticus",
-) -> list[dict[str, Any]]:
+) -> list[dict[str, object]]:
     """Return relevant memory rows without launching or mutating anything.
 
     This is deliberately schema-light but much safer than the original LIKE
@@ -37,7 +38,7 @@ def search_memory(
 
     matter_scope = require_matter_access(matter_scope, authorized_matter_scope=authorized_matter_scope)
     rows = _indexed_memory_rows(conn, matter_scope=matter_scope) or all_memory_rows(conn, matter_scope=matter_scope)
-    scored: list[tuple[float, str, str, dict[str, Any]]] = []
+    scored: list[tuple[float, str, str, dict[str, object]]] = []
     for row in rows:
         score = _score_row(conn, question, row)
         if score <= 0:
@@ -47,7 +48,7 @@ def search_memory(
     return [item[3] for item in scored[:limit]]
 
 
-def all_memory_rows(conn: sqlite3.Connection, *, matter_scope: str = "atticus") -> list[dict[str, Any]]:
+def all_memory_rows(conn: sqlite3.Connection, *, matter_scope: str = "atticus") -> list[dict[str, object]]:
     return _artifact_rows(conn, matter_scope=matter_scope) + _source_rows(conn, matter_scope=matter_scope) + _authority_rows(conn, matter_scope=matter_scope)
 
 
@@ -56,7 +57,7 @@ def _indexed_memory_rows(
     *,
     index_name: str = "legal_memory.v1",
     matter_scope: str = "atticus",
-) -> list[dict[str, Any]]:
+) -> list[dict[str, object]]:
     entries = conn.execute(
         """
         SELECT record_type, record_id
@@ -72,7 +73,7 @@ def _indexed_memory_rows(
     return [by_key[(entry["record_type"], entry["record_id"])] for entry in entries if (entry["record_type"], entry["record_id"]) in by_key]
 
 
-def _artifact_rows(conn: sqlite3.Connection, *, matter_scope: str) -> list[dict[str, Any]]:
+def _artifact_rows(conn: sqlite3.Connection, *, matter_scope: str) -> list[dict[str, object]]:
     return [
         dict(row)
         for row in conn.execute(
@@ -87,7 +88,7 @@ def _artifact_rows(conn: sqlite3.Connection, *, matter_scope: str) -> list[dict[
     ]
 
 
-def _source_rows(conn: sqlite3.Connection, *, matter_scope: str) -> list[dict[str, Any]]:
+def _source_rows(conn: sqlite3.Connection, *, matter_scope: str) -> list[dict[str, object]]:
     return [
         dict(row)
         for row in conn.execute(
@@ -102,7 +103,7 @@ def _source_rows(conn: sqlite3.Connection, *, matter_scope: str) -> list[dict[st
     ]
 
 
-def _authority_rows(conn: sqlite3.Connection, *, matter_scope: str) -> list[dict[str, Any]]:
+def _authority_rows(conn: sqlite3.Connection, *, matter_scope: str) -> list[dict[str, object]]:
     return [
         {
             "record_type": "authority",
@@ -110,7 +111,7 @@ def _authority_rows(conn: sqlite3.Connection, *, matter_scope: str) -> list[dict
             "path": row["source_url"] or row["citation"],
             "title": row["title"] or row["citation"],
             "content": " ".join(
-                part
+                str(part)
                 for part in (
                     row["citation"],
                     row["title"],
@@ -137,19 +138,20 @@ def _authority_rows(conn: sqlite3.Connection, *, matter_scope: str) -> list[dict
     ]
 
 
-def _score_row(conn: sqlite3.Connection, question: str, row: dict[str, Any]) -> float:
+def _score_row(conn: sqlite3.Connection, question: str, row: dict[str, object]) -> float:
     haystack = " ".join(str(row.get(key) or "") for key in ("path", "title", "content", "stage"))
     lexical = lexical_score(question, haystack)
     if lexical <= 0:
         return 0.0
     citation_boost = min(_citation_count(conn, row) * 0.10, 0.30)
     trust_boost = _TRUST_BOOST.get(str(row.get("trust_status") or ""), 0.0)
-    stale_penalty = -0.50 if int(row.get("stale") or 0) else 0.0
+    stale_raw = row.get("stale")
+    stale_penalty = -0.50 if isinstance(stale_raw, int) and stale_raw else 0.0
     return lexical + citation_boost + trust_boost + stale_penalty
 
 
-def _citation_count(conn: sqlite3.Connection, row: dict[str, Any]) -> int:
-    record_type = row["record_type"]
+def _citation_count(conn: sqlite3.Connection, row: dict[str, object]) -> int:
+    record_type = str(row["record_type"])
     column = {
         "artifact": "artifact_id",
         "source": "source_id",
@@ -157,5 +159,5 @@ def _citation_count(conn: sqlite3.Connection, row: dict[str, Any]) -> int:
     }.get(record_type)
     if column is None:
         return 0
-    result = conn.execute(f"SELECT COUNT(*) AS n FROM citation_spans WHERE {column} = ?", (row["record_id"],)).fetchone()
-    return int(result["n"] if result else 0)
+    result = cast(Mapping[str, object], conn.execute(f"SELECT COUNT(*) AS n FROM citation_spans WHERE {column} = ?", (row["record_id"],)).fetchone())
+    return int(str(result["n"] if result else 0))

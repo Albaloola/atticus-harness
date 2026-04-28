@@ -6,4 +6,4 @@ from atticus.adapters.base import ExecutionAdapter
 
 
 class ClaudeCodeAdapter(ExecutionAdapter):
-    name = "claude_code"
+    name: str = "claude_code"

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 
+from typing import cast
 from atticus.db import repo
 
 
@@ -13,16 +14,16 @@ def update_source_hash_and_mark_dependents_stale(
     source_id: str,
     new_sha256: str,
 ) -> list[str]:
-    row = conn.execute(
+    row = cast(sqlite3.Row | None, cast(object, conn.execute(
         "SELECT sha256 FROM sources WHERE source_id = ?",
         (source_id,),
-    ).fetchone()
+    ).fetchone()))
     if row is None:
         raise KeyError(f"unknown source: {source_id}")
     if row["sha256"] == new_sha256:
         return []
 
-    conn.execute(
+    _ = conn.execute(
         "UPDATE sources SET sha256 = ?, stale = 0 WHERE source_id = ?",
         (new_sha256, source_id),
     )
@@ -30,12 +31,12 @@ def update_source_hash_and_mark_dependents_stale(
         "SELECT artifact_id FROM artifact_sources WHERE source_id = ?",
         (source_id,),
     ).fetchall()
-    artifact_ids = [r["artifact_id"] for r in artifact_rows]
+    artifact_ids = [str(r["artifact_id"]) for r in artifact_rows]
     seen = set(artifact_ids)
     queue = list(artifact_ids)
     while queue:
         artifact_id = queue.pop(0)
-        conn.execute(
+        _ = conn.execute(
             "UPDATE artifacts SET stale = 1, trust_status = 'stale' WHERE artifact_id = ?",
             (artifact_id,),
         )
@@ -43,15 +44,16 @@ def update_source_hash_and_mark_dependents_stale(
             "SELECT artifact_id FROM artifact_dependencies WHERE dependency_artifact_id = ?",
             (artifact_id,),
         ):
-            if downstream["artifact_id"] not in seen:
-                seen.add(downstream["artifact_id"])
-                artifact_ids.append(downstream["artifact_id"])
-                queue.append(downstream["artifact_id"])
-            conn.execute(
+            downstream_id = str(downstream["artifact_id"])
+            if downstream_id not in seen:
+                seen.add(downstream_id)
+                artifact_ids.append(downstream_id)
+                queue.append(downstream_id)
+            _ = conn.execute(
                 "UPDATE artifacts SET stale = 1, trust_status = 'stale' WHERE artifact_id = ?",
-                (downstream["artifact_id"],),
+                (downstream_id,),
             )
-    repo.emit_event(
+    _ = repo.emit_event(
         conn,
         "source.hash_changed",
         payload={"source_id": source_id, "new_sha256": new_sha256, "stale_artifacts": artifact_ids},

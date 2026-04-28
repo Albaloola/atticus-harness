@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any
 
 
-def dissenting_items(reviews: list[dict[str, Any]]) -> list[dict[str, Any]]:
+
+def dissenting_items(reviews: list[dict[str, object]]) -> list[dict[str, object]]:
     return [review for review in reviews if review.get("dissent")]

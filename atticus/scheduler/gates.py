@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import json
 import sqlite3
 from dataclasses import dataclass
-from typing import Any
+from typing import cast
 
 from atticus.core.policies import STAGE_FOUNDATION_REQUIREMENTS
 
@@ -15,7 +16,7 @@ class GateResult:
     reasons: list[str]
 
 
-def evaluate_task_gates(conn: sqlite3.Connection, task_row: sqlite3.Row) -> GateResult:
+def evaluate_task_gates(conn: sqlite3.Connection, task_row: Mapping[str, object]) -> GateResult:
     reasons: list[str] = []
     task_id = str(task_row["task_id"])
     task_matter = str(task_row["matter_scope"])
@@ -24,17 +25,17 @@ def evaluate_task_gates(conn: sqlite3.Connection, task_row: sqlite3.Row) -> Gate
     task_deps = _load_string_list(task_row, "task_dependencies_json", task_id, reasons) if "task_dependencies_json" in task_row.keys() else []
     matter_deps = _load_string_list(task_row, "matter_dependencies_json", task_id, reasons) if "matter_dependencies_json" in task_row.keys() else []
     required_certs = _load_certification_requirements(task_row, task_id, reasons)
-    for requirement in STAGE_FOUNDATION_REQUIREMENTS.get(task_row["stage"], []):
-        scoped = dict(requirement)
+    for requirement in STAGE_FOUNDATION_REQUIREMENTS.get(str(task_row["stage"]), []):
+        scoped: dict[str, object] = dict(requirement)
         if scoped.get("subject_type") == "matter":
             scoped["subject_id"] = task_row["matter_scope"]
         required_certs.append(scoped)
 
     for source_id in source_deps:
-        row = conn.execute(
+        row = cast(sqlite3.Row | None, cast(object, conn.execute(
             "SELECT stale, matter_scope FROM sources WHERE source_id = ?",
             (source_id,),
-        ).fetchone()
+        ).fetchone()))
         if row is None:
             reasons.append(f"missing source dependency: {source_id}")
         elif row["matter_scope"] != task_matter:
@@ -43,10 +44,10 @@ def evaluate_task_gates(conn: sqlite3.Connection, task_row: sqlite3.Row) -> Gate
             reasons.append(f"stale source dependency: {source_id}")
 
     for artifact_id in artifact_deps:
-        row = conn.execute(
+        row = cast(sqlite3.Row | None, cast(object, conn.execute(
             "SELECT stale, matter_scope FROM artifacts WHERE artifact_id = ?",
             (artifact_id,),
-        ).fetchone()
+        ).fetchone()))
         if row is None:
             reasons.append(f"missing artifact dependency: {artifact_id}")
         elif row["matter_scope"] != task_matter:
@@ -55,10 +56,10 @@ def evaluate_task_gates(conn: sqlite3.Connection, task_row: sqlite3.Row) -> Gate
             reasons.append(f"stale artifact dependency: {artifact_id}")
 
     for dependency_task_id in task_deps:
-        row = conn.execute(
+        row = cast(sqlite3.Row | None, cast(object, conn.execute(
             "SELECT status, matter_scope FROM tasks WHERE task_id = ?",
             (dependency_task_id,),
-        ).fetchone()
+        ).fetchone()))
         if row is None:
             reasons.append(f"missing task dependency: {dependency_task_id}")
         elif row["matter_scope"] != task_matter:
@@ -67,10 +68,10 @@ def evaluate_task_gates(conn: sqlite3.Connection, task_row: sqlite3.Row) -> Gate
             reasons.append(f"incomplete task dependency: {dependency_task_id}")
 
     for matter_scope in matter_deps:
-        row = conn.execute(
+        row = cast(sqlite3.Row | None, cast(object, conn.execute(
             "SELECT status FROM matters WHERE matter_scope = ?",
             (matter_scope,),
-        ).fetchone()
+        ).fetchone()))
         if row is None:
             reasons.append(f"missing matter dependency: {matter_scope}")
         elif row["status"] != "active":
@@ -83,7 +84,7 @@ def evaluate_task_gates(conn: sqlite3.Connection, task_row: sqlite3.Row) -> Gate
         if not subject_id or not cert_type:
             reasons.append(f"malformed certification requirement: {requirement!r}")
             continue
-        row = conn.execute(
+        row = cast(sqlite3.Row | None, cast(object, conn.execute(
             """
             SELECT certification_id
             FROM certifications
@@ -91,28 +92,28 @@ def evaluate_task_gates(conn: sqlite3.Connection, task_row: sqlite3.Row) -> Gate
             LIMIT 1
             """,
             (subject_type, subject_id, cert_type),
-        ).fetchone()
+        ).fetchone()))
         if row is None:
             reasons.append(f"missing certification: {subject_type}:{subject_id}:{cert_type}")
 
     return GateResult(allowed=not reasons, reasons=reasons)
 
 
-def _load_json_field(task_row: sqlite3.Row, field: str, task_id: str, reasons: list[str]) -> Any:
+def _load_json_field(task_row: Mapping[str, object], field: str, task_id: str, reasons: list[str]) -> object:
     try:
-        return json.loads(task_row[field] or "[]")
+        return json.loads(str(task_row[field] or "[]"))
     except (json.JSONDecodeError, TypeError) as exc:
         reasons.append(f"malformed task gate metadata for task {task_id}: {field} must contain valid JSON: {exc}")
         return []
 
 
-def _load_string_list(task_row: sqlite3.Row, field: str, task_id: str, reasons: list[str]) -> list[str]:
+def _load_string_list(task_row: Mapping[str, object], field: str, task_id: str, reasons: list[str]) -> list[str]:
     value = _load_json_field(task_row, field, task_id, reasons)
     if not isinstance(value, list):
         reasons.append(f"malformed task gate metadata for task {task_id}: {field} must be a JSON array")
         return []
     items: list[str] = []
-    for index, item in enumerate(value):
+    for index, item in enumerate(cast(list[object], value)):
         if not isinstance(item, str) or not item:
             reasons.append(f"malformed task gate metadata for task {task_id}: {field}[{index}] must be a non-empty string")
             continue
@@ -120,15 +121,15 @@ def _load_string_list(task_row: sqlite3.Row, field: str, task_id: str, reasons: 
     return items
 
 
-def _load_certification_requirements(task_row: sqlite3.Row, task_id: str, reasons: list[str]) -> list[dict[str, Any]]:
+def _load_certification_requirements(task_row: Mapping[str, object], task_id: str, reasons: list[str]) -> list[dict[str, object]]:
     value = _load_json_field(task_row, "required_certifications_json", task_id, reasons)
     if not isinstance(value, list):
         reasons.append(f"malformed task gate metadata for task {task_id}: required_certifications_json must be a JSON array")
         return []
-    requirements: list[dict[str, Any]] = []
-    for index, item in enumerate(value):
+    requirements: list[dict[str, object]] = []
+    for index, item in enumerate(cast(list[object], value)):
         if not isinstance(item, dict):
             reasons.append(f"malformed certification requirement at required_certifications_json[{index}]: must be a JSON object")
             continue
-        requirements.append(dict(item))
+        requirements.append(dict(cast(dict[str, object], item)))
     return requirements

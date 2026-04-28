@@ -40,9 +40,11 @@ from atticus.scheduler.free_loop import run_free_loop
 from atticus.scheduler.lease import LeaseError, acquire_lease
 from atticus.scheduler.live_orchestrator import prepare_live_resume
 from atticus.scheduler.planner import budget_blockers, select_runnable_tasks
+from atticus.skills.registry import list_skills, load_skill
 from atticus.status.inspect import inspect_record
 from atticus.status.report import generate_status
 from atticus.validation.gates import run_validation
+from atticus.workers.outputs import reject_candidate_output
 from atticus.workers.runtime import execute_local_work_order
 from atticus.workers.work_order import build_work_order
 
@@ -83,6 +85,7 @@ class CliArgs(Protocol):
     model: str
     policy_file: str | None
     action: str
+    skill_id: str
     layer: str
     stage: str
     task_type: str
@@ -98,6 +101,8 @@ class CliArgs(Protocol):
     max_ticks: int
     runtime: str
     allow_live: bool
+    codex_timeout_seconds: float
+    codex_reasoning_effort: str
     add: bool
     severity: str
     reason: str
@@ -196,6 +201,13 @@ def build_parser() -> argparse.ArgumentParser:
     _ = reduce.add_argument("--dry-run", dest="dry_run", action="store_true", default=True)
     _ = reduce.add_argument("--write", dest="dry_run", action="store_false", help="write reducer decision/canonical artifact")
 
+    reject_candidate = sub.add_parser("reject-candidate", help="quarantine a valid but unsuitable candidate packet")
+    _ = reject_candidate.add_argument("--db", required=True)
+    _ = reject_candidate.add_argument("--candidate-id", required=True)
+    _ = reject_candidate.add_argument("--reason", required=True)
+    _ = reject_candidate.add_argument("--dry-run", dest="dry_run", action="store_true", default=True)
+    _ = reject_candidate.add_argument("--write", dest="dry_run", action="store_false")
+
     budget = sub.add_parser("budget", help="view, set, or check budget gates")
     _ = budget.add_argument("--db", required=True)
     _ = budget.add_argument("--scope-type", default="matter")
@@ -225,6 +237,10 @@ def build_parser() -> argparse.ArgumentParser:
     _ = model_policy.add_argument("--task-type", default="")
     _ = model_policy.add_argument("--task-id", default="")
 
+    skill = sub.add_parser("skill", help="list or show bundled worker skills")
+    _ = skill.add_argument("action", choices=["list", "show"])
+    _ = skill.add_argument("--skill-id")
+
     provider_probe = sub.add_parser("provider-probe", help="make a tiny OpenRouter probe before live resume")
     _ = provider_probe.add_argument("--provider", default="openrouter")
     _ = provider_probe.add_argument("--model", required=True)
@@ -245,7 +261,9 @@ def build_parser() -> argparse.ArgumentParser:
     _ = free_loop.add_argument("--capacity", type=int, default=15)
     _ = free_loop.add_argument("--max-ticks", type=int, default=1)
     _ = free_loop.add_argument("--runtime", choices=["openrouter", "local", "codex"], default="openrouter")
-    _ = free_loop.add_argument("--allow-live", action="store_true", help="permit live OpenRouter calls after normal runtime gates")
+    _ = free_loop.add_argument("--allow-live", action="store_true", help="permit live OpenRouter/Codex calls after normal runtime gates")
+    _ = free_loop.add_argument("--codex-timeout-seconds", type=float, default=180.0, help="bounded timeout for each live Codex CLI worker call")
+    _ = free_loop.add_argument("--codex-reasoning-effort", choices=["low", "medium", "high", "xhigh"], default="low", help="Codex reasoning effort override; prevents inheriting global CLI defaults")
 
     reconcile = sub.add_parser("reconcile-foundation", help="validate/certify foundation before live resume")
     _ = reconcile.add_argument("--db", required=True)
@@ -487,6 +505,17 @@ def _main(args: CliArgs) -> int:
                 candidate_id=args.candidate_id,
                 reducer_lease_id=args.lease_id,
                 dry_run=args.dry_run,
+        )
+        print_json(result)
+        return 0
+
+    if args.command == "reject-candidate":
+        with repo.db_connection(args.db, read_only=args.dry_run) as conn:
+            result = reject_candidate_output(
+                conn,
+                candidate_id=args.candidate_id,
+                reason=args.reason,
+                dry_run=args.dry_run,
             )
         print_json(result)
         return 0
@@ -562,6 +591,28 @@ def _main(args: CliArgs) -> int:
         print_json({"ok": True, "resolved": resolved})
         return 0
 
+    if args.command == "skill":
+        if args.action == "list":
+            print_json(
+                {
+                    "skills": [
+                        {
+                            "skill_id": skill.skill_id,
+                            "path": str(skill.path),
+                            "manifest": skill.manifest,
+                            "references": list(skill.references),
+                            "examples": list(skill.examples),
+                        }
+                        for skill in list_skills()
+                    ]
+                }
+            )
+            return 0
+        if not args.skill_id:
+            raise ValueError("skill show requires --skill-id")
+        print_json(load_skill(args.skill_id).as_work_order_context())
+        return 0
+
     if args.command in {"provider-policy", "policy-check"}:
         actual = None
         if args.actual_provider or args.actual_model:
@@ -617,9 +668,11 @@ def _main(args: CliArgs) -> int:
                 runtime=args.runtime,
                 allow_live=args.allow_live,
                 env=dict(os.environ),
+                codex_timeout_seconds=args.codex_timeout_seconds,
+                codex_reasoning_effort=args.codex_reasoning_effort,
             )
         print_json(result)
-        return 0
+        return 0 if result.get("ok") is True else 2
 
     if args.command == "reconcile-foundation":
         with repo.db_connection(args.db) as conn:
@@ -808,7 +861,7 @@ def _count_table(conn: sqlite3.Connection, name: str) -> int:
 
 
 def print_json(value: object) -> None:
-    print(json.dumps(value, indent=2, sort_keys=True))
+    print(json.dumps(value, indent=2, sort_keys=True, allow_nan=False))
 
 
 if __name__ == "__main__":

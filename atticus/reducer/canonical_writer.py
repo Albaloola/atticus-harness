@@ -24,4 +24,4 @@ def write_canonical_text(
         lease_id=lease_id,
         task_id=task_id,
     )
-    Path(target_path).write_text(text, encoding="utf-8")
+    _ = Path(target_path).write_text(text, encoding="utf-8")

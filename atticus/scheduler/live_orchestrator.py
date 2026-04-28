@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import sqlite3
-from typing import Any, Mapping
+from typing import cast
 
 from atticus.core.events import utc_now
 from atticus.core.policies import TaskStatus
@@ -17,11 +18,11 @@ def prepare_live_resume(
     *,
     capacity: int = 15,
     env: Mapping[str, str] | None = None,
-    probe_result: Mapping[str, Any] | None = None,
+    probe_result: object | None = None,
     write_leases: bool = False,
     worker_prefix: str = "atticus-openrouter",
     lease_seconds: int = 900,
-) -> dict[str, Any]:
+) -> dict[str, object]:
     """Return a live resume plan and optionally acquire leases for safe slots.
 
     This is intentionally only an orchestration gate. It never starts OpenClaw,
@@ -34,50 +35,53 @@ def prepare_live_resume(
     expired_leases = expire_leases(conn) if write_leases else []
     readiness = live_readiness_report(conn, capacity=capacity_requested, env=env)
     plan_readiness = dict(readiness)
-    reasons = list(plan_readiness.get("reasons") or [])
+    reasons_raw = plan_readiness.get("reasons")
+    reasons = [str(reason) for reason in cast(list[object], reasons_raw)] if isinstance(reasons_raw, list) else []
     if probe_result is not None and not isinstance(probe_result, Mapping):
         probe = {"ok": False, "reason": "probe_result_json must decode to a JSON object"}
     else:
-        probe = dict(probe_result or {})
+        probe = {str(key): value for key, value in cast(Mapping[object, object], probe_result).items()} if isinstance(probe_result, Mapping) else {}
     if probe.get("ok") is not True:
         reasons.append(str(probe.get("reason") or "successful OpenRouter probe with literal ok=true is required before live leasing"))
     else:
         probe_provider = str(probe.get("provider") or "")
-        probe_model = str(probe.get("model") or "")
-        matching_tasks: list[dict[str, Any]] = []
-        mismatched_tasks: list[dict[str, Any]] = []
-        for task in plan_readiness.get("runnable_tasks", []):
+        probe_model = str(probe.get("requested_model") or probe.get("model") or "")
+        matching_tasks: list[dict[str, object]] = []
+        mismatched_tasks: list[dict[str, object]] = []
+        runnable_tasks = cast(list[dict[str, object]], plan_readiness.get("runnable_tasks") if isinstance(plan_readiness.get("runnable_tasks"), list) else [])
+        for task in runnable_tasks:
             task_provider = str(task.get("provider") or "")
             task_model = str(task.get("model") or "")
-            task_models = [str(model) for model in task.get("models") or [] if str(model)] or ([task_model] if task_model else [])
-            if probe_provider != task_provider or probe_model not in task_models:
+            models_raw = task.get("models")
+            task_models = [str(model) for model in cast(list[object], models_raw) if str(model)] if isinstance(models_raw, list) else ([task_model] if task_model else [])
+            if not _probe_matches_task_policy(probe=probe, probe_provider=probe_provider, probe_model=probe_model, task_provider=task_provider, task_models=task_models):
+                reason = f"OpenRouter probe does not match runnable task provider policy: probe={probe_provider or 'unset'}/{probe_model or 'unset'} task={task.get('task_id')}/{task_provider or 'unset'}/{','.join(task_models) or 'unset'}"
                 mismatched_tasks.append(
                     {
                         "task_id": task.get("task_id"),
                         "title": task.get("title"),
-                        "reasons": [
-                            "OpenRouter probe does not match runnable task provider policy: "
-                            f"probe={probe_provider or 'unset'}/{probe_model or 'unset'} "
-                            f"task={task.get('task_id')}/{task_provider or 'unset'}/{','.join(task_models) or 'unset'}"
-                        ],
+                        "reasons": [reason],
                     }
                 )
             else:
                 matching_tasks.append(task)
         if mismatched_tasks:
-            plan_readiness["blocked_tasks"] = list(plan_readiness.get("blocked_tasks") or []) + mismatched_tasks
+            blocked_raw = plan_readiness.get("blocked_tasks")
+            blocked_tasks = cast(list[dict[str, object]], blocked_raw if isinstance(blocked_raw, list) else [])
+            plan_readiness["blocked_tasks"] = blocked_tasks + mismatched_tasks
             plan_readiness["runnable_tasks"] = matching_tasks
             plan_readiness["runnable_task_ids"] = [task["task_id"] for task in matching_tasks]
             plan_readiness["capacity_safe"] = len(matching_tasks)
             if not matching_tasks:
-                reasons.append(mismatched_tasks[0]["reasons"][0])
+                reasons.append(str(cast(list[str], mismatched_tasks[0]["reasons"])[0]))
         plan_readiness["ready"] = bool(plan_readiness.get("ready")) and bool(plan_readiness.get("runnable_task_ids"))
 
-    leases: list[dict[str, Any]] = []
+    leases: list[dict[str, object]] = []
     can_lease = not reasons and bool(plan_readiness.get("ready"))
     if can_lease and write_leases:
         try:
-            for index, task_id in enumerate(plan_readiness["runnable_task_ids"], start=1):
+            runnable_task_ids = [str(task_id) for task_id in cast(list[object], plan_readiness["runnable_task_ids"])]
+            for index, task_id in enumerate(runnable_task_ids, start=1):
                 worker_id = f"{worker_prefix}-{index:02d}"
                 lease_id = acquire_lease(conn, task_id=task_id, worker_id=worker_id, seconds=lease_seconds, dry_run=False)
                 leases.append({"task_id": task_id, "worker_id": worker_id, "lease_id": lease_id})
@@ -87,7 +91,8 @@ def prepare_live_resume(
             leases = []
             can_lease = False
     elif can_lease:
-        for index, task_id in enumerate(plan_readiness["runnable_task_ids"], start=1):
+        runnable_task_ids = [str(task_id) for task_id in cast(list[object], plan_readiness["runnable_task_ids"])]
+        for index, task_id in enumerate(runnable_task_ids, start=1):
             leases.append({"task_id": task_id, "worker_id": f"{worker_prefix}-{index:02d}", "lease_id": f"dry-run-lease-{task_id}"})
 
     return {
@@ -101,21 +106,39 @@ def prepare_live_resume(
     }
 
 
-def _rollback_live_resume_leases(conn: sqlite3.Connection, *, leases: list[dict[str, Any]], reason: str) -> None:
+def _probe_matches_task_policy(
+    *,
+    probe: Mapping[str, object],
+    probe_provider: str,
+    probe_model: str,
+    task_provider: str,
+    task_models: list[str],
+) -> bool:
+    """Return whether a preverified provider probe is usable for a task policy."""
+
+    if probe_model not in task_models:
+        return False
+    if probe_provider == task_provider:
+        return True
+    provenance_result = str(probe.get("provider_policy_result") or "")
+    return task_provider == "openrouter" and provenance_result == "openrouter_endpoint_provenance"
+
+
+def _rollback_live_resume_leases(conn: sqlite3.Connection, *, leases: list[dict[str, object]], reason: str) -> None:
     """Fail leases written by a partially failed live-resume planning pass."""
 
     now = utc_now()
     for lease in leases:
-        conn.execute(
+        _ = conn.execute(
             "UPDATE leases SET status = 'failed', updated_at = ? WHERE lease_id = ? AND status = 'active'",
             (now, lease["lease_id"]),
         )
-        conn.execute(
+        _ = conn.execute(
             "UPDATE tasks SET status = ?, updated_at = ? WHERE task_id = ? AND status = ?",
             (TaskStatus.QUEUED, now, lease["task_id"], TaskStatus.LEASED),
         )
     if leases:
-        repo.emit_event(
+        _ = repo.emit_event(
             conn,
             "live_resume.rollback_leases",
             payload={"reason": reason, "leases": leases},

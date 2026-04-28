@@ -6,6 +6,8 @@ from pathlib import Path
 import sqlite3
 from typing import cast
 
+import pytest
+
 from atticus.cli import main as cli_main
 from atticus.core.policies import LegalStage, TaskStatus
 from atticus.core.tasks import TaskSpec
@@ -17,6 +19,8 @@ from atticus.providers.model_policy import (
     provider_policy_for_route,
 )
 from atticus.providers.live_readiness import check_live_provider_policy
+from atticus.reducer import reducer as reducer_module
+from atticus.reducer.reducer import reduce_candidate
 from atticus.scheduler.free_loop import run_free_loop_once
 from atticus.scheduler.lease import acquire_lease
 from atticus.workers.outputs import record_worker_result
@@ -151,6 +155,41 @@ def test_legacy_flat_provider_policy_normalizes_without_routing_shape():
     assert resolved["allow_fallback"] is False
     assert resolved["model_profile_id"] == "legacy"
     assert "model_routing" not in resolved
+
+
+def test_legacy_flat_provider_policy_rejects_pool_like_keys():
+    with pytest.raises(ModelPolicyError, match="openrouter_failover"):
+        _ = load_model_routing_policy(
+            {
+                "provider": "openrouter",
+                "model": "deepseek/deepseek-v4-pro",
+                "allow_fallback": True,
+                "estimated_cost_usd": 0.01,
+                "openrouter_failover": {"enabled": True, "models": ["deepseek/deepseek-v4-pro"]},
+            }
+        )
+
+
+def test_model_policy_rejects_non_finite_numeric_fields():
+    bad_profile = {
+        "version": 1,
+        "profiles": {
+            "bad": {
+                "provider": "openrouter",
+                "model": "deepseek/deepseek-v4-pro",
+                "runtime": "openrouter",
+                "estimated_cost_usd": "NaN",
+            }
+        },
+        "routes": {"default": "bad"},
+    }
+    bad_pool = _rich_policy_payload()
+    cast(dict[str, object], cast(dict[str, object], bad_pool["pools"])["free_loop"])["cooldown_seconds"] = "Infinity"
+
+    with pytest.raises(ModelPolicyError, match="finite"):
+        _ = load_model_routing_policy(bad_profile)
+    with pytest.raises(ModelPolicyError, match="finite"):
+        _ = load_model_routing_policy(bad_pool)
 
 
 def test_model_policy_resolves_all_one_model_for_every_layer_stage_and_subagent():
@@ -348,6 +387,95 @@ def test_run_free_loop_capacity_zero_does_not_make_provider_calls(tmp_path: Path
     assert result["leased_tasks"] == []
     assert provider_runs == 0
     assert leases == 0
+
+
+def test_proposed_tasks_without_parent_or_explicit_policy_do_not_default_to_free_model(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(conn, TaskSpec(task_id="parent-without-policy", title="Parent without policy", task_type="source_inventory"))
+        lease_id = acquire_lease(conn, task_id="parent-without-policy", worker_id="worker-01", dry_run=False)
+        candidate_id = record_worker_result(
+            conn,
+            task_id="parent-without-policy",
+            lease_id=lease_id,
+            worker_id="worker-01",
+            payload={
+                "task_id": "parent-without-policy",
+                "summary": "done",
+                "findings": [{"text": "finding", "citation_ids": []}],
+                "citations": [],
+                "proposed_artifacts": [{"path": "candidate/parent.json", "artifact_type": "note"}],
+                "proposed_tasks": [
+                    {
+                        "task_id": "missing-policy-followup",
+                        "title": "Missing policy followup",
+                        "task_type": "followup",
+                        "stage": "S0",
+                    },
+                ],
+            },
+        )
+
+        result = run_free_loop_once(conn, output_dir=tmp_path / "out", capacity=0, execute_workers=False)
+        followup_count = _scalar_int(conn, "SELECT COUNT(*) FROM tasks WHERE task_id = 'missing-policy-followup'")
+        attention = _scalar_int(conn, "SELECT COUNT(*) FROM human_attention")
+
+    assert result["reduced_candidates"] == [candidate_id]
+    assert result["reduction_errors"] == []
+    assert followup_count == 0
+    assert attention == 1
+
+
+def test_reducer_acceptance_rolls_back_if_proposed_task_import_crashes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(conn, TaskSpec(task_id="atomic-parent", title="Atomic parent", task_type="source_inventory"))
+        worker_lease_id = acquire_lease(conn, task_id="atomic-parent", worker_id="worker-01", dry_run=False)
+        candidate_id = record_worker_result(
+            conn,
+            task_id="atomic-parent",
+            lease_id=worker_lease_id,
+            worker_id="worker-01",
+            payload={
+                "task_id": "atomic-parent",
+                "summary": "done",
+                "findings": [{"text": "finding", "citation_ids": []}],
+                "citations": [],
+                "proposed_artifacts": [{"path": "canonical/atomic-parent.json", "artifact_type": "note"}],
+                "proposed_tasks": [
+                    {
+                        "task_id": "would-crash-import",
+                        "title": "Would crash import",
+                        "task_type": "followup",
+                        "provider_policy": {
+                            "provider": "openrouter",
+                            "model": "deepseek/deepseek-v4-flash",
+                            "allow_fallback": False,
+                            "estimated_cost_usd": 0.01,
+                        },
+                    },
+                ],
+            },
+        )
+        reducer_lease_id = acquire_lease(conn, task_id="atomic-parent", worker_id="reducer-01", dry_run=False)
+
+        def crashing_import(conn: sqlite3.Connection, candidate: Mapping[str, object]) -> list[str]:
+            del conn, candidate
+            raise ValueError("simulated proposed task import crash")
+
+        monkeypatch.setattr(reducer_module, "import_proposed_tasks_from_candidate", crashing_import)
+        with pytest.raises(ValueError, match="simulated proposed task import crash"):
+            _ = reduce_candidate(conn, candidate_id=candidate_id, reducer_lease_id=reducer_lease_id, dry_run=False)
+
+        artifacts = _scalar_int(conn, "SELECT COUNT(*) FROM artifacts")
+        reducer_packets = _scalar_int(conn, "SELECT COUNT(*) FROM reducer_packets")
+        followups = _scalar_int(conn, "SELECT COUNT(*) FROM tasks WHERE task_id = 'would-crash-import'")
+        candidate_status = _text_value(conn, "SELECT status FROM candidate_outputs WHERE candidate_id = '%s'" % candidate_id)
+
+    assert artifacts == 0
+    assert reducer_packets == 0
+    assert followups == 0
+    assert candidate_status == "candidate"
 
 
 def test_live_policy_allows_explicit_openrouter_pool_but_not_silent_fallback():

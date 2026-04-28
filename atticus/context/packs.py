@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import cast
 from dataclasses import dataclass
 import hashlib
 import json
 import sqlite3
-from typing import Any
 
 from atticus.db import repo
 
@@ -15,11 +16,11 @@ from atticus.db import repo
 class ContextPack:
     context_pack_id: str
     fingerprint: str
-    sections: list[dict[str, Any]]
+    sections: list[dict[str, object]]
     token_budget: int
     estimated_tokens: int
 
-    def as_dict(self) -> dict[str, Any]:
+    def as_dict(self) -> dict[str, object]:
         return {
             "context_pack_id": self.context_pack_id,
             "fingerprint": self.fingerprint,
@@ -29,11 +30,11 @@ class ContextPack:
         }
 
 
-def canonicalize_sections(sections: list[dict[str, Any]]) -> str:
+def canonicalize_sections(sections: list[dict[str, object]]) -> str:
     return json.dumps(sections, sort_keys=True, separators=(",", ":"))
 
 
-def fingerprint_sections(sections: list[dict[str, Any]]) -> str:
+def fingerprint_sections(sections: list[dict[str, object]]) -> str:
     return hashlib.sha256(canonicalize_sections(sections).encode("utf-8")).hexdigest()
 
 
@@ -49,15 +50,16 @@ def build_context_pack(
     token_budget: int = 16_000,
     persist: bool = True,
 ) -> ContextPack:
-    task = conn.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
+    task = cast(Mapping[str, object] | None, cast(object, conn.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone()))
     if task is None:
         raise KeyError(f"unknown task: {task_id}")
 
     source_ids = _load_string_list(task, "source_dependencies_json")
     artifact_ids = _load_string_list(task, "artifact_dependencies_json")
-    required_certs = json.loads(task["required_certifications_json"])
+    matter_scope = str(task["matter_scope"])
+    required_certs = _load_json_value(str(task["required_certifications_json"]))
 
-    sections: list[dict[str, Any]] = [
+    sections: list[dict[str, object]] = [
         {
             "name": "stable_prefix",
             "kind": "system",
@@ -75,31 +77,38 @@ def build_context_pack(
                 "stage": task["stage"],
                 "task_type": task["task_type"],
                 "matter_scope": task["matter_scope"],
-                "validation_gates": json.loads(task["validation_gates_json"]),
+                "validation_gates": _load_json_value(str(task["validation_gates_json"])),
                 "required_certifications": required_certs,
-                "provider_policy": json.loads(task["provider_policy_json"]),
+                "provider_policy": _load_json_value(str(task["provider_policy_json"])),
             },
         },
     ]
 
-    sources = [
-        dict(row)
-        for row in conn.execute(
+    source_rows = cast(list[Mapping[str, object]], conn.execute(
             """
             SELECT source_id, path, source_type, sha256, trust_status, stale
             FROM sources
             WHERE source_id IN (%s) AND matter_scope = ?
             ORDER BY source_id
             """ % ",".join("?" for _ in source_ids),
-            (*source_ids, task["matter_scope"]),
-        )
-    ] if source_ids else []
+            (*source_ids, matter_scope),
+        ).fetchall()) if source_ids else []
+    sources = [dict(row) for row in source_rows]
     _require_all_dependencies_present(
         requested=source_ids,
-        found=[row["source_id"] for row in sources],
+        found=[str(row["source_id"]) for row in sources],
         record_type="source",
-        matter_scope=task["matter_scope"],
+        matter_scope=matter_scope,
     )
+    artifact_rows = cast(list[Mapping[str, object]], conn.execute(
+            """
+            SELECT artifact_id, path, artifact_type, trust_status, stale, title, content
+            FROM artifacts
+            WHERE artifact_id IN (%s) AND matter_scope = ?
+            ORDER BY artifact_id
+            """ % ",".join("?" for _ in artifact_ids),
+            (*artifact_ids, matter_scope),
+        ).fetchall()) if artifact_ids else []
     artifacts = [
         {
             "artifact_id": row["artifact_id"],
@@ -108,23 +117,15 @@ def build_context_pack(
             "trust_status": row["trust_status"],
             "stale": row["stale"],
             "title": row["title"],
-            "content_excerpt": (row["content"] or "")[:2_000],
+            "content_excerpt": str(row["content"] or "")[:2_000],
         }
-        for row in conn.execute(
-            """
-            SELECT artifact_id, path, artifact_type, trust_status, stale, title, content
-            FROM artifacts
-            WHERE artifact_id IN (%s) AND matter_scope = ?
-            ORDER BY artifact_id
-            """ % ",".join("?" for _ in artifact_ids),
-            (*artifact_ids, task["matter_scope"]),
-        )
-    ] if artifact_ids else []
+        for row in artifact_rows
+    ]
     _require_all_dependencies_present(
         requested=artifact_ids,
-        found=[row["artifact_id"] for row in artifacts],
+        found=[str(row["artifact_id"]) for row in artifacts],
         record_type="artifact",
-        matter_scope=task["matter_scope"],
+        matter_scope=matter_scope,
     )
 
     sections.extend(
@@ -151,10 +152,10 @@ def build_context_pack(
     context_pack_id = f"ctx-{fingerprint[:24]}"
     pack = ContextPack(context_pack_id, fingerprint, sections, token_budget, estimated)
     if persist:
-        repo.add_context_pack(
+        _ = repo.add_context_pack(
             conn,
             context_pack_id=context_pack_id,
-            matter_scope=task["matter_scope"],
+            matter_scope=matter_scope,
             task_id=task_id,
             pack_type=pack_type,
             fingerprint=fingerprint,
@@ -165,16 +166,20 @@ def build_context_pack(
     return pack
 
 
-def _load_string_list(task: sqlite3.Row, field: str) -> list[str]:
-    value = json.loads(task[field] or "[]")
+def _load_string_list(task: Mapping[str, object], field: str) -> list[str]:
+    value = _load_json_value(str(task[field] or "[]"))
     if not isinstance(value, list):
         raise ValueError(f"{field} for task {task['task_id']} must be a JSON array")
     items: list[str] = []
-    for index, item in enumerate(value):
+    for index, item in enumerate(cast(list[object], value)):
         if not isinstance(item, str) or not item:
             raise ValueError(f"{field}[{index}] for task {task['task_id']} must be a non-empty string")
         items.append(item)
     return items
+
+
+def _load_json_value(text: str) -> object:
+    return json.loads(text)
 
 
 def _require_all_dependencies_present(*, requested: list[str], found: list[str], record_type: str, matter_scope: str) -> None:

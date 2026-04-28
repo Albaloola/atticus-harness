@@ -67,6 +67,11 @@ OPENROUTER_FREE_MODEL_ORDER = [
 _FREE_MODEL_COST = ModelCost(0.0, 0.0, 0.0, 0, 0)
 OPENROUTER_MODELS.update({model: _FREE_MODEL_COST for model in OPENROUTER_FREE_MODEL_ORDER})
 
+CODEX_MODELS: dict[str, ModelCost] = {
+    "gpt-5.5": ModelCost(0.0, 0.0, 0.0, 0, 0),
+    "openai-codex/gpt-5.5": ModelCost(0.0, 0.0, 0.0, 0, 0),
+}
+
 FLASH_USE_CASES = {
     "triage",
     "indexing",
@@ -93,6 +98,8 @@ def known_model(provider: str, model: str) -> bool:
         return model in OPENROUTER_MODELS
     if provider == "deepseek":
         return model in DEEPSEEK_DIRECT_MODELS
+    if provider == "openai-codex":
+        return model in CODEX_MODELS
     return False
 
 
@@ -101,4 +108,6 @@ def cost_for_model(provider: str, model: str) -> ModelCost:
         return OPENROUTER_MODELS[model]
     if provider == "deepseek":
         return DEEPSEEK_DIRECT_MODELS[model]
+    if provider == "openai-codex":
+        return CODEX_MODELS[model]
     raise KeyError(f"unknown provider/model: {provider}/{model}")

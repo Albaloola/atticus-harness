@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import json
+from typing import cast
 from dataclasses import dataclass
-from typing import Any
 
 from atticus.db.repo import db_connection
 
@@ -13,36 +14,32 @@ from atticus.db.repo import db_connection
 class StatusReport:
     run_state: str
     counts: dict[str, int]
-    blocked_tasks: list[dict[str, Any]]
-    stale_artifacts: list[dict[str, Any]]
-    active_leases: list[dict[str, Any]]
-    human_attention: list[dict[str, Any]]
-    budget: dict[str, Any]
-    provider_usage: dict[str, Any]
+    blocked_tasks: list[dict[str, object]]
+    stale_artifacts: list[dict[str, object]]
+    active_leases: list[dict[str, object]]
+    human_attention: list[dict[str, object]]
+    budget: dict[str, object]
+    provider_usage: dict[str, object]
 
 
 def generate_status(db_path: str) -> StatusReport:
     with db_connection(db_path, read_only=True) as conn:
-        run = conn.execute("SELECT state FROM runs ORDER BY updated_at DESC LIMIT 1").fetchone()
+        run = cast(Mapping[str, object], conn.execute("SELECT state FROM runs ORDER BY updated_at DESC LIMIT 1").fetchone())
         counts = {
-            "sources": int(conn.execute("SELECT COUNT(*) AS n FROM sources").fetchone()["n"]),
-            "artifacts": int(conn.execute("SELECT COUNT(*) AS n FROM artifacts").fetchone()["n"]),
-            "tasks": int(conn.execute("SELECT COUNT(*) AS n FROM tasks").fetchone()["n"]),
-            "blocked_tasks": int(
-                conn.execute("SELECT COUNT(*) AS n FROM tasks WHERE status = 'blocked'").fetchone()["n"]
-            ),
-            "candidate_outputs": int(conn.execute("SELECT COUNT(*) AS n FROM candidate_outputs").fetchone()["n"]),
-            "tracked_files": int(conn.execute("SELECT COUNT(*) AS n FROM tracked_files").fetchone()["n"]),
-            "open_human_attention": int(
-                conn.execute("SELECT COUNT(*) AS n FROM human_attention WHERE status = 'open'").fetchone()["n"]
-            ),
+            "sources": _scalar_int(conn.execute("SELECT COUNT(*) AS n FROM sources").fetchone(), "n"),
+            "artifacts": _scalar_int(conn.execute("SELECT COUNT(*) AS n FROM artifacts").fetchone(), "n"),
+            "tasks": _scalar_int(conn.execute("SELECT COUNT(*) AS n FROM tasks").fetchone(), "n"),
+            "blocked_tasks": _scalar_int(conn.execute("SELECT COUNT(*) AS n FROM tasks WHERE status = 'blocked'").fetchone(), "n"),
+            "candidate_outputs": _scalar_int(conn.execute("SELECT COUNT(*) AS n FROM candidate_outputs").fetchone(), "n"),
+            "tracked_files": _scalar_int(conn.execute("SELECT COUNT(*) AS n FROM tracked_files").fetchone(), "n"),
+            "open_human_attention": _scalar_int(conn.execute("SELECT COUNT(*) AS n FROM human_attention WHERE status = 'open'").fetchone(), "n"),
         }
-        blocked = [
+        blocked: list[dict[str, object]] = [
             {
                 "task_id": row["task_id"],
                 "title": row["title"],
                 "stage": row["stage"],
-                "reasons": json.loads(row["blocked_reasons_json"]),
+                "reasons": json.loads(str(row["blocked_reasons_json"])),
             }
             for row in conn.execute(
                 """
@@ -53,13 +50,13 @@ def generate_status(db_path: str) -> StatusReport:
                 """
             )
         ]
-        stale = [
+        stale: list[dict[str, object]] = [
             {"artifact_id": row["artifact_id"], "path": row["path"], "artifact_type": row["artifact_type"]}
             for row in conn.execute(
                 "SELECT artifact_id, path, artifact_type FROM artifacts WHERE stale = 1 ORDER BY updated_at DESC LIMIT 25"
             )
         ]
-        leases = [
+        leases: list[dict[str, object]] = [
             {
                 "lease_id": row["lease_id"],
                 "task_id": row["task_id"],
@@ -71,7 +68,7 @@ def generate_status(db_path: str) -> StatusReport:
                 "SELECT lease_id, task_id, worker_id, expires_at, fencing_token FROM leases WHERE status = 'active'"
             )
         ]
-        attention = [
+        attention: list[dict[str, object]] = [
             {
                 "attention_id": row["attention_id"],
                 "target_type": row["target_type"],
@@ -89,25 +86,17 @@ def generate_status(db_path: str) -> StatusReport:
                 """
             )
         ]
-        provider = {
-            "estimated_cost_usd": float(
-                conn.execute("SELECT COALESCE(SUM(estimated_cost_usd), 0) AS n FROM provider_runs").fetchone()["n"]
-            ),
-            "cache_hit_tokens": int(
-                conn.execute("SELECT COALESCE(SUM(cache_hit_tokens), 0) AS n FROM provider_runs").fetchone()["n"]
-            ),
-            "cache_miss_tokens": int(
-                conn.execute("SELECT COALESCE(SUM(cache_miss_tokens), 0) AS n FROM provider_runs").fetchone()["n"]
-            ),
-            "output_tokens": int(
-                conn.execute("SELECT COALESCE(SUM(output_tokens), 0) AS n FROM provider_runs").fetchone()["n"]
-            ),
+        provider: dict[str, object] = {
+            "estimated_cost_usd": _scalar_float(conn.execute("SELECT COALESCE(SUM(estimated_cost_usd), 0) AS n FROM provider_runs").fetchone(), "n"),
+            "cache_hit_tokens": _scalar_int(conn.execute("SELECT COALESCE(SUM(cache_hit_tokens), 0) AS n FROM provider_runs").fetchone(), "n"),
+            "cache_miss_tokens": _scalar_int(conn.execute("SELECT COALESCE(SUM(cache_miss_tokens), 0) AS n FROM provider_runs").fetchone(), "n"),
+            "output_tokens": _scalar_int(conn.execute("SELECT COALESCE(SUM(output_tokens), 0) AS n FROM provider_runs").fetchone(), "n"),
         }
-        budget = {
+        budget: dict[str, object] = {
             f"{row['scope_type']}:{row['scope_id']}": {
                 "limit_usd": row["limit_usd"],
                 "spent_usd": row["spent_usd"],
-                "remaining_usd": row["limit_usd"] - row["spent_usd"],
+                "remaining_usd": float(str(row["limit_usd"])) - float(str(row["spent_usd"])),
             }
             for row in conn.execute(
                 """
@@ -121,7 +110,7 @@ def generate_status(db_path: str) -> StatusReport:
             )
         }
     return StatusReport(
-        run_state=run["state"] if run else "uninitialized",
+        run_state=str(run["state"] if run else "uninitialized"),
         counts=counts,
         blocked_tasks=blocked,
         stale_artifacts=stale,
@@ -130,3 +119,11 @@ def generate_status(db_path: str) -> StatusReport:
         budget=budget,
         provider_usage=provider,
     )
+
+
+def _scalar_int(row: Mapping[str, object] | None, key: str) -> int:
+    return int(float(str(row[key] if row is not None else 0)))
+
+
+def _scalar_float(row: Mapping[str, object] | None, key: str) -> float:
+    return float(str(row[key] if row is not None else 0))

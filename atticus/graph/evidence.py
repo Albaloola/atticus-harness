@@ -18,7 +18,7 @@ def add_extraction_record(
     confidence: float = 0.0,
 ) -> str:
     extraction_id = f"extract-{uuid4().hex}"
-    conn.execute(
+    _ = conn.execute(
         """
         INSERT INTO extraction_records(extraction_id, source_id, artifact_id, method,
           coverage_status, confidence, created_at)
@@ -40,7 +40,7 @@ def add_production_mapping(
     integrity_status: str = "candidate",
 ) -> str:
     mapping_id = f"prod-{uuid4().hex}"
-    conn.execute(
+    _ = conn.execute(
         """
         INSERT INTO production_mappings(mapping_id, matter_scope, source_id, artifact_id,
           production_id, produced_path, integrity_status, created_at)
@@ -61,7 +61,7 @@ def add_chronology_event(
 ) -> str:
     chronology_event_id = f"chrono-{uuid4().hex}"
     now = utc_now()
-    conn.execute(
+    _ = conn.execute(
         """
         INSERT INTO chronology_events(chronology_event_id, matter_scope, event_date, description,
           created_by_artifact_id, created_at, updated_at)
@@ -84,7 +84,7 @@ def add_authority(
 ) -> str:
     authority_id = f"auth-{uuid4().hex}"
     now = utc_now()
-    conn.execute(
+    _ = conn.execute(
         """
         INSERT INTO legal_authorities(authority_id, matter_scope, jurisdiction, citation,
           authority_type, title, source_url, created_at, updated_at)

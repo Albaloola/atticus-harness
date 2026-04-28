@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import cast
 from datetime import UTC, datetime, timedelta
 import sqlite3
 from uuid import uuid4
@@ -28,12 +30,12 @@ def acquire_lease(
     seconds: int = 900,
     dry_run: bool = False,
 ) -> str:
-    task = conn.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
+    task = cast(Mapping[str, object] | None, cast(object, conn.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone()))
     if task is None:
         raise LeaseError(f"unknown task: {task_id}")
     if not dry_run:
-        expire_leases(conn, task_id=task_id)
-        task = conn.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
+        _ = expire_leases(conn, task_id=task_id)
+        task = cast(Mapping[str, object], conn.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone())
     leaseable = {
         TaskStatus.QUEUED,
         TaskStatus.READY,
@@ -53,17 +55,17 @@ def acquire_lease(
             repo.update_task_blocked(conn, task_id, gate_result.reasons)
         raise LeaseError(f"task {task_id} is blocked by gates: {'; '.join(gate_result.reasons)}")
     if task["status"] == TaskStatus.BLOCKED and not dry_run:
-        conn.execute(
+        _ = conn.execute(
             "UPDATE tasks SET status = ?, blocked_reasons_json = '[]', updated_at = ? WHERE task_id = ? AND status = ?",
             (TaskStatus.QUEUED, utc_now(), task_id, TaskStatus.BLOCKED),
         )
-        repo.emit_event(conn, "task.unblocked", payload={"task_id": task_id, "reason": "lease gates passed"})
-        task = conn.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
+        _ = repo.emit_event(conn, "task.unblocked", payload={"task_id": task_id, "reason": "lease gates passed"})
+        task = cast(Mapping[str, object], conn.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone())
 
-    existing = conn.execute(
+    existing = cast(Mapping[str, object] | None, conn.execute(
         "SELECT lease_id FROM leases WHERE task_id = ? AND status = 'active'",
         (task_id,),
-    ).fetchone()
+    ).fetchone())
     if existing is not None:
         raise LeaseError(f"task {task_id} already has active lease {existing['lease_id']}")
 
@@ -75,11 +77,11 @@ def acquire_lease(
         "SELECT COALESCE(MAX(fencing_token), 0) AS token FROM leases WHERE task_id = ?",
         (task_id,),
     ).fetchone()
-    fencing_token = int(current["token"]) + 1
+    fencing_token = int(float(str(current["token"] if current is not None else 0))) + 1
     now = utc_now()
     expires_at = (datetime.now(UTC) + timedelta(seconds=seconds)).isoformat(timespec="seconds")
     try:
-        conn.execute(
+        _ = conn.execute(
             """
             INSERT INTO leases(lease_id, task_id, worker_id, status, fencing_token, expires_at, created_at, updated_at)
             VALUES (?, ?, ?, 'active', ?, ?, ?, ?)
@@ -88,11 +90,11 @@ def acquire_lease(
         )
     except sqlite3.IntegrityError as exc:
         raise LeaseError(f"task {task_id} already has an active lease") from exc
-    conn.execute(
+    _ = conn.execute(
         "UPDATE tasks SET status = ?, updated_at = ? WHERE task_id = ?",
         (TaskStatus.LEASED, now, task_id),
     )
-    repo.emit_event(
+    _ = repo.emit_event(
         conn,
         "lease.acquired",
         payload={"lease_id": lease_id, "task_id": task_id, "worker_id": worker_id, "fencing_token": fencing_token},
@@ -104,25 +106,25 @@ def lease_is_active(conn: sqlite3.Connection, *, lease_id: str, task_id: str | N
     params: tuple[str, ...]
     if task_id is None:
         params = (lease_id,)
-        row = conn.execute("SELECT * FROM leases WHERE lease_id = ?", params).fetchone()
+        row = cast(Mapping[str, object] | None, cast(object, conn.execute("SELECT * FROM leases WHERE lease_id = ?", params).fetchone()))
     else:
         params = (lease_id, task_id)
-        row = conn.execute("SELECT * FROM leases WHERE lease_id = ? AND task_id = ?", params).fetchone()
+        row = cast(Mapping[str, object] | None, cast(object, conn.execute("SELECT * FROM leases WHERE lease_id = ? AND task_id = ?", params).fetchone()))
     if row is None or row["status"] != "active":
         return False
-    return _parse_time(row["expires_at"]) > datetime.now(UTC)
+    return _parse_time(str(row["expires_at"])) > datetime.now(UTC)
 
 
-def require_active_lease(conn: sqlite3.Connection, *, lease_id: str, task_id: str | None = None) -> sqlite3.Row:
+def require_active_lease(conn: sqlite3.Connection, *, lease_id: str, task_id: str | None = None) -> Mapping[str, object]:
     if task_id is None:
-        row = conn.execute("SELECT * FROM leases WHERE lease_id = ?", (lease_id,)).fetchone()
+        row = cast(Mapping[str, object] | None, cast(object, conn.execute("SELECT * FROM leases WHERE lease_id = ?", (lease_id,)).fetchone()))
     else:
-        row = conn.execute("SELECT * FROM leases WHERE lease_id = ? AND task_id = ?", (lease_id, task_id)).fetchone()
+        row = cast(Mapping[str, object] | None, cast(object, conn.execute("SELECT * FROM leases WHERE lease_id = ? AND task_id = ?", (lease_id, task_id)).fetchone()))
     if row is None:
         raise LeaseError(f"unknown lease: {lease_id}")
     if row["status"] != "active":
         raise LeaseError(f"lease {lease_id} is not active")
-    if _parse_time(row["expires_at"]) <= datetime.now(UTC):
+    if _parse_time(str(row["expires_at"])) <= datetime.now(UTC):
         raise LeaseError(f"lease {lease_id} is expired")
     return row
 
@@ -130,15 +132,15 @@ def require_active_lease(conn: sqlite3.Connection, *, lease_id: str, task_id: st
 def complete_lease(conn: sqlite3.Connection, *, lease_id: str, task_status: str = TaskStatus.REDUCER_PENDING) -> None:
     lease = require_active_lease(conn, lease_id=lease_id)
     now = utc_now()
-    conn.execute(
+    _ = conn.execute(
         "UPDATE leases SET status = 'completed', updated_at = ? WHERE lease_id = ?",
         (now, lease_id),
     )
-    conn.execute(
+    _ = conn.execute(
         "UPDATE tasks SET status = ?, updated_at = ? WHERE task_id = ?",
         (str(task_status), now, lease["task_id"]),
     )
-    repo.emit_event(conn, "lease.completed", payload={"lease_id": lease_id, "task_id": lease["task_id"]})
+    _ = repo.emit_event(conn, "lease.completed", payload={"lease_id": lease_id, "task_id": lease["task_id"]})
 
 
 def expire_leases(conn: sqlite3.Connection, *, task_id: str | None = None) -> list[str]:
@@ -149,25 +151,27 @@ def expire_leases(conn: sqlite3.Connection, *, task_id: str | None = None) -> li
     else:
         rows = conn.execute("SELECT * FROM leases WHERE status = 'active' AND task_id = ?", (task_id,))
     for row in rows:
-        if _parse_time(row["expires_at"]) <= now_dt:
-            next_status = _status_after_expired_lease(conn, task_id=row["task_id"])
-            expired.append(row["lease_id"])
-            conn.execute(
+        if _parse_time(str(row["expires_at"])) <= now_dt:
+            lease_task_id = str(row["task_id"])
+            lease_id = str(row["lease_id"])
+            next_status = _status_after_expired_lease(conn, task_id=lease_task_id)
+            expired.append(lease_id)
+            _ = conn.execute(
                 "UPDATE leases SET status = 'expired', updated_at = ? WHERE lease_id = ?",
-                (utc_now(), row["lease_id"]),
+                (utc_now(), lease_id),
             )
-            conn.execute(
+            _ = conn.execute(
                 "UPDATE tasks SET status = ?, updated_at = ? WHERE task_id = ? AND status IN (?, ?)",
-                (next_status, utc_now(), row["task_id"], TaskStatus.LEASED, TaskStatus.RUNNING),
+                (next_status, utc_now(), lease_task_id, TaskStatus.LEASED, TaskStatus.RUNNING),
             )
-            repo.record_human_attention(
+            _ = repo.record_human_attention(
                 conn,
                 target_type="task",
-                target_id=row["task_id"],
+                target_id=lease_task_id,
                 severity="warning",
-                reason=f"lease expired: {row['lease_id']}",
+                reason=f"lease expired: {lease_id}",
             )
-            repo.emit_event(
+            _ = repo.emit_event(
                 conn,
                 "lease.expired",
                 payload={"lease_id": row["lease_id"], "task_id": row["task_id"], "worker_id": row["worker_id"]},
@@ -176,8 +180,8 @@ def expire_leases(conn: sqlite3.Connection, *, task_id: str | None = None) -> li
 
 
 def _status_after_expired_lease(conn: sqlite3.Connection, *, task_id: str) -> TaskStatus:
-    pending_candidate = conn.execute(
+    pending_candidate = cast(object | None, conn.execute(
         "SELECT 1 FROM candidate_outputs WHERE task_id = ? AND status = 'candidate' LIMIT 1",
         (task_id,),
-    ).fetchone()
+    ).fetchone())
     return TaskStatus.REDUCER_PENDING if pending_candidate is not None else TaskStatus.QUEUED

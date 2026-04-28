@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Callable
+from collections.abc import Mapping
+from types import TracebackType
+from typing import Callable, Protocol, Self, cast
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
@@ -13,13 +15,19 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 Transport = Callable[[urllib_request.Request, float], bytes]
 
 
+class _ReadableResponse(Protocol):
+    def __enter__(self) -> Self: ...
+    def __exit__(self, exc_type: type[BaseException] | None, exc: BaseException | None, tb: TracebackType | None) -> object: ...
+    def read(self) -> bytes: ...
+
+
 class OpenRouterError(RuntimeError):
     """Raised when an OpenRouter response is unusable."""
 
     def __init__(self, message: str, *, status_code: int | None = None, body: str = "") -> None:
         super().__init__(message)
-        self.status_code = status_code
-        self.body = body
+        self.status_code: int | None = status_code
+        self.body: str = body
 
 
 USAGE_TOKEN_FIELDS = (
@@ -31,7 +39,7 @@ USAGE_TOKEN_FIELDS = (
 )
 
 
-def validate_usage_tokens(usage: dict[str, Any]) -> dict[str, int]:
+def validate_usage_tokens(usage: dict[str, object]) -> dict[str, int]:
     """Return normalized token counts after fail-closed scalar validation.
 
     OpenRouter/OpenAI-style usage metadata is spend telemetry. Missing token
@@ -53,7 +61,7 @@ def validate_usage_tokens(usage: dict[str, Any]) -> dict[str, int]:
     }
 
 
-def _parse_token_count(field: str, value: Any) -> int:
+def _parse_token_count(field: str, value: object) -> int:
     if isinstance(value, bool):
         raise OpenRouterError(f"OpenRouter usage field {field} must be a non-negative integer, not boolean")
     if isinstance(value, int):
@@ -69,12 +77,12 @@ def _parse_token_count(field: str, value: Any) -> int:
 
 class OpenRouterClient:
     def __init__(self, *, api_key: str | None = None, base_url: str = OPENROUTER_BASE_URL, transport: Transport | None = None, timeout: float = 120.0):
-        self.api_key = api_key or os.environ.get("OPENROUTER_API_KEY", "")
-        self.base_url = base_url.rstrip("/")
-        self.transport = transport or self._default_transport
-        self.timeout = timeout
+        self.api_key: str = api_key or os.environ.get("OPENROUTER_API_KEY", "")
+        self.base_url: str = base_url.rstrip("/")
+        self.transport: Transport = transport or self._default_transport
+        self.timeout: float = timeout
 
-    def chat_json(self, *, model: str, messages: list[dict[str, str]], max_tokens: int = 4096, temperature: float = 0.1) -> dict[str, Any]:
+    def chat_json(self, *, model: str, messages: list[dict[str, str]], max_tokens: int = 4096, temperature: float = 0.1) -> dict[str, object]:
         if not self.api_key:
             raise OpenRouterError("OPENROUTER_API_KEY is required")
         payload = {
@@ -105,15 +113,24 @@ class OpenRouterClient:
         except (ConnectionResetError, TimeoutError) as exc:
             raise OpenRouterError(f"OpenRouter network error: {exc}") from exc
         try:
-            raw = json.loads(raw_bytes.decode("utf-8"))
+            raw_obj = json.loads(raw_bytes.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise OpenRouterError(f"OpenRouter returned invalid JSON: {exc}") from exc
-        if not isinstance(raw, dict):
+        if not isinstance(raw_obj, Mapping):
             raise OpenRouterError("OpenRouter response must be a JSON object")
+        raw = _mapping_to_dict(cast(Mapping[object, object], raw_obj))
         try:
-            message = raw["choices"][0]["message"]
-            if not isinstance(message, dict):
+            choices = raw.get("choices")
+            if not isinstance(choices, list) or not choices:
+                raise TypeError("OpenRouter choices must be a non-empty JSON array")
+            first_choice = cast(list[object], choices)[0]
+            if not isinstance(first_choice, Mapping):
+                raise TypeError("OpenRouter choice must be a JSON object")
+            first_choice = cast(Mapping[str, object], first_choice)
+            message = first_choice.get("message")
+            if not isinstance(message, Mapping):
                 raise TypeError("OpenRouter choice message must be a JSON object")
+            message = cast(Mapping[str, object], message)
             content_text = message.get("content") or "{}"
             content = json.loads(content_text) if isinstance(content_text, str) else content_text
         except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
@@ -123,18 +140,23 @@ class OpenRouterClient:
         if not provider or not actual_model:
             raise OpenRouterError("OpenRouter response missing provider/model metadata required for fallback detection")
         usage = raw.get("usage")
-        if not isinstance(usage, dict):
+        if not isinstance(usage, Mapping):
             raise OpenRouterError("OpenRouter usage metadata must be a JSON object")
-        validate_usage_tokens(usage)
+        usage_dict = _mapping_to_dict(cast(Mapping[object, object], usage))
+        _ = validate_usage_tokens(usage_dict)
         return {
             "provider": str(provider),
             "model": str(actual_model),
             "content": content,
-            "usage": dict(usage),
+            "usage": usage_dict,
             "raw": raw,
         }
 
     @staticmethod
     def _default_transport(req: urllib_request.Request, timeout: float) -> bytes:
-        with urllib_request.urlopen(req, timeout=timeout) as response:  # noqa: S310 - explicit HTTPS OpenRouter endpoint
+        with cast(_ReadableResponse, urllib_request.urlopen(req, timeout=timeout)) as response:  # noqa: S310 - explicit HTTPS OpenRouter endpoint
             return response.read()
+
+
+def _mapping_to_dict(value: Mapping[object, object]) -> dict[str, object]:
+    return {str(key): item for key, item in value.items()}

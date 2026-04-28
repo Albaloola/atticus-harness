@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 import json
+import math
 from pathlib import Path
 from typing import cast
 
@@ -109,6 +110,8 @@ def load_model_routing_policy(value: Mapping[str, object] | str | Path) -> Model
 
     raw = _load_json_source(value)
     if _is_legacy_flat_provider_policy(raw):
+        if "openrouter_failover" in raw:
+            raise ModelPolicyError("legacy flat provider policy cannot include openrouter_failover; use a model routing policy with pools")
         return normalize_legacy_provider_policy(raw)
     version = _int_value(raw.get("version"), default=1)
     profiles_raw = raw.get("profiles")
@@ -220,12 +223,13 @@ def validate_proposed_task_provider_policy(
     proposed = proposed_task.get("provider_policy")
     if not isinstance(proposed, Mapping):
         return resolved
+    proposed_map = _mapping_to_dict(cast(Mapping[object, object], proposed))
     try:
         proposed_policy = canonical_provider_policy(
-            provider=str(proposed.get("provider") or ""),
-            model=str(proposed.get("model") or ""),
-            allow_fallback=bool(proposed.get("allow_fallback") or False),
-            estimated_cost_usd=_float_value(proposed.get("estimated_cost_usd"), default=0.0),
+            provider=str(proposed_map.get("provider") or ""),
+            model=str(proposed_map.get("model") or ""),
+            allow_fallback=bool(proposed_map.get("allow_fallback") or False),
+            estimated_cost_usd=_float_value(proposed_map.get("estimated_cost_usd"), default=0.0),
         )
     except ValueError as exc:
         return _with_audit(resolved, f"proposed task provider policy rejected: {exc}")
@@ -508,8 +512,8 @@ def _float_value(value: object, *, default: float) -> float:
         result = float(str(value))
     except (TypeError, ValueError) as exc:
         raise ModelPolicyError(f"invalid float policy value: {value!r}") from exc
-    if result < 0:
-        raise ModelPolicyError("float policy fields must be non-negative")
+    if not math.isfinite(result) or result < 0:
+        raise ModelPolicyError("float policy fields must be finite and non-negative")
     return result
 
 

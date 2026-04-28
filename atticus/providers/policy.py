@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 import sqlite3
 
 from atticus.db import repo
@@ -30,11 +31,23 @@ class ProviderDecision:
 
 
 def check_provider_policy(requested: ProviderRequest, actual: ProviderActual | None = None) -> ProviderDecision:
-    if not known_model(requested.provider, requested.model):
-        return ProviderDecision(False, "blocked", f"unknown or unsupported model: {requested.provider}/{requested.model}")
-    requested_provider, requested_model = _canonical_provider_model(requested.provider, requested.model)
-    if requested_provider == "openai-codex" and requested.allow_fallback:
-        return ProviderDecision(False, "failed_closed", "Codex fallback is not allowed")
+    requested_provider, requested_model = _canonical_provider_model(requested.provider.strip(), requested.model.strip())
+    if requested_provider == "deepseek":
+        return ProviderDecision(
+            False,
+            "failed_closed",
+            "direct DeepSeek provider is not executable in this harness; use provider openrouter with deepseek/... model ids",
+        )
+    if not known_model(requested_provider, requested_model):
+        return ProviderDecision(False, "blocked", f"unknown or unsupported model: {requested_provider}/{requested_model}")
+    if requested.allow_fallback:
+        if requested_provider == "openai-codex":
+            return ProviderDecision(False, "failed_closed", "Codex fallback is not allowed")
+        return ProviderDecision(
+            False,
+            "failed_closed",
+            "flat provider fallback is not allowed; configure an explicit OpenRouter model pool instead",
+        )
     actual = actual or ProviderActual(requested.provider, requested.model)
     actual_provider, actual_model = _canonical_provider_model(actual.provider, actual.model)
     same = actual_provider == requested_provider and actual_model == requested_model
@@ -42,8 +55,6 @@ def check_provider_policy(requested: ProviderRequest, actual: ProviderActual | N
         return ProviderDecision(True, "not_needed", "requested provider/model matched actual provider/model")
     if requested_provider == "openai-codex":
         return ProviderDecision(False, "failed_closed", "actual provider/model differed and Codex fallback is not allowed")
-    if requested.allow_fallback:
-        return ProviderDecision(True, "allowed", "fallback explicitly allowed")
     return ProviderDecision(False, "failed_closed", "actual provider/model differed and fallback was not allowed")
 
 
@@ -66,12 +77,15 @@ def canonical_provider_policy(
     decision = check_provider_policy(requested)
     if not decision.allowed:
         raise ValueError(decision.reason)
+    normalized_cost = float(estimated_cost_usd)
+    if not math.isfinite(normalized_cost) or normalized_cost < 0:
+        raise ValueError("estimated_cost_usd must be finite and non-negative")
     canonical_provider, canonical_model = _canonical_provider_model(requested.provider, requested.model)
     return {
         "provider": canonical_provider,
         "model": canonical_model,
         "allow_fallback": requested.allow_fallback,
-        "estimated_cost_usd": float(estimated_cost_usd),
+        "estimated_cost_usd": normalized_cost,
     }
 
 

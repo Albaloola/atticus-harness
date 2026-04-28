@@ -9,11 +9,12 @@ from atticus.providers.openrouter_failover import (
     OpenRouterFailoverConfig,
     OpenRouterFailoverHardError,
     OpenRouterModelFailover,
-    _SHARED_FAILOVER_CLIENTS,
     classify_openrouter_failure,
+    clear_shared_failover_clients_for_tests,
     openrouter_client_for_policy,
     openrouter_models_for_policy,
     safe_openrouter_error_message,
+    shared_failover_cache_keys_for_tests,
 )
 
 JsonObject = dict[str, object]
@@ -21,7 +22,7 @@ JsonObject = dict[str, object]
 
 class SequencedOpenRouterClient:
     def __init__(self, outcomes: list[JsonObject | Exception]) -> None:
-        self.outcomes = list(outcomes)
+        self.outcomes: list[JsonObject | Exception] = list(outcomes)
         self.calls: list[str] = []
 
     def chat_json(self, *, model: str, messages: list[dict[str, str]], max_tokens: int, temperature: float) -> JsonObject:
@@ -31,10 +32,10 @@ class SequencedOpenRouterClient:
         if isinstance(outcome, Exception):
             raise outcome
         response = dict(outcome)
-        response.setdefault("provider", "openrouter")
-        response.setdefault("model", model)
-        response.setdefault("content", {"ok": True})
-        response.setdefault("usage", {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
+        _ = response.setdefault("provider", "openrouter")
+        _ = response.setdefault("model", model)
+        _ = response.setdefault("content", {"ok": True})
+        _ = response.setdefault("usage", {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
         return response
 
 
@@ -92,7 +93,7 @@ def test_openrouter_failover_hard_errors_do_not_rotate():
     client = SequencedOpenRouterClient([OpenRouterError("OPENROUTER_API_KEY is required")])
 
     with pytest.raises(OpenRouterFailoverHardError, match="OPENROUTER_API_KEY"):
-        _failover(client).chat_json(model="ignored", messages=[{"role": "user", "content": "{}"}])
+        _ = _failover(client).chat_json(model="ignored", messages=[{"role": "user", "content": "{}"}])
 
     assert client.calls == ["model-a:free"]
 
@@ -109,7 +110,7 @@ def test_openrouter_failover_fails_closed_on_usage_and_provider_metadata_errors(
     client = SequencedOpenRouterClient([{"usage": ["not", "metadata"]}, {"model": "model-b:free"}])
 
     with pytest.raises(OpenRouterFailoverHardError, match="usage metadata"):
-        _failover(client).chat_json(model="ignored", messages=[{"role": "user", "content": "{}"}])
+        _ = _failover(client).chat_json(model="ignored", messages=[{"role": "user", "content": "{}"}])
 
     assert client.calls == ["model-a:free"]
 
@@ -142,7 +143,7 @@ def test_openrouter_failover_bounded_attempt_guard_is_explicit():
     client = SequencedOpenRouterClient([OpenRouterError("rate limit", status_code=429) for _ in range(3)])
 
     with pytest.raises(OpenRouterError, match="max_total_attempts exceeded after 3 attempts"):
-        _failover(client, max_failed_cycles=1).chat_json(
+        _ = _failover(client, max_failed_cycles=1).chat_json(
             model="ignored",
             messages=[{"role": "user", "content": "{}"}],
             max_total_attempts=3,
@@ -179,11 +180,34 @@ def test_openrouter_failover_enabled_by_env_uses_ordered_requested_model_list():
     assert models == ("model-b:free", "model-a:free")
 
 
+def test_openrouter_failover_enabled_by_env_requires_explicit_model_list():
+    with pytest.raises(OpenRouterFailoverHardError, match="explicit OpenRouter failover models"):
+        _ = openrouter_models_for_policy(
+            {"provider": "openrouter", "model": "deepseek/deepseek-v4-pro"},
+            env={"ATTICUS_OPENROUTER_FAILOVER_ENABLED": "1"},
+        )
+
+
 @pytest.mark.parametrize("models", [{"bad": "shape"}, [], ["model-a:free", ""], "  ,  "])
-def test_openrouter_failover_rejects_malformed_explicit_model_config(models):
+def test_openrouter_failover_rejects_malformed_explicit_model_config(models: object) -> None:
     with pytest.raises(OpenRouterFailoverHardError, match="models"):
-        openrouter_models_for_policy(
+        _ = openrouter_models_for_policy(
             {"provider": "openrouter", "openrouter_failover": {"enabled": True, "models": models}},
+            env={},
+        )
+
+
+def test_openrouter_failover_rejects_non_finite_timing_values() -> None:
+    with pytest.raises(OpenRouterFailoverHardError, match="finite"):
+        _ = openrouter_models_for_policy(
+            {
+                "provider": "openrouter",
+                "openrouter_failover": {
+                    "enabled": True,
+                    "models": ["model-a:free"],
+                    "cooldown_seconds": "NaN",
+                },
+            },
             env={},
         )
 
@@ -196,18 +220,19 @@ def test_openrouter_failover_classifier_defaults_unknown_errors_to_hard_failure(
 
 
 def test_openrouter_failover_does_not_cache_raw_api_key_in_cache_keys():
-    _SHARED_FAILOVER_CLIENTS.clear()
-    secret = "sk-secret-not-in-cache-key"
-    openrouter_client_for_policy(
+    clear_shared_failover_clients_for_tests()
+    raw_value = "fake-openrouter-value-not-in-cache-key"
+    _ = openrouter_client_for_policy(
         {
             "provider": "openrouter",
             "openrouter_failover": {"enabled": True, "models": ["model-a:free"], "cooldown_seconds": 0},
         },
-        env={"OPENROUTER_API_KEY": secret},
+        env={"OPENROUTER_API_KEY": raw_value},
     )
 
-    assert _SHARED_FAILOVER_CLIENTS
-    assert all(secret not in repr(key) for key in _SHARED_FAILOVER_CLIENTS)
+    cache_keys = shared_failover_cache_keys_for_tests()
+    assert cache_keys
+    assert all(raw_value not in repr(key) for key in cache_keys)
 
 
 def test_safe_openrouter_error_message_removes_provider_body():

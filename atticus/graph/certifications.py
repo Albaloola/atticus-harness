@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import sqlite3
-from typing import Any
 
+from typing import cast
 from atticus.db import repo
 
 
@@ -19,9 +19,9 @@ def certify_subject(
     subject_id: str,
     certification_type: str,
     validator: str,
-    evidence: dict[str, Any] | None = None,
+    evidence: dict[str, object] | None = None,
 ) -> str:
-    validation = conn.execute(
+    validation = cast(sqlite3.Row | None, cast(object, conn.execute(
         """
         SELECT validation_result_id
         FROM validation_results
@@ -30,7 +30,7 @@ def certify_subject(
         LIMIT 1
         """,
         (subject_type, subject_id, certification_type),
-    ).fetchone()
+    ).fetchone()))
     if validation is None:
         raise CertificationBlocked(
             f"certification {certification_type!r} for {subject_type}:{subject_id} requires passing validation"
@@ -41,6 +41,6 @@ def certify_subject(
         subject_id=subject_id,
         certification_type=certification_type,
         validator=validator,
-        validation_result_id=int(validation["validation_result_id"]),
+        validation_result_id=int(str(validation["validation_result_id"])),
         evidence=evidence,
     )

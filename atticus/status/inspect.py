@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import json
-from typing import Any
 
+from typing import cast
 from atticus.db.repo import db_connection
 
 
@@ -19,20 +20,20 @@ TABLES_BY_TYPE: dict[str, tuple[str, str]] = {
 }
 
 
-def inspect_record(db_path: str, *, record_type: str, record_id: str) -> dict[str, Any]:
+def inspect_record(db_path: str, *, record_type: str, record_id: str) -> dict[str, object]:
     table_info = TABLES_BY_TYPE.get(record_type)
     if table_info is None:
         raise KeyError(f"unsupported inspect type: {record_type}")
     table, pk = table_info
     with db_connection(db_path, read_only=True) as conn:
-        row = conn.execute(f"SELECT * FROM {table} WHERE {pk} = ?", (record_id,)).fetchone()
+        row = cast(Mapping[str, object] | None, cast(object, conn.execute(f"SELECT * FROM {table} WHERE {pk} = ?", (record_id,)).fetchone()))
     if row is None:
         raise KeyError(f"{record_type} not found: {record_id}")
     return summarize_row(dict(row))
 
 
-def summarize_row(row: dict[str, Any]) -> dict[str, Any]:
-    summarized: dict[str, Any] = {}
+def summarize_row(row: dict[str, object]) -> dict[str, object]:
+    summarized: dict[str, object] = {}
     for key, value in row.items():
         if isinstance(value, str) and key.endswith("_json"):
             try:

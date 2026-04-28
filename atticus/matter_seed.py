@@ -34,6 +34,7 @@ class MatterSeedResult:
     tracked_files_created: int = 0
     tracked_files_updated: int = 0
     tasks_created: int = 0
+    tasks_updated: int = 0
     missing_files: list[dict[str, object]] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, object]:
@@ -51,6 +52,7 @@ class MatterSeedResult:
             "tracked_files_created": self.tracked_files_created,
             "tracked_files_updated": self.tracked_files_updated,
             "tasks_created": self.tasks_created,
+            "tasks_updated": self.tasks_updated,
             "missing_files": self.missing_files,
         }
 
@@ -114,6 +116,7 @@ def seed_matter_from_inventory(
     tracked_created = 0
     tracked_updated = 0
     missing_files: list[dict[str, object]] = []
+    source_ids: list[str] = []
 
     if not dry_run:
         repo.ensure_matter(conn, matter_scope, _title_from_scope(matter_scope))
@@ -127,6 +130,7 @@ def seed_matter_from_inventory(
         existing = _existing_source(conn, source_id=record.source_id, matter_scope=matter_scope, source_path=record.source_path)
         if existing is None:
             sources_created += 1
+            source_id = record.source_id
             if not dry_run:
                 _insert_source(conn, matter_scope=matter_scope, record=record)
                 snapshots_created += _ensure_source_snapshot(conn, source_id=record.source_id, record=record)
@@ -134,6 +138,7 @@ def seed_matter_from_inventory(
                 snapshots_created += 1
         else:
             existing_source_id = str(existing["source_id"])
+            source_id = existing_source_id
             changed = _source_changed(existing, record)
             if changed:
                 sources_updated += 1
@@ -150,8 +155,11 @@ def seed_matter_from_inventory(
             tracked_updated += 1
         if not dry_run:
             _upsert_tracked_file(conn, matter_scope=matter_scope, record=record)
+        if source_id not in source_ids:
+            source_ids.append(source_id)
 
     tasks_created = 0
+    tasks_updated = 0
     if _task_count_for_matter(conn, matter_scope) == 0:
         tasks_created = 1
         if not dry_run:
@@ -164,10 +172,18 @@ def seed_matter_from_inventory(
                     matter_scope=matter_scope,
                     stage=LegalStage.S0_SOURCE_INVENTORY,
                     status=TaskStatus.QUEUED,
+                    source_dependencies=source_ids,
                     provider_policy=provider_policy,
                     expected_value=10.0,
                 ),
             )
+    else:
+        tasks_updated = _repair_source_inventory_task_dependencies(
+            conn,
+            matter_scope=matter_scope,
+            source_ids=source_ids,
+            dry_run=dry_run,
+        )
     if not dry_run:
         _ = repo.emit_event(
             conn,
@@ -180,6 +196,7 @@ def seed_matter_from_inventory(
                 "sources_updated": sources_updated,
                 "sources_skipped": sources_skipped,
                 "tasks_created": tasks_created,
+                "tasks_updated": tasks_updated,
             },
         )
 
@@ -197,6 +214,7 @@ def seed_matter_from_inventory(
         tracked_files_created=tracked_created,
         tracked_files_updated=tracked_updated,
         tasks_created=tasks_created,
+        tasks_updated=tasks_updated,
         missing_files=missing_files,
     )
 
@@ -524,6 +542,61 @@ def _task_count_for_matter(conn: sqlite3.Connection, matter_scope: str) -> int:
     return int(str(row["n"] if row is not None else 0))
 
 
+def _repair_source_inventory_task_dependencies(
+    conn: sqlite3.Connection,
+    *,
+    matter_scope: str,
+    source_ids: list[str],
+    dry_run: bool,
+) -> int:
+    if not source_ids:
+        return 0
+    rows = [
+        cast(Mapping[str, object], row)
+        for row in conn.execute(
+            """
+            SELECT task_id, source_dependencies_json
+            FROM tasks
+            WHERE matter_scope = ?
+              AND task_type = 'source_inventory'
+              AND status IN (?, ?, ?, ?)
+            ORDER BY task_id
+            """,
+            (
+                matter_scope,
+                TaskStatus.QUEUED,
+                TaskStatus.READY,
+                TaskStatus.BLOCKED,
+                TaskStatus.REDUCER_PENDING,
+            ),
+        )
+    ]
+    updated = 0
+    source_json = _json(source_ids)
+    for row in rows:
+        current = _string_list_from_json(str(row["source_dependencies_json"] or "[]"))
+        if current == source_ids:
+            continue
+        updated += 1
+        if not dry_run:
+            _ = conn.execute(
+                "UPDATE tasks SET source_dependencies_json = ?, updated_at = ? WHERE task_id = ?",
+                (source_json, utc_now(), row["task_id"]),
+            )
+    return updated
+
+
+def _string_list_from_json(text: str) -> list[str]:
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(value, list):
+        return []
+    items = cast(list[object], value)
+    return [str(item) for item in items if isinstance(item, str) and item]
+
+
 def _title_from_scope(matter_scope: str) -> str:
     return matter_scope.replace("-", " ").strip().title()
 
@@ -571,4 +644,4 @@ def _required_text(value: str, name: str) -> str:
 
 
 def _json(value: object) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)

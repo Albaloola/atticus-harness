@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import cast
 
 from atticus.workers.contracts import REQUIRED_RESULT_PACKET_KEYS
 
@@ -17,16 +17,14 @@ class ResultPacketError(ValueError):
 class ParsedResultPacket:
     task_id: str
     summary: str
-    findings: list[dict[str, Any]]
-    citations: list[dict[str, Any]]
-    proposed_artifacts: list[dict[str, Any]]
-    proposed_tasks: list[dict[str, Any]]
-    raw: dict[str, Any]
+    findings: list[dict[str, object]]
+    citations: list[dict[str, object]]
+    proposed_artifacts: list[dict[str, object]]
+    proposed_tasks: list[dict[str, object]]
+    raw: dict[str, object]
 
 
-def parse_result(payload: dict[str, Any]) -> ParsedResultPacket:
-    if not isinstance(payload, dict):
-        raise ResultPacketError("worker result packet must be a JSON object")
+def parse_result(payload: Mapping[str, object]) -> ParsedResultPacket:
     missing = sorted(REQUIRED_RESULT_PACKET_KEYS - set(payload))
     if missing:
         raise ResultPacketError(f"missing worker result keys: {', '.join(missing)}")
@@ -41,24 +39,25 @@ def parse_result(payload: dict[str, Any]) -> ParsedResultPacket:
     return ParsedResultPacket(
         task_id=str(payload["task_id"]),
         summary=str(payload.get("summary") or ""),
-        findings=_mapping_list("findings", findings),
-        citations=_mapping_list("citations", citations),
-        proposed_artifacts=_mapping_list("proposed_artifacts", proposed_artifacts),
-        proposed_tasks=_mapping_list("proposed_tasks", proposed_tasks),
+        findings=_mapping_list("findings", cast(list[object], findings)),
+        citations=_mapping_list("citations", cast(list[object], citations)),
+        proposed_artifacts=_mapping_list("proposed_artifacts", cast(list[object], proposed_artifacts)),
+        proposed_tasks=_mapping_list("proposed_tasks", cast(list[object], proposed_tasks)),
         raw=dict(payload),
     )
 
 
-def _mapping_list(field: str, value: list[Any]) -> list[dict[str, Any]]:
-    items: list[dict[str, Any]] = []
+def _mapping_list(field: str, value: list[object]) -> list[dict[str, object]]:
+    items: list[dict[str, object]] = []
     for index, item in enumerate(value):
         if not isinstance(item, Mapping):
             raise ResultPacketError(f"{field}[{index}] must be a JSON object")
-        items.append(dict(item))
+        item_map = cast(Mapping[object, object], item)
+        items.append({str(key): value for key, value in item_map.items()})
     return items
 
 
-def packet_as_dict(packet: ParsedResultPacket) -> dict[str, Any]:
+def packet_as_dict(packet: ParsedResultPacket) -> dict[str, object]:
     return {
         "task_id": packet.task_id,
         "summary": packet.summary,

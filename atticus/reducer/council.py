@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 import sqlite3
-from typing import Any
+
 from uuid import uuid4
 
 from atticus.core.events import utc_now
@@ -16,15 +16,15 @@ class CouncilDecision:
     decision: str
     selected_candidate_id: str | None
     rationale: str
-    votes: list[dict[str, Any]]
+    votes: list[dict[str, object]]
 
 
-def collect_votes(votes: list[dict[str, Any]]) -> dict[str, Any]:
+def collect_votes(votes: list[dict[str, object]]) -> dict[str, object]:
     decision = reduce_votes(votes)
     return {"votes": votes, "count": len(votes), "decision": decision.decision, "selected_candidate_id": decision.selected_candidate_id}
 
 
-def reduce_votes(votes: list[dict[str, Any]]) -> CouncilDecision:
+def reduce_votes(votes: list[dict[str, object]]) -> CouncilDecision:
     if not votes:
         return CouncilDecision("blocked", None, "no votes supplied", [])
     explicit_rejects = [vote for vote in votes if vote.get("vote") == "reject"]
@@ -63,7 +63,7 @@ def create_council_run(
 ) -> str:
     council_run_id = f"council-{uuid4().hex}"
     now = utc_now()
-    conn.execute(
+    _ = conn.execute(
         """
         INSERT INTO council_runs(council_run_id, matter_scope, task_id, council_type, status,
           reducer_logic, created_at, updated_at)

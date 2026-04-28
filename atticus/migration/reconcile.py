@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from typing import Any
 
+from typing import cast
 from atticus.core.events import utc_now
 from atticus.core.policies import TaskStatus
 from atticus.db import repo
@@ -27,7 +27,7 @@ def reconcile_foundation(
     matter_scope: str = "atticus",
     dry_run: bool = True,
     validator: str = "atticus-reconciler",
-) -> dict[str, Any]:
+) -> dict[str, object]:
     """Validate and certify foundational matter layers in dependency order.
 
     Existing legacy artifacts remain candidate material. This function only
@@ -37,7 +37,7 @@ def reconcile_foundation(
     """
 
     passed: list[str] = []
-    failed: dict[str, dict[str, Any]] = {}
+    failed: dict[str, dict[str, object]] = {}
     certifications: list[dict[str, str]] = []
 
     for gate in FOUNDATION_GATES:
@@ -87,7 +87,11 @@ def reconcile_foundation(
 
 
 def _has_active_certification(conn: sqlite3.Connection, *, matter_scope: str, certification_type: str) -> bool:
-    row = conn.execute(
+    columns = {str(row["name"]) for row in conn.execute("PRAGMA table_info(certifications)")}
+    required = {"certification_id", "subject_type", "subject_id", "certification_type", "status"}
+    if not required.issubset(columns):
+        return False
+    row = cast(object | None, conn.execute(
         """
         SELECT certification_id
         FROM certifications
@@ -98,11 +102,11 @@ def _has_active_certification(conn: sqlite3.Connection, *, matter_scope: str, ce
         LIMIT 1
         """,
         (matter_scope, certification_type),
-    ).fetchone()
+    ).fetchone())
     return row is not None
 
 
-def _preview_gate(conn: sqlite3.Connection, *, gate_name: str, matter_scope: str) -> tuple[bool, dict[str, Any]]:
+def _preview_gate(conn: sqlite3.Connection, *, gate_name: str, matter_scope: str) -> tuple[bool, dict[str, object]]:
     from atticus.validation import gates as validation_gates
 
     handlers = {
@@ -112,7 +116,10 @@ def _preview_gate(conn: sqlite3.Connection, *, gate_name: str, matter_scope: str
         "production_mapping": validation_gates.validate_production_mapping_integrity,
         "chronology_citations": validation_gates.validate_chronology_citation_completeness,
     }
-    return handlers[gate_name](conn, target_type="matter", target_id=matter_scope)
+    try:
+        return handlers[gate_name](conn, target_type="matter", target_id=matter_scope)
+    except sqlite3.OperationalError as exc:
+        return False, {"reason": "legacy ledger schema is missing fields required for foundation validation", "error": str(exc), "gate": gate_name}
 
 
 def _freeze_later_stage_work(conn: sqlite3.Connection, *, matter_scope: str, failed_gates: list[str]) -> list[str]:
@@ -127,10 +134,11 @@ def _freeze_later_stage_work(conn: sqlite3.Connection, *, matter_scope: str, fai
         """,
         (matter_scope,),
     ):
-        repo.update_task_blocked(conn, row["task_id"], [reason])
-        frozen.append(row["task_id"])
+        task_id = str(row["task_id"])
+        repo.update_task_blocked(conn, task_id, [reason])
+        frozen.append(task_id)
     if frozen:
-        repo.emit_event(conn, "foundation_reconciliation.froze_tasks", payload={"matter_scope": matter_scope, "task_ids": frozen, "failed_gates": failed_gates})
+        _ = repo.emit_event(conn, "foundation_reconciliation.froze_tasks", payload={"matter_scope": matter_scope, "task_ids": frozen, "failed_gates": failed_gates})
     return frozen
 
 
@@ -148,38 +156,30 @@ def _unfreeze_foundation_blocked_work(conn: sqlite3.Connection, *, matter_scope:
         """,
         (matter_scope,),
     ):
+        task_id = str(row["task_id"])
         try:
-            reasons = json.loads(row["blocked_reasons_json"] or "[]")
+            reasons = cast(list[object], json.loads(str(row["blocked_reasons_json"] or "[]")))
         except (json.JSONDecodeError, TypeError) as exc:
-            repo.record_human_attention(
+            _ = repo.record_human_attention(
                 conn,
                 target_type="task",
-                target_id=row["task_id"],
+                target_id=task_id,
                 severity="blocker",
                 reason=f"foundation blocked-task reasons are malformed and could not be unfrozen: {exc}",
             )
             continue
-        if not isinstance(reasons, list):
-            repo.record_human_attention(
-                conn,
-                target_type="task",
-                target_id=row["task_id"],
-                severity="blocker",
-                reason="foundation blocked-task reasons are malformed and could not be unfrozen: expected JSON array",
-            )
-            continue
-        remaining = [reason for reason in reasons if not str(reason).startswith(prefix)]
+        remaining = [str(reason) for reason in reasons if not str(reason).startswith(prefix)]
         if len(remaining) == len(reasons):
             continue
         if remaining:
-            repo.update_task_blocked(conn, row["task_id"], remaining)
+            repo.update_task_blocked(conn, task_id, remaining)
         else:
-            conn.execute(
+            _ = conn.execute(
                 "UPDATE tasks SET status = ?, blocked_reasons_json = '[]', updated_at = ? WHERE task_id = ?",
-                (TaskStatus.QUEUED, utc_now(), row["task_id"]),
+                (TaskStatus.QUEUED, utc_now(), task_id),
             )
-            repo.emit_event(conn, "foundation_reconciliation.unfroze_task", payload={"matter_scope": matter_scope, "task_id": row["task_id"]})
-            unfrozen.append(row["task_id"])
+            _ = repo.emit_event(conn, "foundation_reconciliation.unfroze_task", payload={"matter_scope": matter_scope, "task_id": task_id})
+            unfrozen.append(task_id)
     if unfrozen:
-        repo.emit_event(conn, "foundation_reconciliation.unfroze_tasks", payload={"matter_scope": matter_scope, "task_ids": unfrozen})
+        _ = repo.emit_event(conn, "foundation_reconciliation.unfroze_tasks", payload={"matter_scope": matter_scope, "task_ids": unfrozen})
     return unfrozen

@@ -35,6 +35,7 @@ def answer_question(
     prove ask mode does not launch or inspect execution machinery.
     """
 
+    _ = worker_launcher
     matter_scope = require_matter_access(matter_scope, authorized_matter_scope=authorized_matter_scope)
     decision = enforce_read_only_intent(question)
     if not decision.allowed:
@@ -50,14 +51,14 @@ def answer_question(
         rows = search_memory(conn, question, matter_scope=matter_scope, authorized_matter_scope=authorized_matter_scope)
 
     citations = [
-        Citation(
-            citation_id=f"C{i}",
-            record_type=row["record_type"],
-            record_id=row["record_id"],
-            path=row["path"],
-            trust_status=row["trust_status"],
+            Citation(
+                citation_id=f"C{i}",
+            record_type=str(row["record_type"]),
+            record_id=str(row["record_id"]),
+            path=str(row["path"]),
+            trust_status=str(row["trust_status"]),
             stale=bool(row["stale"]),
-            snippet=(row.get("content") or row.get("title") or row["path"])[:300],
+            snippet=str(row.get("content") or row.get("title") or row["path"])[:300],
         )
         for i, row in enumerate(rows, start=1)
     ]
