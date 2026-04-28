@@ -12,4 +12,6 @@ risk_level: high
 description: Draft an evidence-backed complaint with citation and hostile-review tasks.
 ---
 
-Create a complaint draft as a candidate artifact only. Do not send it. Preserve uncertainty and citation discipline.
+Create a complaint draft as a candidate artifact only. The draft should connect each complaint issue to cited facts, chronology entries, documents, impact, requested remedy, and any procedural route or review stage.
+
+Do not send, submit, upload, or threaten action. Do not overstate fault, intent, discrimination, bad faith, misconduct, or legal breach beyond the evidence. Preserve uncertainty and citation discipline, and queue hostile review plus citation audit before any final use.

@@ -27,6 +27,21 @@ Findings cite explicit citation IDs. Citations must target records visible in
 the work-order context or matter-scoped legal graph. External action requests
 are not executed; they are blocked and recorded.
 
+## Prompt Discipline
+
+Prompt-bearing surfaces are part of the safety model. Worker, provider,
+workflow, skill, and context prompts must tell agents that output is
+`candidate`, not canonical; reducers decide what becomes trusted. Prompts must
+preserve matter scope, separate fact, law, procedure, inference, contradiction,
+risk, drafting notes, and uncertainty, and require citations for factual,
+legal, procedural, contradiction, and risk findings unless the finding is
+explicitly uncertain or queued for research.
+
+Prompt text must not encourage external legal action, hidden fallback,
+uncited legal propositions, memory-as-proof, or polished overstatement. A
+well-written legal prompt is useful because it is auditable and
+verification-ready, not because it sounds confident.
+
 ## Context Packs V2
 
 Context packs are built from deterministic sections:

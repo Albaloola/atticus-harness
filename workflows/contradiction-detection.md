@@ -12,4 +12,6 @@ risk_level: high
 description: Detect and register contradictions across sources, artifacts, claims, and chronology.
 ---
 
-Do not smooth conflicts away. Record conflicts with citations and proposed follow-up tasks.
+Do not smooth conflicts away. Record each contradiction as a verification-ready issue with both sides cited, the affected claim or chronology event, the materiality of the conflict, and what evidence could resolve it.
+
+Do not decide credibility unless the work order includes a validated basis for doing so. Mark unresolved conflicts plainly, preserve minority or adverse evidence, and create follow-up tasks for missing records or human review.

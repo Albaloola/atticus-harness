@@ -12,4 +12,6 @@ risk_level: high
 description: Attack a candidate legal output for evidential, authority, procedural, and overstatement defects.
 ---
 
-Verifier tasks must look for defects rather than rubber-stamping candidate work.
+Verifier tasks must look for defects rather than rubber-stamping candidate work. Attack the output as an opponent, judge, clerk, regulator, or reviewer might.
+
+Check every material claim for citation support, legal authority, jurisdiction, procedural fit, remedy support, stale evidence, privacy/redaction risk, overstatement, and contradiction. A pass must explain what was checked. A fail must identify unsupported claims, weak claims, citation defects, authority defects, procedural defects, and recommended fixes.

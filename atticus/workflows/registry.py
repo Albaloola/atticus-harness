@@ -138,10 +138,18 @@ def _task_for_workflow(workflow: Workflow, *, matter_scope: str, task_key: str) 
 
 
 def _instructions_for(workflow: Workflow, task_key: str) -> str:
+    workflow_guidance = " ".join(workflow.body.split())
     return (
         f"Workflow {workflow.name} task {task_key}. Produce {task_key.replace('_', ' ')} for the matter. "
-        "Use only matter-scoped sources/artifacts. Return candidate packets only. "
-        "Do not send, file, upload, contact, or perform external legal actions."
+        f"Workflow guidance: {workflow_guidance} "
+        "Return verification-ready worker_result_packet.v2 output that is candidate, not canonical. "
+        "Use only matter-scoped sources, artifacts, authorities, and active legal memory included in the work order. "
+        "Separate fact, law, procedure, inference, contradiction, risk, drafting note, and uncertainty. "
+        "Cite every factual, legal, procedural, contradiction, and risk finding, or mark it uncertain or needs_research. "
+        "Do not invent evidence, authorities, dates, amounts, quotations, deadlines, remedies, or procedural posture. "
+        "Flag stale evidence, weak support, contradictions, privacy/redaction risks, and missing certifications. "
+        "Propose follow-up tasks for gaps; do not treat memory as proof. "
+        "Do not send, file, serve, upload, email, contact, message, or perform external legal actions."
     )
 
 

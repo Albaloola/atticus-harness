@@ -70,9 +70,14 @@ class CodexCliAdapter(ExecutionAdapter):
         prompt = (
             "You are a bounded Atticus legal harness worker. Read the work_order JSON below and return exactly one JSON "
             f"candidate result packet matching {RESULT_PACKET_SCHEMA_VERSION} and the supplied output schema. "
-            "Do not write canonical artifacts. Do not send, "
-            "file, upload, email, contact, or perform any external legal action. If uncertain, put uncertainty in the "
-            "uncertainties array and propose follow-up tasks rather than inventing citations.\n\n"
+            "Your answer is candidate, not canonical; reducers decide what becomes trusted. Use only the matter-scoped "
+            "context in the work order. Separate fact, law, procedure, inference, contradiction, and risk. Cite every "
+            "factual, legal, procedural, contradiction, or risk finding to an allowed context target, or mark it "
+            "uncertain or needs_research. Do not invent citations, authorities, documents, dates, quotes, amounts, "
+            "admissions, deadlines, remedies, or procedural posture. Flag stale evidence, weak support, contradictions, "
+            "privacy/redaction concerns, and missing certifications. Do not write canonical artifacts or memory. "
+            "Do not send, file, serve, upload, email, contact, message, or perform any external legal action. "
+            "If uncertain, use the uncertainties array and propose follow-up tasks rather than hiding uncertainty.\n\n"
             f"work_order_json:\n{json.dumps(work_order, sort_keys=True)}\n"
         )
         cmd = [

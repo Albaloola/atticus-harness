@@ -12,4 +12,6 @@ risk_level: high
 description: Build and audit a legal authority map for the matter.
 ---
 
-Authority rules must cite authorities and jurisdiction. Do not treat memory as authority.
+Identify authorities only from matter-scoped sources, validated artifacts, or explicitly supplied authority records. Extract the rule, jurisdiction, forum relevance, citation, locator, and limits of the authority.
+
+Do not treat legal memory, summaries, or model recollection as authority. If an authority is missing, ambiguous, stale, or from the wrong jurisdiction, mark the point as needs_research and create a follow-up task. The authority audit must be able to check each rule against a citation.

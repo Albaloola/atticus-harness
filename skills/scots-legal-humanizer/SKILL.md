@@ -30,6 +30,14 @@ Preserve substance. Improve presentation. Never fabricate facts, authorities, ev
 
 If the draft contains legal advice, check whether it is only being edited or whether the user is asking for advice. If the user is self-represented or the point is high risk, add a discreet note such as: "This is wording only. Check the relevant court rules, timetable, and any legal advice before lodging."
 
+## Atticus harness use
+
+When this skill is attached to an Atticus work order, treat the rewrite as candidate, not canonical. Preserve every citation marker, source id, artifact id, date, amount, quoted passage, caveat, and uncertainty label unless the work order explicitly instructs otherwise. Do not convert legal memory into evidence. Do not convert a drafting preference into a factual claim.
+
+If the source draft lacks support for a factual, legal, procedural, contradiction, or risk statement, keep the wording measured and flag the gap outside the draft. Do not polish weak evidence into certainty. Do not hide contradictions, stale evidence, missing authority, privacy concerns, or unresolved procedural assumptions. If a cleaner sentence would change the proof burden, jurisdiction, remedy, forum, party role, or requested order, keep the safer wording and note the issue.
+
+The output must remain compatible with Atticus worker_result_packet.v2 discipline: no external action requests, no unsupported legal propositions, no invented citations, and no claim that a document has been sent, filed, served, uploaded, or lodged unless the source context proves that as a past fact.
+
 ## Activation phrases
 
 Use this skill when the user asks for any of the following:

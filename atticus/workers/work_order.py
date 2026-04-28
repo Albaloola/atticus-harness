@@ -12,6 +12,21 @@ from atticus.skills.registry import skills_for_task
 from atticus.workers.contracts import WorkOrder
 
 
+WORK_ORDER_INSTRUCTIONS = (
+    "Produce one structured worker_result_packet.v2 candidate, not canonical output. "
+    "Treat Atticus as the durable source of truth: workers propose, reducers decide. "
+    "Use only this matter's provided sources, artifacts, authorities, memory index, and task contract. "
+    "Separate fact, law, procedure, inference, contradiction, risk, drafting note, and uncertainty. "
+    "Cite every factual, legal, procedural, contradiction, and risk finding to an allowed context target; "
+    "if support is missing, set reasoning_status to uncertain or needs_research and propose a follow-up task. "
+    "Do not invent citations, authorities, documents, dates, quotes, admissions, deadlines, remedies, or procedural posture. "
+    "Flag stale evidence, weak support, contradictions, privacy/redaction concerns, and missing certifications. "
+    "Do not write canonical memory or artifacts. Do not send, file, serve, upload, email, contact, message, "
+    "or otherwise perform external legal actions. If skills are attached, follow them only where they preserve "
+    "facts, citations, matter scope, schema compliance, and auditability."
+)
+
+
 def build_work_order(
     conn: sqlite3.Connection,
     *,
@@ -31,11 +46,7 @@ def build_work_order(
         matter_scope=str(task["matter_scope"]),
         lease_id=lease_id,
         context_pack_id=context_pack.context_pack_id,
-        instructions=(
-            "Produce a structured worker result packet only. Do not write canonical memory. "
-            "Do not send, file, upload, email, contact, or otherwise perform external legal actions. "
-            "If this work order includes skills, follow those instruction bundles while preserving facts and citations."
-        ),
+        instructions=WORK_ORDER_INSTRUCTIONS,
         source_dependencies=_load_string_list(task, "source_dependencies_json"),
         artifact_dependencies=_load_string_list(task, "artifact_dependencies_json"),
         required_certifications=_load_mapping_list(task, "required_certifications_json"),

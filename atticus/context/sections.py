@@ -79,8 +79,11 @@ def build_default_sections(
             cache_scope="global",
             inclusion_reason="global Atticus legal safety contract",
             content=(
-                "Atticus is the durable source of truth. Workers produce candidate packets only. "
-                "Reducers write canonical legal memory after validation. External legal actions are blocked."
+                "Atticus is the durable source of truth. Worker output is candidate, not canonical. "
+                "Reducers write canonical legal memory or artifacts only after validation. Facts, law, "
+                "procedure, inference, risk, contradiction, and uncertainty must stay distinct. Memory is "
+                "an operational aid, not proof. Legal and factual claims must be supported by citations, "
+                "marked uncertain, or queued for verification. External legal actions are blocked."
             ),
         ),
         ContextSection(
@@ -188,8 +191,26 @@ def build_default_sections(
             content={
                 "schema_version": RESULT_PACKET_SCHEMA_VERSION,
                 "schema": result_packet_json_schema(),
-                "citation_rule": "Every factual/legal assertion must cite an allowed context target or be explicitly uncertain.",
+                "citation_rule": (
+                    "Every factual, legal, procedural, contradiction, or risk assertion must cite an allowed "
+                    "context target or be explicitly uncertain."
+                ),
                 "canonical_write_rule": "Workers may not write canonical state.",
+                "finding_taxonomy": [
+                    "fact",
+                    "law",
+                    "procedure",
+                    "inference",
+                    "drafting_note",
+                    "contradiction",
+                    "risk",
+                ],
+                "uncertainty_rule": (
+                    "Use reasoning_status uncertain or needs_research when evidence, authority, jurisdiction, "
+                    "procedure, date, amount, remedy, or source provenance is incomplete."
+                ),
+                "external_action_rule": "Return no external_action_requests; request human attention instead.",
+                "memory_rule": "Legal memory may orient work but does not prove facts, law, or procedural status.",
             },
         ),
         ContextSection(

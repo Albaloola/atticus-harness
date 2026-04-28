@@ -43,6 +43,10 @@ def test_context_pack_sections_have_auditable_v2_metadata(tmp_path: Path):
     schema_section = next(section for section in pack.sections if section["name"] == "required_output_schema")
     schema_content = cast(Mapping[str, object], schema_section["content"])
     assert schema_content["schema_version"] == RESULT_PACKET_SCHEMA_VERSION
+    stable = next(section for section in pack.sections if section["name"] == "stable_prefix")
+    assert "candidate, not canonical" in str(stable["content"])
+    assert "Facts, law, procedure, inference, risk, contradiction, and uncertainty" in str(stable["content"])
+    assert "finding_taxonomy" in schema_content
 
 
 def test_context_diagnostics_reports_stale_dependencies_and_counts(tmp_path: Path):

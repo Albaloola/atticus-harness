@@ -12,4 +12,6 @@ risk_level: high
 description: Draft court correspondence as a candidate artifact with procedural and privacy audit.
 ---
 
-Draft only. Do not send, file, serve, upload, or contact the court.
+Draft only. Produce a candidate court correspondence artifact with clear addressee, procedural context, requested order or action, supporting citations, deadline assumptions, and privacy/redaction warnings.
+
+Do not send, file, serve, lodge, upload, or contact the court. Do not claim that service or lodging has happened unless the matter record proves it as a past fact. If procedural authority, time limits, party roles, or forum terminology are uncertain, flag them for procedural audit.

@@ -21,6 +21,8 @@ def test_scots_legal_humanizer_skill_is_bundled_and_loadable():
     assert skill.manifest["name"] == "scots-legal-humanizer"
     assert "Scottish legal" in str(skill.manifest["description"])
     assert "Preserve substance. Improve presentation." in skill.body
+    assert "Atticus harness use" in skill.body
+    assert "candidate, not canonical" in skill.body
     assert "references/scottish-legal-style-map.md" in skill.references
     assert "examples/simple-procedure-claim.md" in skill.examples
 

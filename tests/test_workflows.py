@@ -39,6 +39,8 @@ def test_workflow_run_dry_run_creates_no_tasks(tmp_path: Path):
     tasks = cast(list[Mapping[str, object]], plan["tasks"])
     assert len(tasks) >= 2
     assert all(task["matter_scope"] == "alpha" for task in tasks)
+    assert all("candidate, not canonical" in str(task["instructions"]) for task in tasks)
+    assert all("verification-ready" in str(task["instructions"]) for task in tasks)
     assert count == 0
 
 

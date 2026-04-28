@@ -92,6 +92,8 @@ def test_codex_cli_adapter_invokes_bounded_exec_and_reads_strict_json(tmp_path: 
     prompt = cast(str, calls[0]["input"])
     assert "work_order_json" in prompt
     assert "external legal action" in prompt
+    assert "candidate, not canonical" in prompt
+    assert "fact, law, procedure, inference, contradiction, and risk" in prompt
     diagnostics = cast(Mapping[str, object], json.loads((tmp_path / "out" / "codex.diagnostics.json").read_text(encoding="utf-8")))
     assert diagnostics["reasoning_effort"] == "low"
 
