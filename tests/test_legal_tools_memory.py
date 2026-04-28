@@ -12,7 +12,8 @@ from atticus.cli import main as cli_main
 from atticus.core.policies import TrustStatus
 from atticus.db import repo
 from atticus.memory.types import LEGAL_MEMORY_TYPES
-from atticus.tools.base import ToolContext, ToolPermissionError, ToolValidationError
+from atticus.tools import registry as tool_registry
+from atticus.tools.base import BaseTool, ToolContext, ToolMetadata, ToolPermissionError, ToolValidationError
 from atticus.tools.registry import get_tool, invoke_tool, list_tools
 
 
@@ -128,6 +129,91 @@ def test_draft_artifact_edit_blocks_stale_hash_and_validated_artifacts(tmp_path:
             )
         with pytest.raises(ToolPermissionError, match="validated"):
             _ = invoke_tool("ReadDraftArtifact", {"artifact_id": validated_id}, ctx)
+
+
+def test_draft_artifact_edit_rejects_multiple_matches_unless_replace_all(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        artifact_id = repo.add_artifact(
+            conn,
+            matter_scope="alpha",
+            path="/alpha/draft.md",
+            artifact_type="draft",
+            trust_status=TrustStatus.CANDIDATE,
+            content="rent rent arrears",
+        )
+        ctx = ToolContext(conn=conn, matter_scope="alpha", actor="draft-worker")
+        read = invoke_tool("ReadDraftArtifact", {"artifact_id": artifact_id}, ctx)
+
+        with pytest.raises(ToolValidationError, match="exactly once"):
+            _ = invoke_tool(
+                "EditDraftArtifact",
+                {"artifact_id": artifact_id, "old": "rent", "new": "fee", "read_hash": read["content_hash"]},
+                ctx,
+            )
+
+        edit = invoke_tool(
+            "EditDraftArtifact",
+            {"artifact_id": artifact_id, "old": "rent", "new": "fee", "read_hash": read["content_hash"], "replace_all": True},
+            ctx,
+        )
+        artifact = cast(Mapping[str, object], conn.execute("SELECT content FROM artifacts WHERE artifact_id = ?", (artifact_id,)).fetchone())
+
+    assert edit["replacements"] == 2
+    assert artifact["content"] == "fee fee arrears"
+
+
+def test_mutating_tool_invocation_requires_write_permission_and_logs_denial(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        ctx = ToolContext(conn=conn, matter_scope="alpha", actor="operator", permission_mode="read_only")
+
+        with pytest.raises(ToolPermissionError, match="requires write permission"):
+            _ = invoke_tool(
+                "WriteDraftArtifact",
+                {"path": "/alpha/draft.md", "artifact_type": "draft", "title": "Draft", "content": "draft"},
+                ctx,
+            )
+
+        artifacts = _count(conn, "SELECT COUNT(*) FROM artifacts")
+        event = cast(Mapping[str, object], conn.execute("SELECT payload_json FROM events WHERE event_type = 'tool.invoked'").fetchone())
+        payload = cast(Mapping[str, object], json.loads(str(event["payload_json"])))
+
+    assert artifacts == 0
+    assert payload["tool"] == "WriteDraftArtifact"
+    assert payload["status"] == "blocked"
+    assert payload["permission_mode"] == "read_only"
+
+
+def test_tool_result_size_limit_is_enforced_and_audited(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    class OversizedTool(BaseTool):
+        metadata = ToolMetadata(
+            name="OversizedTool",
+            description="Return too much output.",
+            input_schema={"type": "object"},
+            output_schema={"type": "object"},
+            read_only=True,
+            max_result_size=32,
+        )
+
+        def call(self, input_data: Mapping[str, object], ctx: ToolContext) -> dict[str, object]:
+            del input_data, ctx
+            return {"blob": "x" * 100}
+
+    monkeypatch.setattr(tool_registry, "get_tool", lambda name: OversizedTool())
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        ctx = ToolContext(conn=conn, matter_scope="alpha", actor="operator")
+
+        with pytest.raises(ToolValidationError, match="max_result_size"):
+            _ = invoke_tool("OversizedTool", {}, ctx)
+
+        event = cast(Mapping[str, object], conn.execute("SELECT payload_json FROM events WHERE event_type = 'tool.invoked'").fetchone())
+        payload = cast(Mapping[str, object], json.loads(str(event["payload_json"])))
+
+    assert payload["tool"] == "OversizedTool"
+    assert payload["status"] == "failed"
+    assert "max_result_size" in str(payload["error"])
 
 
 def test_legal_memory_requires_sources_for_evidence_and_stays_matter_scoped(tmp_path: Path, capsys: pytest.CaptureFixture[str]):

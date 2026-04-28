@@ -62,7 +62,10 @@ python -m atticus.cli tools list --db data/atticus.sqlite3 --json
 ```
 
 Read-only tools inspect sources, artifacts, memory, validation gates, and
-context packs. Mutating tools are guarded and matter-scoped. Draft artifact
+context packs. Mutating tools are guarded and matter-scoped. The central tool
+invocation path enforces `permission_mode` before writes, enforces each tool's
+`max_result_size`, and records successful, blocked, and failed invocations in
+the event stream when the database connection is writable. Draft artifact
 editing uses read-before-write hashes and creates artifact versions; validated
 or certified drafts are not edited by ordinary worker tools.
 

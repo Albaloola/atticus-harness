@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 import hashlib
 import json
+import sqlite3
 from typing import cast
 
 from atticus.core.events import utc_now
@@ -46,21 +47,21 @@ def get_tool(name: str) -> BaseTool:
 
 def invoke_tool(name: str, input_data: Mapping[str, object], ctx: ToolContext) -> dict[str, object]:
     tool = get_tool(name)
-    result = tool.call(input_data, ctx)
-    _ = repo.emit_event(
-        ctx.conn,
-        "tool.invoked",
-        actor=ctx.actor,
-        matter_scope=ctx.matter_scope,
-        payload={
-            "tool": tool.name,
-            "read_only": tool.read_only,
-            "destructive": tool.destructive,
-            "task_id": ctx.task_id,
-            "lease_id": ctx.lease_id,
-            "activity": _activity_summary(tool.name, input_data, result),
-        },
-    )
+    try:
+        _require_tool_permission(tool, ctx)
+        result = tool.call(input_data, ctx)
+        _enforce_tool_result_size(tool, result)
+    except Exception as exc:
+        _emit_tool_invocation(
+            ctx,
+            tool,
+            input_data,
+            {},
+            status="blocked" if isinstance(exc, ToolPermissionError) else "failed",
+            error=str(exc) or exc.__class__.__name__,
+        )
+        raise
+    _emit_tool_invocation(ctx, tool, input_data, result, status="succeeded")
     return result
 
 
@@ -477,6 +478,59 @@ def _next_artifact_version(ctx: ToolContext, artifact_id: str) -> int:
 
 def _hash_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _require_tool_permission(tool: BaseTool, ctx: ToolContext) -> None:
+    mode = ctx.permission_mode.strip().lower()
+    write_blocked = mode in {"read_only", "readonly", "dry_run", "no_write"}
+    if write_blocked and (tool.requires_write or tool.destructive or not tool.read_only):
+        raise ToolPermissionError(f"{tool.name} requires write permission; current permission_mode is {ctx.permission_mode}")
+    if tool.requires_live and mode not in {"live", "allow_live"}:
+        raise ToolPermissionError(f"{tool.name} requires explicit live permission")
+
+
+def _enforce_tool_result_size(tool: BaseTool, result: Mapping[str, object]) -> None:
+    encoded = json.dumps(result, sort_keys=True, default=str, separators=(",", ":"))
+    size = len(encoded.encode("utf-8"))
+    if size > tool.max_result_size:
+        raise ToolValidationError(f"{tool.name} result exceeds max_result_size: {size} > {tool.max_result_size}")
+
+
+def _emit_tool_invocation(
+    ctx: ToolContext,
+    tool: BaseTool,
+    input_data: Mapping[str, object],
+    result: Mapping[str, object],
+    *,
+    status: str,
+    error: str = "",
+) -> None:
+    payload: dict[str, object] = {
+        "tool": tool.name,
+        "read_only": tool.read_only,
+        "destructive": tool.destructive,
+        "requires_write": tool.requires_write,
+        "requires_live": tool.requires_live,
+        "permission_mode": ctx.permission_mode,
+        "status": status,
+        "task_id": ctx.task_id,
+        "lease_id": ctx.lease_id,
+        "activity": _activity_summary(tool.name, input_data, result),
+    }
+    if error:
+        payload["error"] = error[:1000]
+    try:
+        _ = repo.emit_event(
+            ctx.conn,
+            "tool.invoked",
+            actor=ctx.actor,
+            matter_scope=ctx.matter_scope,
+            payload=payload,
+        )
+    except sqlite3.OperationalError as exc:
+        if "readonly" in str(exc).lower() or "read-only" in str(exc).lower():
+            return
+        raise
 
 
 def _activity_summary(name: str, input_data: Mapping[str, object], result: Mapping[str, object]) -> str:
