@@ -143,11 +143,15 @@ def _relative_files(directory: Path, package_dir: Path) -> tuple[str, ...]:
 
 
 def _needs_scots_legal_humanizer(*, task_type: str, stage: str, title: str) -> bool:
-    haystack = f"{task_type} {stage} {title}".lower()
-    triggers = (
+    task_type_l = task_type.lower()
+    stage_l = stage.upper()
+    title_l = title.lower()
+    explicit_triggers = (
         "humanize",
         "humanise",
         "de-ai",
+    )
+    drafting_triggers = (
         "draft",
         "complaint",
         "letter",
@@ -158,9 +162,13 @@ def _needs_scots_legal_humanizer(*, task_type: str, stage: str, title: str) -> b
         "scottish",
         "scots",
     )
-    if stage == "S8" and any(term in haystack for term in ("draft", "complaint", "letter", "response", "submission")):
+    if any(term in f"{task_type_l} {title_l}" for term in explicit_triggers):
         return True
-    return any(term in haystack for term in triggers)
+    if task_type_l in {"draft", "draft_preparation", "complaint_draft", "letter_draft", "humanize_draft", "humanise_draft"}:
+        return True
+    if stage_l == "S8" and any(term in title_l for term in ("draft", "complaint", "letter", "response", "submission")):
+        return True
+    return False
 
 
 def _safe_skill_id(skill_id: str) -> str:

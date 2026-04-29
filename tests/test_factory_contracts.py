@@ -245,6 +245,38 @@ def test_context_pack_rejects_cross_matter_dependencies(tmp_path: Path):
     assert context_count == 0
 
 
+def test_context_pack_includes_artifacts_from_completed_task_dependencies(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(conn, TaskSpec(task_id="upstream", title="Upstream", task_type="extract", matter_scope="alpha"))
+        artifact_id = repo.add_artifact(
+            conn,
+            matter_scope="alpha",
+            path="/alpha/upstream.json",
+            artifact_type="evidence_registry",
+            trust_status=TrustStatus.VALIDATED,
+            produced_by_task_id="upstream",
+            content="upstream artifact",
+        )
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="downstream",
+                title="Downstream",
+                task_type="citation_audit",
+                matter_scope="alpha",
+                task_dependencies=["upstream"],
+            ),
+        )
+        pack = build_context_pack(conn, task_id="downstream")
+
+    artifact_bundle = next(section for section in pack.sections if section["name"] == "artifact_bundle")
+    citation_targets = next(section for section in pack.sections if section["name"] == "citation_targets")
+    artifact_ids = [str(item["artifact_id"]) for item in cast(list[Mapping[str, object]], artifact_bundle["content"])]
+    assert artifact_ids == [artifact_id]
+    assert artifact_id in cast(Mapping[str, object], citation_targets["content"])["allowed_artifact_targets"]
+
+
 def test_citation_spans_require_known_records_and_claim_validation(tmp_path: Path):
     db_path = init_db(tmp_path)
     with repo.db_connection(db_path) as conn:
@@ -376,6 +408,112 @@ def test_reducer_preserves_task_matter_on_canonical_artifact(tmp_path: Path):
     assert artifact["produced_by_task_id"] == "beta-reduce"
 
 
+def test_reducer_links_canonical_artifact_to_cited_sources(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        source_id = repo.add_source(conn, matter_scope="alpha", path="/alpha/source.pdf", sha256="a" * 64)
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="cited-reduce",
+                title="Cited reduce",
+                task_type="extract",
+                matter_scope="alpha",
+                source_dependencies=[source_id],
+            ),
+        )
+        worker_lease = acquire_lease(conn, task_id="cited-reduce", worker_id="worker-1")
+        candidate_id = record_worker_result(
+            conn,
+            task_id="cited-reduce",
+            lease_id=worker_lease,
+            worker_id="worker-1",
+            payload=cited_fact_packet("cited-reduce", source_id),
+        )
+        reducer_lease = acquire_lease(conn, task_id="cited-reduce", worker_id="reducer-1", lease_role="reducer")
+        result = reduce_candidate(conn, candidate_id=candidate_id, reducer_lease_id=reducer_lease, dry_run=False)
+        links = conn.execute("SELECT source_id FROM artifact_sources WHERE artifact_id = ?", (result["artifact_id"],)).fetchall()
+
+    assert [str(row["source_id"]) for row in links] == [source_id]
+
+
+def test_reducer_blocks_if_task_source_becomes_stale_after_candidate_recording(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        source_id = repo.add_source(conn, matter_scope="alpha", path="/alpha/source.pdf", sha256="a" * 64)
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="stale-before-reduce",
+                title="Stale before reduce",
+                task_type="extract",
+                matter_scope="alpha",
+                source_dependencies=[source_id],
+            ),
+        )
+        worker_lease = acquire_lease(conn, task_id="stale-before-reduce", worker_id="worker-1")
+        candidate_id = record_worker_result(
+            conn,
+            task_id="stale-before-reduce",
+            lease_id=worker_lease,
+            worker_id="worker-1",
+            payload=cited_fact_packet("stale-before-reduce", source_id),
+        )
+        reducer_lease = acquire_lease(conn, task_id="stale-before-reduce", worker_id="reducer-1", lease_role="reducer")
+        _ = conn.execute("UPDATE sources SET stale = 1 WHERE source_id = ?", (source_id,))
+        with pytest.raises(ReductionBlocked, match="stale artifacts|task-context schema validation|candidate failed reducer validations"):
+            reduce_candidate(conn, candidate_id=candidate_id, reducer_lease_id=reducer_lease, dry_run=False)
+        artifact_count = _count(conn, "SELECT COUNT(*) AS n FROM artifacts WHERE produced_by_task_id = 'stale-before-reduce'")
+
+    assert artifact_count == 0
+
+
+def test_extracted_text_artifact_citation_is_orientation_only_for_fact_finding(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        source_id = repo.add_source(conn, matter_scope="alpha", path="/alpha/source.pdf", sha256="a" * 64)
+        extraction_artifact = repo.add_artifact(
+            conn,
+            matter_scope="alpha",
+            path="/alpha/source.txt",
+            artifact_type="extracted_text",
+            content="OCR text",
+            source_ids=[source_id],
+        )
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="artifact-proof",
+                title="Artifact proof",
+                task_type="extract",
+                matter_scope="alpha",
+                artifact_dependencies=[extraction_artifact],
+            ),
+        )
+        lease_id = acquire_lease(conn, task_id="artifact-proof", worker_id="worker-1")
+        payload = cited_fact_packet("artifact-proof", source_id)
+        payload["citations"] = [
+            {
+                "citation_id": "cite-1",
+                "target_type": "artifact",
+                "target_id": extraction_artifact,
+                "locator": "ocr excerpt",
+                "quoted_text_hash": "a" * 64,
+            }
+        ]
+        candidate_id = record_worker_result(
+            conn,
+            task_id="artifact-proof",
+            lease_id=lease_id,
+            worker_id="worker-1",
+            payload=payload,
+        )
+        candidate = cast(Mapping[str, object], conn.execute("SELECT status, quarantined_reason FROM candidate_outputs WHERE candidate_id = ?", (candidate_id,)).fetchone())
+
+    assert candidate["status"] == "quarantined"
+    assert "orientation only" in str(candidate["quarantined_reason"])
+
+
 def test_reducer_imports_accepted_candidate_proposed_tasks(tmp_path: Path):
     db_path = init_db(tmp_path)
     with repo.db_connection(db_path) as conn:
@@ -450,6 +588,63 @@ def test_reducer_imports_accepted_candidate_proposed_tasks(tmp_path: Path):
     assert json.loads(str(followup["source_dependencies_json"])) == ["NAP-SRC-0001", "NAP-SRC-0002"]
     assert json.loads(str(gap_search["source_dependencies_json"])) == ["NAP-SRC-0001", "NAP-SRC-0002", "NAP-SRC-0003"]
     assert "deepseek/deepseek-v4-flash" in str(followup["provider_policy_json"])
+
+
+def test_reducer_rejects_proposed_cloud_ocr_tasks_as_unconfigured_external_tools(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        source_id = repo.add_source(conn, source_id="BETA-SRC-0001", matter_scope="beta", path="/beta/one.png", sha256="1" * 64)
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="parent-ocr-reduce",
+                title="Parent OCR reduce",
+                task_type="ocr_enhancement",
+                matter_scope="beta",
+                source_dependencies=[source_id],
+                provider_policy={"provider": "openrouter", "model": "deepseek/deepseek-v4-flash", "allow_fallback": False, "estimated_cost_usd": 0.0},
+            ),
+        )
+        packet = valid_packet("parent-ocr-reduce")
+        packet["proposed_tasks"] = [
+            {
+                "task_id": "cloud-ocr-followup",
+                "title": "Cloud-based OCR follow-up",
+                "task_type": "ocr_enhancement",
+                "matter_scope": "beta",
+                "stage": "S1",
+                "instructions": "Use Google Cloud Vision or AWS Textract to OCR BETA-SRC-0001.",
+                "source_dependencies": [source_id],
+                "provider_policy": {"allow_fallback": True, "capabilities": ["ocr", "document_processing"]},
+            }
+        ]
+        worker_lease = acquire_lease(conn, task_id="parent-ocr-reduce", worker_id="worker-1")
+        candidate_id = record_worker_result(
+            conn,
+            task_id="parent-ocr-reduce",
+            lease_id=worker_lease,
+            worker_id="worker-1",
+            payload=packet,
+        )
+        reducer_lease = acquire_lease(conn, task_id="parent-ocr-reduce", worker_id="reducer-1", lease_role="reducer")
+        result = reduce_candidate(conn, candidate_id=candidate_id, reducer_lease_id=reducer_lease, dry_run=False)
+        imported = conn.execute("SELECT 1 FROM tasks WHERE task_id = 'cloud-ocr-followup'").fetchone()
+        attention = cast(
+            Mapping[str, object],
+            conn.execute(
+                """
+                SELECT reason
+                FROM human_attention
+                WHERE target_type = 'proposed_task' AND target_id = 'cloud-ocr-followup'
+                ORDER BY attention_id DESC
+                LIMIT 1
+                """
+            ).fetchone(),
+        )
+
+    assert result["imported_tasks"] == []
+    assert imported is None
+    assert "external/cloud OCR is not a configured Atticus execution capability" in str(attention["reason"])
 
 
 def test_reducer_rejects_cross_matter_proposed_tasks_and_task_id_collisions(tmp_path: Path):

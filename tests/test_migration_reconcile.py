@@ -45,9 +45,9 @@ def test_reconcile_certifies_foundation_layers_and_unblocks_safe_stage4_work(tmp
         _ = conn.execute(
             """
             INSERT INTO extraction_records(extraction_id, source_id, artifact_id, method, coverage_status, confidence, metadata_json, created_at)
-            VALUES ('ext-a', ?, ?, 'text', 'complete', 0.99, '{}', ?)
+            VALUES ('ext-a', ?, ?, 'text', 'complete', 0.99, ?, ?)
             """,
-            (source_id, evidence_artifact, now),
+            (source_id, evidence_artifact, json.dumps({"source_sha256": "a" * 64}), now),
         )
         _ = conn.execute(
             """

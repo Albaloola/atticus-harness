@@ -258,6 +258,111 @@ def test_execute_local_work_order_rejects_blocked_reserved_or_held_provider_poli
     assert candidate_count == 0
 
 
+def _flash_downgrade_policy() -> dict[str, object]:
+    return {
+        "provider": "openrouter",
+        "model": "deepseek/deepseek-v4-flash",
+        "allow_fallback": False,
+        "estimated_cost_usd": 0.0,
+        "model_decision": {
+            "provider": "openrouter",
+            "model": "deepseek/deepseek-v4-flash",
+            "runtime": "openrouter",
+            "profile_id": "deepseek_flash_worker",
+            "decision_reason": "test-forged flash downgrade",
+            "decision_tier": "flash_worker",
+            "fallback_allowed": False,
+            "required_human_review": True,
+            "policy_fingerprint": "policy",
+            "input_fingerprint": "input",
+        },
+    }
+
+
+def test_execute_local_work_order_blocks_flash_downgrade_without_certification(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="authority-flash-downgrade",
+                title="Authority Flash downgrade",
+                task_type="authority_map",
+                stage=LegalStage.S0_SOURCE_INVENTORY,
+                provider_policy=_flash_downgrade_policy(),
+            ),
+        )
+        lease_id = acquire_lease(conn, task_id="authority-flash-downgrade", worker_id="worker-local")
+
+        with pytest.raises(WorkerExecutionBlocked, match="model downgrade blocked"):
+            _ = execute_local_work_order(
+                conn,
+                task_id="authority-flash-downgrade",
+                lease_id=lease_id,
+                worker_id="worker-local",
+                output_dir=tmp_path / "out",
+            )
+
+        task = cast(Mapping[str, object], conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'authority-flash-downgrade'").fetchone())
+        lease = cast(Mapping[str, object], conn.execute("SELECT status FROM leases WHERE lease_id = ?", (lease_id,)).fetchone())
+        attempts = _count(conn, "SELECT COUNT(*) AS n FROM worker_attempts WHERE task_id = 'authority-flash-downgrade'")
+        provider_runs = _count(conn, "SELECT COUNT(*) AS n FROM provider_runs WHERE task_id = 'authority-flash-downgrade'")
+
+    assert task["status"] == TaskStatus.BLOCKED
+    assert "model_downgrade_authorized" in str(task["blocked_reasons_json"])
+    assert lease["status"] == "failed"
+    assert attempts == 0
+    assert provider_runs == 0
+
+
+def test_execute_local_work_order_allows_flash_downgrade_only_with_task_certification(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="certified-authority-flash-downgrade",
+                title="Certified authority Flash downgrade",
+                task_type="authority_map",
+                stage=LegalStage.S0_SOURCE_INVENTORY,
+                provider_policy=_flash_downgrade_policy(),
+            ),
+        )
+        validation_id = repo.record_validation(
+            conn,
+            target_type="task",
+            target_id="certified-authority-flash-downgrade",
+            gate_name="model_downgrade_authorized",
+            passed=True,
+            details={"reason": "operator-certified test downgrade"},
+        )
+        _ = repo.add_certification(
+            conn,
+            subject_type="task",
+            subject_id="certified-authority-flash-downgrade",
+            certification_type="model_downgrade_authorized",
+            validator="operator",
+            validation_result_id=validation_id,
+            evidence={"reason": "operator-certified test downgrade"},
+        )
+        lease_id = acquire_lease(conn, task_id="certified-authority-flash-downgrade", worker_id="worker-local")
+
+        result = execute_local_work_order(
+            conn,
+            task_id="certified-authority-flash-downgrade",
+            lease_id=lease_id,
+            worker_id="worker-local",
+            output_dir=tmp_path / "out",
+        )
+
+        task = cast(Mapping[str, object], conn.execute("SELECT status FROM tasks WHERE task_id = 'certified-authority-flash-downgrade'").fetchone())
+        event_count = _count(conn, "SELECT COUNT(*) AS n FROM events WHERE event_type = 'model_downgrade_authorized.runtime_gate'")
+
+    assert result.candidate_id.startswith("cand-")
+    assert task["status"] == TaskStatus.REDUCER_PENDING
+    assert event_count == 1
+
+
 def test_execute_codex_work_order_requires_live_gate_before_dispatch(tmp_path: Path):
     db_path = init_db(tmp_path)
     adapter = FakeCodexAdapter(valid_packet("codex-policy-only"))

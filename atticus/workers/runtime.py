@@ -13,7 +13,9 @@ from dataclasses import dataclass
 import json
 import math
 from pathlib import Path
+import signal
 import sqlite3
+import threading
 from time import perf_counter
 from uuid import uuid4
 from typing import Protocol, cast
@@ -25,6 +27,7 @@ from atticus.core.events import utc_now
 from atticus.core.policies import TaskStatus
 from atticus.db import repo
 from atticus.providers.budget import BudgetExceeded, charge_budget, require_budget
+from atticus.providers.cache_observability import fingerprint_provider_policy
 from atticus.providers.live_readiness import check_live_provider_policy, live_openrouter_enabled, parse_estimated_cost_usd
 from atticus.providers.openrouter_failover import openrouter_client_for_policy, openrouter_failover_config_from_policy, openrouter_models_for_policy, primary_model_for_policy, safe_openrouter_error_message
 from atticus.providers.openrouter import OpenRouterError, validate_cache_usage_tokens, validate_usage_tokens
@@ -37,6 +40,28 @@ from atticus.workers.work_order import build_work_order
 
 class WorkerExecutionBlocked(RuntimeError):
     """Raised when a requested worker execution is outside the safe runtime."""
+
+
+class ProviderCallTimeout(TimeoutError):
+    """Raised when a live provider call exceeds the harness wall-clock deadline."""
+
+
+OPENROUTER_DEFAULT_TIMEOUT_SECONDS = 180.0
+PRO_REQUIRED_RUNTIME_STAGES = {"S5", "S6", "S7", "S8", "S9"}
+PRO_REQUIRED_RUNTIME_TASK_TYPES = {
+    "matter_orchestration",
+    "case_strategy_planning",
+    "contradiction_analysis",
+    "authority_map",
+    "authority_audit",
+    "hostile_opponent_review",
+    "hostile_review",
+    "final_quality_gate",
+    "draft_preparation",
+    "reducer_decision_support",
+    "high_risk_procedural_analysis",
+}
+MODEL_DOWNGRADE_CERTIFICATION = "model_downgrade_authorized"
 
 
 @dataclass(frozen=True)
@@ -96,6 +121,7 @@ def execute_local_work_order(
         raise WorkerExecutionBlocked(reason)
 
     provider_policy = _load_provider_policy_after_lease(conn, task=task, lease_id=lease_id, task_id=task_id)
+    _enforce_model_decision_runtime_gate(conn, task=task, task_id=task_id, lease_id=lease_id, provider_policy=provider_policy)
     _block_unsafe_local_stub_provider_policy(conn, lease_id=lease_id, task_id=task_id, provider_policy=provider_policy)
     require_cost_estimate = _requires_local_cost_estimate(conn, task=task)
     try:
@@ -140,7 +166,10 @@ def execute_local_work_order(
             latency_ms=latency_ms,
             fallback_allowed=bool(provider_policy.get("allow_fallback") or False),
             fallback_policy_result="local_stub_not_provider_backed",
-            raw_usage={"adapter": adapter_name, "output_path": str(output_path)},
+            context_pack_id=order.context_pack_id,
+            context_fingerprint=str(order.context_pack.get("fingerprint") or ""),
+            provider_policy_fingerprint=fingerprint_provider_policy(provider_policy),
+            raw_usage={"adapter": adapter_name, "output_path": str(output_path), "provider_policy": dict(provider_policy)},
         )
         for scope_type, scope_id in (("task", task_id), ("stage", str(task["stage"])), ("matter", str(task["matter_scope"]))):
             _ = charge_budget(conn, scope_type=scope_type, scope_id=scope_id, amount_usd=estimated_cost, provider_run_id=provider_run_id)
@@ -252,6 +281,7 @@ def execute_openrouter_work_order(
         raise WorkerExecutionBlocked(reason)
 
     provider_policy = _load_provider_policy_after_lease(conn, task=task, lease_id=lease_id, task_id=task_id)
+    _enforce_model_decision_runtime_gate(conn, task=task, task_id=task_id, lease_id=lease_id, provider_policy=provider_policy)
     live_policy = check_live_provider_policy(provider_policy, env=env)
     if not live_policy.allowed:
         reason = "; ".join(live_policy.reasons)
@@ -277,7 +307,7 @@ def execute_openrouter_work_order(
     try:
         max_tokens = _positive_int_provider_setting(provider_policy, "max_tokens", default=16000)
         temperature = _nonnegative_float_provider_setting(provider_policy, "temperature", default=0.1)
-        timeout_seconds = _positive_float_provider_setting(provider_policy, "timeout_seconds", default=None)
+        timeout_seconds = _positive_float_provider_setting(provider_policy, "timeout_seconds", default=OPENROUTER_DEFAULT_TIMEOUT_SECONDS)
     except ValueError as exc:
         reason = str(exc)
         _block_preflight_after_lease(conn, lease_id=lease_id, task_id=task_id, reason=reason)
@@ -297,19 +327,24 @@ def execute_openrouter_work_order(
         configured_models = failover_config.models if failover_config is not None else openrouter_models_for_policy(provider_policy, env=env, live=True)
         requested = ProviderRequest("openrouter", primary_model_for_policy(provider_policy, env=env, live=True), allow_fallback=False)
         provider_client = openrouter_client_for_policy(provider_policy, env=env, live=True, client=client, event_sink=openrouter_failover_events.append)
+        # Persist the lease, worker_attempt.started event, and context pack before
+        # entering provider I/O. Otherwise a long provider wait looks idle to
+        # operators and a process crash can erase the in-flight audit trail.
+        conn.commit()
         try:
             response = cast(
                 object,
-                DirectOpenRouterAdapter(client=provider_client, timeout_seconds=timeout_seconds).run(
-                    order.as_dict(),
+                _run_openrouter_adapter_with_deadline(
+                    DirectOpenRouterAdapter(client=provider_client, timeout_seconds=timeout_seconds),
+                    timeout_seconds=timeout_seconds,
+                    work_order=order.as_dict(),
                     model=requested.model,
                     max_tokens=max_tokens,
                     temperature=temperature,
                 ),
             )
-        except OpenRouterError as exc:
-            safe_error = safe_openrouter_error_message(exc)
-            reason = f"OpenRouter provider call failed after dispatch: {safe_error}"
+        except ProviderCallTimeout as exc:
+            reason = str(exc)
             provider_run_id = _record_openrouter_post_dispatch_failure(
                 conn,
                 task=task,
@@ -322,10 +357,42 @@ def execute_openrouter_work_order(
                 started=started,
                 adapter_name=adapter_name,
                 reason=reason,
-                fallback_policy_result="provider_error",
+                fallback_policy_result="provider_timeout",
                 fallback_allowed=openrouter_pool_enabled,
                 raw_usage=_openrouter_runtime_usage(
-                    usage={"error": safe_error},
+                    usage={"error": "provider_timeout", "timeout_seconds": timeout_seconds},
+                    adapter_name=adapter_name,
+                    output_path=output_path,
+                    requested_model=requested.model,
+                    configured_models=configured_models,
+                    openrouter_failover_events=openrouter_failover_events,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    timeout_seconds=timeout_seconds,
+                    provider_policy=provider_policy,
+                ),
+            )
+            raise WorkerExecutionBlocked(reason) from exc
+        except OpenRouterError as exc:
+            safe_error = safe_openrouter_error_message(exc)
+            reason = f"OpenRouter provider call failed after dispatch: {safe_error}"
+            timeout_failure = _looks_like_openrouter_timeout(safe_error)
+            provider_run_id = _record_openrouter_post_dispatch_failure(
+                conn,
+                task=task,
+                task_id=task_id,
+                lease_id=lease_id,
+                attempt_id=attempt_id,
+                output_path=output_path,
+                requested=requested,
+                estimated_cost=estimated_cost,
+                started=started,
+                adapter_name=adapter_name,
+                reason=reason,
+                fallback_policy_result="provider_timeout" if timeout_failure else "provider_error",
+                fallback_allowed=openrouter_pool_enabled,
+                raw_usage=_openrouter_runtime_usage(
+                    usage={"error": safe_error, "error_type": "provider_timeout" if timeout_failure else "provider_error"},
                     adapter_name=adapter_name,
                     output_path=output_path,
                     requested_model=requested.model,
@@ -544,6 +611,11 @@ def execute_openrouter_work_order(
             latency_ms=latency_ms,
             fallback_allowed=openrouter_pool_enabled,
             fallback_policy_result=policy_decision.result,
+            context_pack_id=order.context_pack_id,
+            context_fingerprint=str(order.context_pack.get("fingerprint") or ""),
+            provider_policy_fingerprint=fingerprint_provider_policy(provider_policy),
+            configured_models=configured_models,
+            failover_events=openrouter_failover_events,
             raw_usage=cast(dict[str, object], _json_safe_payload(
                 _openrouter_runtime_usage(
                     usage=usage,
@@ -632,6 +704,7 @@ def execute_codex_work_order(
         raise WorkerExecutionBlocked(reason)
 
     provider_policy = _load_provider_policy_after_lease(conn, task=task, lease_id=lease_id, task_id=task_id)
+    _enforce_model_decision_runtime_gate(conn, task=task, task_id=task_id, lease_id=lease_id, provider_policy=provider_policy)
     requested = ProviderRequest(
         str(provider_policy.get("provider") or ""),
         str(provider_policy.get("model") or ""),
@@ -886,6 +959,54 @@ def _charge_budget_scopes(
         _ = charge_budget(conn, scope_type=scope_type, scope_id=scope_id, amount_usd=amount_usd, provider_run_id=provider_run_id)
 
 
+def _run_openrouter_adapter_with_deadline(
+    adapter: DirectOpenRouterAdapter,
+    *,
+    timeout_seconds: float,
+    work_order: dict[str, object],
+    model: str,
+    max_tokens: int,
+    temperature: float,
+) -> object:
+    """Run OpenRouter with a total wall-clock deadline in CLI/main-thread use.
+
+    The underlying HTTP client timeout is still useful for stalled sockets, but
+    legal harness workers need a harder dispatch boundary so a long provider
+    generation cannot leave leases looking alive forever.
+    """
+
+    if (
+        threading.current_thread() is not threading.main_thread()
+        or not hasattr(signal, "SIGALRM")
+        or not hasattr(signal, "setitimer")
+        or not hasattr(signal, "getitimer")
+    ):
+        return adapter.run(work_order, model=model, max_tokens=max_tokens, temperature=temperature)
+
+    old_timer = signal.getitimer(signal.ITIMER_REAL)
+    if old_timer[0] > 0:
+        return adapter.run(work_order, model=model, max_tokens=max_tokens, temperature=temperature)
+
+    old_handler = signal.getsignal(signal.SIGALRM)
+
+    def _timeout_handler(signum: int, frame: object) -> None:
+        del signum, frame
+        raise ProviderCallTimeout(f"OpenRouter provider call timed out after {timeout_seconds:g}s")
+
+    signal.signal(signal.SIGALRM, _timeout_handler)
+    signal.setitimer(signal.ITIMER_REAL, timeout_seconds)
+    try:
+        return adapter.run(work_order, model=model, max_tokens=max_tokens, temperature=temperature)
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0.0)
+        signal.signal(signal.SIGALRM, old_handler)
+
+
+def _looks_like_openrouter_timeout(error_message: str) -> bool:
+    normalized = " ".join(error_message.lower().split())
+    return "timed out" in normalized or "timeout" in normalized
+
+
 def _record_openrouter_post_dispatch_failure(
     conn: sqlite3.Connection,
     *,
@@ -912,6 +1033,9 @@ def _record_openrouter_post_dispatch_failure(
 
     response = response or {}
     usage_payload = dict(raw_usage or {})
+    nested_usage = usage_payload.get("usage")
+    if isinstance(nested_usage, Mapping) and "error_type" in nested_usage:
+        usage_payload["error_type"] = nested_usage["error_type"]
     usage_payload.update(
         {
             "adapter": adapter_name,
@@ -1019,6 +1143,8 @@ def _openrouter_runtime_usage(
         "model_profile_id": provider_policy.get("model_profile_id", ""),
         "model_pool_id": provider_policy.get("model_pool_id", ""),
         "resolved_model": provider_policy.get("resolved_model", {}),
+        "provider_policy": dict(provider_policy),
+        "provider_policy_fingerprint": fingerprint_provider_policy(provider_policy),
         "raw": response.get("raw", {}),
     }
 
@@ -1113,6 +1239,81 @@ def _load_provider_policy_after_lease(
 
 def _load_json_value(text: str) -> object:
     return json.loads(text)
+
+
+def _enforce_model_decision_runtime_gate(
+    conn: sqlite3.Connection,
+    *,
+    task: Mapping[str, object],
+    task_id: str,
+    lease_id: str,
+    provider_policy: Mapping[str, object],
+) -> None:
+    """Turn model-decision audit flags into executable runtime gates."""
+
+    decision_raw = provider_policy.get("model_decision")
+    decision = decision_raw if isinstance(decision_raw, Mapping) else {}
+    decision_tier = str(decision.get("decision_tier") or "").strip()
+    decision_reason = str(decision.get("decision_reason") or provider_policy.get("model_decision_reason") or "model decision blocked execution")
+    if bool(provider_policy.get("blocked")) or decision_tier == "blocked":
+        _block_preflight_after_lease(conn, lease_id=lease_id, task_id=task_id, reason=decision_reason)
+        raise WorkerExecutionBlocked(decision_reason)
+
+    provider = str(provider_policy.get("provider") or "").strip()
+    model = str(provider_policy.get("model") or "").strip()
+    flash_policy_for_pro_work = (
+        provider == "openrouter"
+        and model == "deepseek/deepseek-v4-flash"
+        and _task_requires_pro_runtime(task)
+    )
+    flagged_flash_downgrade = (
+        decision_tier == "flash_worker"
+        and bool(decision.get("required_human_review"))
+        and _task_requires_pro_runtime(task)
+    )
+    if not flash_policy_for_pro_work and not flagged_flash_downgrade:
+        return
+    if _has_active_task_certification(conn, task_id=task_id, certification_type=MODEL_DOWNGRADE_CERTIFICATION):
+        repo.emit_event(
+            conn,
+            "model_downgrade_authorized.runtime_gate",
+            matter_scope=str(task["matter_scope"]),
+            payload={
+                "task_id": task_id,
+                "stage": str(task["stage"]),
+                "task_type": str(task["task_type"]),
+                "provider": provider,
+                "model": model,
+                "decision_tier": decision_tier,
+            },
+        )
+        return
+    reason = (
+        "model downgrade blocked: Pro-required legal work cannot execute on "
+        f"{model or 'an unspecified model'} without task certification {MODEL_DOWNGRADE_CERTIFICATION}"
+    )
+    _block_preflight_after_lease(conn, lease_id=lease_id, task_id=task_id, reason=reason)
+    raise WorkerExecutionBlocked(reason)
+
+
+def _task_requires_pro_runtime(task: Mapping[str, object]) -> bool:
+    return str(task["stage"] or "") in PRO_REQUIRED_RUNTIME_STAGES or str(task["task_type"] or "") in PRO_REQUIRED_RUNTIME_TASK_TYPES
+
+
+def _has_active_task_certification(conn: sqlite3.Connection, *, task_id: str, certification_type: str) -> bool:
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM certifications
+        WHERE subject_type = 'task'
+          AND subject_id = ?
+          AND certification_type = ?
+          AND status = 'active'
+        LIMIT 1
+        """,
+        (task_id, certification_type),
+    ).fetchone()
+    return row is not None
 
 
 def _block_preflight_after_lease(conn: sqlite3.Connection, *, lease_id: str, task_id: str, reason: str) -> None:

@@ -353,6 +353,25 @@ def test_smart_model_policy_routes_flash_pro_and_codex_with_audit_fingerprints()
         assert resolved["model"] == decision["model"]
 
 
+def test_smart_model_policy_blocks_flash_override_for_pro_required_work():
+    policy = default_smart_model_policy()
+
+    resolved = smart_provider_policy_for_route(
+        policy,
+        layer="verifier",
+        stage="S9",
+        task_type="final_quality_gate",
+        task_id="final-gate",
+        operator_override="flash",
+    )
+
+    decision = _mapping_value(resolved["model_decision"])
+    assert resolved["blocked"] is True
+    assert resolved["provider"] == "blocked"
+    assert decision["decision_tier"] == "blocked"
+    assert "Flash downgrade blocked" in str(resolved["model_decision_reason"])
+
+
 def test_smart_model_policy_keeps_codex_exact_route_only():
     policy = default_smart_model_policy()
 

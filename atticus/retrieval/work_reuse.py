@@ -3,10 +3,70 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 import sqlite3
 from typing import cast
 
+from atticus.db import repo
 from atticus.retrieval.rank import lexical_score
+
+
+@dataclass(frozen=True)
+class ReuseDecision:
+    reusable: bool
+    reason: str
+    trusted_as_proof: bool = False
+    orientation_allowed: bool = True
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "reusable": self.reusable,
+            "reason": self.reason,
+            "trusted_as_proof": self.trusted_as_proof,
+            "orientation_allowed": self.orientation_allowed,
+        }
+
+
+def validate_reusable_step(conn: sqlite3.Connection, step_id: str) -> ReuseDecision:
+    row = conn.execute("SELECT * FROM work_run_steps WHERE work_run_step_id = ?", (step_id,)).fetchone()
+    if row is None:
+        return ReuseDecision(False, "work-run step not found", orientation_allowed=False)
+    step = {str(key): row[key] for key in row.keys()}
+    matter_scope = str(step["matter_scope"])
+    if str(step["status"]) != "complete":
+        return ReuseDecision(False, f"step status is {step['status']}", orientation_allowed=False)
+    task_id = _optional_id(step, "task_id")
+    if task_id:
+        task = conn.execute("SELECT status, matter_scope FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
+        if task is None:
+            return ReuseDecision(False, "linked task missing", orientation_allowed=False)
+        if str(task["matter_scope"]) != matter_scope:
+            return ReuseDecision(False, "linked task belongs to another matter", orientation_allowed=False)
+        if str(task["status"]) not in {"complete", "reducer_pending"}:
+            return ReuseDecision(False, f"linked task is not complete: {task['status']}", orientation_allowed=True)
+    artifact_id = _optional_id(step, "artifact_id")
+    if artifact_id:
+        artifact_decision = _artifact_reuse_decision(conn, matter_scope=matter_scope, artifact_id=artifact_id)
+        if not artifact_decision.reusable:
+            return artifact_decision
+    candidate_id = _optional_id(step, "candidate_id")
+    if candidate_id:
+        candidate_decision = _candidate_reuse_decision(conn, matter_scope=matter_scope, candidate_id=candidate_id)
+        if not candidate_decision.reusable:
+            return candidate_decision
+    context_pack_id = _optional_id(step, "context_pack_id")
+    if context_pack_id:
+        context_decision = _same_matter_target_decision(conn, matter_scope=matter_scope, target_type="context_pack", target_id=context_pack_id)
+        if not context_decision.reusable:
+            return context_decision
+    provider_run_id = _optional_id(step, "provider_run_id")
+    if provider_run_id:
+        provider_decision = _same_matter_target_decision(conn, matter_scope=matter_scope, target_type="provider_run", target_id=provider_run_id)
+        if not provider_decision.reusable:
+            return provider_decision
+    if artifact_id:
+        return ReuseDecision(True, "same matter, validated artifact and source dependencies current", trusted_as_proof=True)
+    return ReuseDecision(True, "same matter complete step; reuse as orientation unless separately certified", trusted_as_proof=False)
 
 
 def find_reusable_artifacts(conn: sqlite3.Connection, matter_scope: str, goal: str) -> list[dict[str, object]]:
@@ -110,6 +170,79 @@ def explain_reuse_decision(conn: sqlite3.Connection, matter_scope: str, records:
             }
         )
     return {"matter_scope": matter_scope, "reuse_explanations": explanations}
+
+
+def _artifact_reuse_decision(conn: sqlite3.Connection, *, matter_scope: str, artifact_id: str) -> ReuseDecision:
+    row = conn.execute(
+        "SELECT matter_scope, stale, trust_status FROM artifacts WHERE artifact_id = ?",
+        (artifact_id,),
+    ).fetchone()
+    if row is None:
+        return ReuseDecision(False, "linked artifact missing", orientation_allowed=False)
+    if str(row["matter_scope"]) != matter_scope:
+        return ReuseDecision(False, "linked artifact belongs to another matter", orientation_allowed=False)
+    if int(row["stale"] or 0):
+        return ReuseDecision(False, "artifact stale", orientation_allowed=False)
+    if str(row["trust_status"]) not in {"validated", "certified"}:
+        return ReuseDecision(False, f"artifact trust_status is {row['trust_status']}", orientation_allowed=True)
+    stale_source = conn.execute(
+        """
+        SELECT s.source_id
+        FROM artifact_sources ars
+        JOIN sources s ON s.source_id = ars.source_id
+        WHERE ars.artifact_id = ? AND (s.stale = 1 OR s.matter_scope != ?)
+        LIMIT 1
+        """,
+        (artifact_id, matter_scope),
+    ).fetchone()
+    if stale_source is not None:
+        return ReuseDecision(False, f"artifact source dependency stale or cross-matter: {stale_source['source_id']}", orientation_allowed=False)
+    return ReuseDecision(True, "artifact current", trusted_as_proof=True)
+
+
+def _candidate_reuse_decision(conn: sqlite3.Connection, *, matter_scope: str, candidate_id: str) -> ReuseDecision:
+    row = conn.execute(
+        """
+        SELECT co.status, t.matter_scope
+        FROM candidate_outputs co
+        JOIN tasks t ON t.task_id = co.task_id
+        WHERE co.candidate_id = ?
+        """,
+        (candidate_id,),
+    ).fetchone()
+    if row is None:
+        return ReuseDecision(False, "linked candidate missing", orientation_allowed=False)
+    if str(row["matter_scope"]) != matter_scope:
+        return ReuseDecision(False, "linked candidate belongs to another matter", orientation_allowed=False)
+    if str(row["status"]) != "reduced":
+        return ReuseDecision(False, "candidate-only output is orientation-only and not trusted reusable work", orientation_allowed=True)
+    accepted = conn.execute(
+        "SELECT 1 FROM reducer_packets WHERE candidate_id = ? AND decision = 'accepted' LIMIT 1",
+        (candidate_id,),
+    ).fetchone()
+    if accepted is None:
+        return ReuseDecision(False, "reduced candidate lacks accepted reducer packet", orientation_allowed=True)
+    return ReuseDecision(True, "candidate was reduced and accepted", trusted_as_proof=False)
+
+
+def _same_matter_target_decision(
+    conn: sqlite3.Connection,
+    *,
+    matter_scope: str,
+    target_type: str,
+    target_id: str,
+) -> ReuseDecision:
+    target_matter = repo.matter_scope_for_target(conn, target_type=target_type, target_id=target_id)
+    if target_matter is None:
+        return ReuseDecision(False, f"linked {target_type} missing", orientation_allowed=False)
+    if target_matter != matter_scope:
+        return ReuseDecision(False, f"linked {target_type} belongs to another matter", orientation_allowed=False)
+    return ReuseDecision(True, f"linked {target_type} is same-matter", trusted_as_proof=False)
+
+
+def _optional_id(row: Mapping[str, object], key: str) -> str:
+    value = row.get(key)
+    return str(value) if value is not None and str(value) else ""
 
 
 def _rank(goal: str, rows: list[dict[str, object]], *, id_key: str) -> list[dict[str, object]]:

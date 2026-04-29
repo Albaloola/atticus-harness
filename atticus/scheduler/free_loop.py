@@ -63,6 +63,7 @@ def run_free_loop_once(
                 matter_scope=matter_scope,
                 reason=skip_reason,
             )
+            _commit_progress(conn)
             continue
         try:
             reducer_lease_id = acquire_lease(
@@ -85,6 +86,7 @@ def run_free_loop_once(
                 imported_tasks.extend(str(imported_task_id) for imported_task_id in cast(list[object], reducer_imported))
             else:
                 imported_tasks.extend(import_proposed_tasks_from_candidate(conn, candidate))
+            _commit_progress(conn)
         except (LeaseError, ReductionBlocked, ValueError, KeyError) as exc:
             reduction_errors.append({"candidate_id": candidate_id, "task_id": task_id, "error": str(exc)})
             _ = repo.record_human_attention(
@@ -99,6 +101,7 @@ def run_free_loop_once(
                 task_id=task_id,
                 reason=f"free loop reduction failed: {exc}",
             )
+            _commit_progress(conn)
 
     runnable = select_runnable_tasks(conn, capacity=capacity_effective)
     leased_tasks: list[str] = []
@@ -112,6 +115,7 @@ def run_free_loop_once(
         try:
             lease_id = acquire_lease(conn, task_id=task_id, worker_id=worker_id, seconds=900, dry_run=False)
             leased_tasks.append(task_id)
+            _commit_progress(conn)
             if not execute_workers:
                 continue
             if runtime == "local":
@@ -141,6 +145,7 @@ def run_free_loop_once(
             else:
                 raise ValueError(f"unsupported free loop runtime: {runtime}")
             executed_tasks.append(task_id)
+            _commit_progress(conn)
         except Exception as exc:
             if lease_id is not None:
                 _fail_active_lease_after_worker_exception(conn, lease_id=lease_id, task_id=task_id, reason=str(exc))
@@ -158,6 +163,7 @@ def run_free_loop_once(
                 task_id=task_id,
                 reason=f"free loop worker failed: {exc}",
             )
+            _commit_progress(conn)
 
     ok = not reduction_errors and not worker_errors
     _ = repo.emit_event(
@@ -185,6 +191,7 @@ def run_free_loop_once(
             "worker_errors": worker_errors,
         },
     )
+    _commit_progress(conn)
     return {
         "ok": ok,
         "capacity_requested": capacity_requested,
@@ -249,6 +256,12 @@ def _fail_active_lease_after_worker_exception(conn: sqlite3.Connection, *, lease
         matter_scope=repo.matter_scope_for_target(conn, target_type="task", target_id=task_id) or "unknown",
         payload={"lease_id": lease_id, "task_id": task_id, "reason": reason},
     )
+
+
+def _commit_progress(conn: sqlite3.Connection) -> None:
+    """Make long-running supervisor ticks externally observable and durable."""
+
+    conn.commit()
 
 
 def _report_failure_without_masking(conn: sqlite3.Connection, *, task_id: str, reason: str) -> None:

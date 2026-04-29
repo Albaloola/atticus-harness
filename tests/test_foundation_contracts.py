@@ -4,6 +4,7 @@ from typing import cast
 from collections.abc import Mapping
 from pathlib import Path
 import inspect
+import json
 import sqlite3
 
 import pytest
@@ -266,6 +267,29 @@ def test_scheduler_rechecks_blocked_tasks_after_dependency_is_satisfied(tmp_path
     assert [task["task_id"] for task in runnable] == ["recheck-blocked"]
     assert requeued["status"] == TaskStatus.QUEUED
     assert requeued["blocked_reasons_json"] == "[]"
+
+
+def test_scheduler_does_not_auto_requeue_terminal_runtime_blocker(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="provider-failed-blocked",
+                title="Provider failed blocked",
+                task_type="source_inventory",
+                status=TaskStatus.BLOCKED,
+            ),
+        )
+        _ = conn.execute(
+            "UPDATE tasks SET blocked_reasons_json = ? WHERE task_id = ?",
+            (json.dumps(["OpenRouter provider call failed after dispatch: OpenRouter HTTP 401"]), "provider-failed-blocked"),
+        )
+        runnable = select_runnable_tasks(conn, capacity=5)
+        task = cast(Mapping[str, object], conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'provider-failed-blocked'").fetchone())
+    assert runnable == []
+    assert task["status"] == TaskStatus.BLOCKED
+    assert "OpenRouter HTTP 401" in str(task["blocked_reasons_json"])
 
 
 def test_scheduler_fails_closed_on_malformed_provider_policy_cost(tmp_path: Path):

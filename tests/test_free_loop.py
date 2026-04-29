@@ -255,6 +255,13 @@ def test_free_loop_once_closes_active_lease_if_worker_crashes_before_cleanup(tmp
                 "reasoning_effort": reasoning_effort,
             }
         )
+        with repo.db_connection(db_path, read_only=True) as observer:
+            visible_lease = observer.execute(
+                "SELECT status FROM leases WHERE lease_id = ? AND task_id = ?",
+                (lease_id, task_id),
+            ).fetchone()
+        assert visible_lease is not None
+        assert visible_lease["status"] == "active"
         raise RuntimeError("simulated worker crash before cleanup")
 
     monkeypatch.setattr(free_loop_module, "execute_codex_work_order", fake_execute_codex_work_order)

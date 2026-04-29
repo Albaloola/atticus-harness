@@ -146,6 +146,47 @@ def test_coordinator_write_assigns_smart_model_decisions(tmp_path: Path, capsys)
     assert hostile_decision["decision_tier"] == "pro_orchestrator"
 
 
+def test_coordinator_draft_goal_binds_existing_sources_and_prerequisite_stages(tmp_path: Path, capsys):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        alpha_source = repo.add_source(conn, matter_scope="alpha", path="/alpha/source.pdf", sha256="a" * 64)
+        _ = repo.add_source(conn, matter_scope="beta", path="/beta/source.pdf", sha256="b" * 64)
+
+    assert (
+        cli_main(
+            [
+                "coordinator",
+                "plan",
+                "--db",
+                str(db_path),
+                "--matter",
+                "alpha",
+                "--goal",
+                "Draft a formal complaint",
+            ]
+        )
+        == 0
+    )
+    output = cast(Mapping[str, object], json.loads(capsys.readouterr().out))
+    tasks = cast(list[Mapping[str, object]], output["tasks"])
+    task_types = [str(task["task_type"]) for task in tasks]
+    source_dependencies = {source for task in tasks for source in cast(list[str], task["source_dependencies"])}
+
+    assert source_dependencies == {alpha_source}
+    assert task_types[:5] == [
+        "evidence_issue_map",
+        "production_mapping",
+        "chronology_event_extraction",
+        "issue_route_map",
+        "authority_map",
+    ]
+    draft = next(task for task in tasks if task["task_type"] == "draft_preparation")
+    draft_dependencies = cast(list[str], draft["task_dependencies"])
+    task_id_by_type = {str(task["task_type"]): str(task["task_id"]) for task in tasks}
+    assert task_id_by_type["chronology_event_extraction"] in draft_dependencies
+    assert task_id_by_type["authority_map"] in draft_dependencies
+
+
 def test_coordinator_respects_active_matter_profile_stage_filter(tmp_path: Path, capsys):
     db_path = init_db(tmp_path)
     stages = [

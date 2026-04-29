@@ -4,22 +4,65 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 import json
+import re
 import sqlite3
 
 from typing import cast
+from uuid import uuid4
+from atticus.core.events import utc_now
 from atticus.core.policies import TaskStatus, TrustStatus
 from atticus.db import repo
 from atticus.hooks import run_hooks
 from atticus.scheduler.lease import complete_lease, require_active_lease
 from atticus.validation.canonical_write_guard import assert_canonical_write_allowed
 from atticus.validation.gates import run_validation
-from atticus.workers.citation_context import allowed_citation_targets_for_task
+from atticus.workers.citation_context import allowed_citation_targets_for_task, proof_citation_targets_for_task
 from atticus.workers.result_parser import ResultPacketError, parse_result
 from atticus.workers.proposed_tasks import import_proposed_tasks_from_candidate
 
 
 class ReductionBlocked(RuntimeError):
     """Raised when a candidate cannot be reduced safely."""
+
+
+FOUNDATION_ARTIFACT_TYPES_BY_TASK_TYPE = {
+    "evidence_issue_map": "evidence_registry",
+    "evidence_triage": "evidence_registry",
+    "production_mapping": "production_crosswalk",
+    "evidence_organization_plan": "production_crosswalk",
+    "chronology_event_extraction": "chronology",
+    "issue_route_map": "issue_route_map",
+    "authority_map": "authority_map",
+    "draft_preparation": "draft",
+    "citation_audit": "citation_audit",
+    "hostile_opponent_review": "hostile_review",
+    "privacy_redaction_audit": "privacy_redaction_audit",
+    "final_quality_gate": "final_quality_gate",
+}
+
+MATTER_CERTIFICATIONS_BY_TASK_TYPE = {
+    "evidence_issue_map": "evidence_registry",
+    "evidence_triage": "evidence_registry",
+    "production_mapping": "production_mapping",
+    "evidence_organization_plan": "production_mapping",
+    "chronology_event_extraction": "chronology_citations",
+    "issue_route_map": "issue_route_map",
+    "authority_map": "authority_map",
+    "draft_preparation": "draft_preparation",
+    "citation_audit": "citation_audit",
+    "hostile_opponent_review": "hostile_review",
+    "privacy_redaction_audit": "privacy_redaction_audit",
+    "final_quality_gate": "final_quality_gate",
+}
+
+VALIDATED_CERTIFICATION_GATES = {"evidence_registry", "production_mapping", "chronology_citations"}
+EVIDENCE_TARGET_TYPES = {"source", "artifact", "authority", "chronology_event", "claim"}
+GENERIC_ARTIFACT_TYPES = {"", "markdown", "report", "draft", "reduced_result", "evidence_checklist"}
+DATE_RE = re.compile(
+    r"\b(?:\d{4}-\d{2}-\d{2}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|"
+    r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4})\b",
+    re.IGNORECASE,
+)
 
 
 def choose_candidate(candidate_ids: list[str]) -> str | None:
@@ -43,12 +86,18 @@ def reduce_candidate(
     if candidate["status"] != "candidate":
         raise ReductionBlocked(f"candidate {candidate_id} has status {candidate['status']}")
     task_id = str(candidate["task_id"])
-    task = cast(Mapping[str, object] | None, cast(object, conn.execute(
-        "SELECT matter_scope, stage, task_type, required_certifications_json FROM tasks WHERE task_id = ?",
+    task_row = cast(sqlite3.Row | None, cast(object, conn.execute(
+        """
+        SELECT task_id, matter_scope, stage, task_type, required_certifications_json,
+               source_dependencies_json, artifact_dependencies_json
+        FROM tasks
+        WHERE task_id = ?
+        """,
         (task_id,),
     ).fetchone()))
-    if task is None:
+    if task_row is None:
         raise ReductionBlocked(f"candidate {candidate_id} references unknown task: {task_id}")
+    task: dict[str, object] = dict(task_row)
     _ = require_active_lease(conn, lease_id=reducer_lease_id, task_id=task_id)
     assert_canonical_write_allowed(
         writer_role=writer_role,
@@ -65,10 +114,14 @@ def reduce_candidate(
         packet = parse_result(
             {str(key): value for key, value in cast(Mapping[object, object], payload).items()},
             allowed_citation_targets=allowed_citation_targets_for_task(conn, task_id=task_id),
+            proof_citation_targets=proof_citation_targets_for_task(conn, task_id=task_id),
         )
     except ResultPacketError as exc:
         raise ReductionBlocked(f"candidate failed task-context schema validation: {exc}") from exc
     proposed = packet.proposed_artifacts[0] if packet.proposed_artifacts else {}
+    source_dependencies = _load_string_list(str(task.get("source_dependencies_json") or "[]"))
+    artifact_dependencies = _load_string_list(str(task.get("artifact_dependencies_json") or "[]"))
+    artifact_type = _artifact_type_for_task(str(task["task_type"]), proposed)
     canonical_preview = {
         "candidate_id": candidate_id,
         "task_id": task_id,
@@ -78,7 +131,7 @@ def reduce_candidate(
         "dry_run": dry_run,
     }
     if dry_run:
-        return {**canonical_preview, "validations": ["reducer_packet_schema", "canonical_write_authorization"]}
+        return {**canonical_preview, "validations": ["reducer_packet_schema", "canonical_write_authorization", "stale_dependency"]}
 
     schema_validation = run_validation(
         conn,
@@ -92,7 +145,13 @@ def reduce_candidate(
         target_type="candidate",
         target_id=candidate_id,
     )
-    if not schema_validation.passed or not auth_validation.passed:
+    stale_validation = run_validation(
+        conn,
+        gate_name="stale_dependency",
+        target_type="task",
+        target_id=task_id,
+    )
+    if not schema_validation.passed or not auth_validation.passed or not stale_validation.passed:
         raise ReductionBlocked("candidate failed reducer validations")
     hook_outcomes = run_hooks(
         conn,
@@ -110,25 +169,27 @@ def reduce_candidate(
 
     _ = conn.execute("SAVEPOINT reducer_accept_candidate")
     try:
+        citation_source_ids = _citation_target_ids(packet.raw, "source") or source_dependencies
+        citation_artifact_dependency_ids = _dedupe_ordered([*artifact_dependencies, *_citation_target_ids(packet.raw, "artifact")])
         artifact_id = repo.add_artifact(
             conn,
             matter_scope=str(task["matter_scope"]),
             path=str(proposed.get("path") or f"canonical/{task_id}/{candidate_id}.json"),
-            artifact_type=str(proposed.get("artifact_type") or "reduced_result"),
+            artifact_type=artifact_type,
             stage=str(proposed.get("stage") or ""),
             trust_status=TrustStatus.VALIDATED,
             title=str(proposed.get("title") or f"Reduced result for {task_id}"),
-            content=json.dumps(
-                {
-                    "summary": packet.summary,
-                    "findings": packet.findings,
-                    "citations": packet.citations,
-                    "candidate_id": candidate_id,
-                },
-                sort_keys=True,
-                indent=2,
-            ),
+            content=_artifact_content(packet=packet.raw, proposed=proposed, candidate_id=candidate_id),
+            source_ids=citation_source_ids,
+            artifact_dependency_ids=citation_artifact_dependency_ids,
             produced_by_task_id=task_id,
+        )
+        graph_writes = _materialize_reducer_graph(
+            conn,
+            task=task,
+            artifact_id=artifact_id,
+            packet=packet.raw,
+            source_dependencies=source_dependencies,
         )
         reducer_packet_id = repo.record_reducer_packet(
             conn,
@@ -144,6 +205,13 @@ def reduce_candidate(
             (candidate_id,),
         )
         imported_tasks = import_proposed_tasks_from_candidate(conn, candidate)
+        certifications = _issue_completion_certification_if_safe(
+            conn,
+            task=task,
+            candidate_id=candidate_id,
+            artifact_id=artifact_id,
+            packet=packet.raw,
+        )
         complete_lease(conn, lease_id=reducer_lease_id, task_status=TaskStatus.COMPLETE)
     except Exception:
         _ = conn.execute("ROLLBACK TO SAVEPOINT reducer_accept_candidate")
@@ -156,6 +224,8 @@ def reduce_candidate(
         "artifact_id": artifact_id,
         "imported_tasks": imported_tasks,
         "reducer_packet_id": reducer_packet_id,
+        "graph_writes": graph_writes,
+        "certifications": certifications,
     }
 
 
@@ -164,3 +234,350 @@ def _load_string_list(text: str) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item) for item in cast(list[object], value) if str(item)]
+
+
+def _artifact_type_for_task(task_type: str, proposed: Mapping[str, object]) -> str:
+    proposed_type = str(proposed.get("artifact_type") or "").strip()
+    mapped = FOUNDATION_ARTIFACT_TYPES_BY_TASK_TYPE.get(task_type)
+    if mapped and proposed_type.lower() in GENERIC_ARTIFACT_TYPES:
+        return mapped
+    if mapped and task_type in {"evidence_issue_map", "production_mapping", "evidence_organization_plan"}:
+        return mapped
+    return proposed_type or mapped or "reduced_result"
+
+
+def _citation_target_ids(packet: Mapping[str, object], target_type: str) -> list[str]:
+    return _dedupe_ordered(
+        [
+            str(citation.get("target_id") or "")
+            for citation in _packet_items(packet, "citations")
+            if str(citation.get("target_type") or "") == target_type
+        ]
+    )
+
+
+def _dedupe_ordered(items: list[str]) -> list[str]:
+    return list(dict.fromkeys(item for item in items if item))
+
+
+def _artifact_content(*, packet: Mapping[str, object], proposed: Mapping[str, object], candidate_id: str) -> str:
+    return json.dumps(
+        {
+            "candidate_id": candidate_id,
+            "summary": packet.get("summary") or "",
+            "findings": packet.get("findings") or [],
+            "citations": packet.get("citations") or [],
+            "proposed_artifact": proposed,
+            "proposed_content": proposed.get("content") or "",
+        },
+        sort_keys=True,
+        indent=2,
+    )
+
+
+def _materialize_reducer_graph(
+    conn: sqlite3.Connection,
+    *,
+    task: Mapping[str, object],
+    artifact_id: str,
+    packet: Mapping[str, object],
+    source_dependencies: list[str],
+) -> list[dict[str, object]]:
+    task_type = str(task["task_type"])
+    matter_scope = str(task["matter_scope"])
+    writes: list[dict[str, object]] = []
+    if task_type in {"production_mapping", "evidence_organization_plan"}:
+        writes.extend(_ensure_production_mappings(conn, matter_scope=matter_scope, source_ids=source_dependencies, artifact_id=artifact_id))
+    if task_type == "chronology_event_extraction":
+        writes.extend(_materialize_chronology_events(conn, matter_scope=matter_scope, artifact_id=artifact_id, packet=packet))
+    if task_type == "issue_route_map":
+        writes.extend(_materialize_issue_route(conn, matter_scope=matter_scope, artifact_id=artifact_id, packet=packet))
+    return writes
+
+
+def _ensure_production_mappings(
+    conn: sqlite3.Connection,
+    *,
+    matter_scope: str,
+    source_ids: list[str],
+    artifact_id: str,
+) -> list[dict[str, object]]:
+    writes: list[dict[str, object]] = []
+    for source_id in source_ids:
+        existing = conn.execute(
+            """
+            SELECT mapping_id
+            FROM production_mappings
+            WHERE matter_scope = ? AND source_id = ? AND production_id = ?
+            LIMIT 1
+            """,
+            (matter_scope, source_id, source_id),
+        ).fetchone()
+        if existing is not None:
+            continue
+        row = conn.execute("SELECT path FROM sources WHERE source_id = ? AND matter_scope = ?", (source_id, matter_scope)).fetchone()
+        if row is None:
+            continue
+        mapping_id = f"prod-{uuid4().hex}"
+        _ = conn.execute(
+            """
+            INSERT INTO production_mappings(mapping_id, matter_scope, source_id, artifact_id,
+              production_id, produced_path, integrity_status, metadata_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, 'candidate', ?, ?)
+            """,
+            (
+                mapping_id,
+                matter_scope,
+                source_id,
+                artifact_id,
+                source_id,
+                str(row["path"] or ""),
+                json.dumps({"created_by": "reducer.production_mapping", "source_id": source_id}, sort_keys=True),
+                utc_now(),
+            ),
+        )
+        writes.append({"type": "production_mapping", "mapping_id": mapping_id, "source_id": source_id})
+    return writes
+
+
+def _materialize_chronology_events(
+    conn: sqlite3.Connection,
+    *,
+    matter_scope: str,
+    artifact_id: str,
+    packet: Mapping[str, object],
+) -> list[dict[str, object]]:
+    writes: list[dict[str, object]] = []
+    citations_by_id = _citations_by_id(packet)
+    for finding in _packet_items(packet, "findings"):
+        if str(finding.get("finding_type") or "") not in {"fact", "procedure", "inference", "contradiction"}:
+            continue
+        citation_ids = [str(item) for item in cast(list[object], finding.get("citation_ids") or []) if str(item)]
+        evidence_citations = [citations_by_id[item] for item in citation_ids if item in citations_by_id and _is_evidence_citation(citations_by_id[item])]
+        if not evidence_citations:
+            continue
+        description = str(finding.get("text") or "").strip()
+        if not description:
+            continue
+        event_id = f"chrono-{uuid4().hex}"
+        event_date, precision = _date_from_text(description)
+        now = utc_now()
+        _ = conn.execute(
+            """
+            INSERT INTO chronology_events(chronology_event_id, matter_scope, event_date,
+              event_date_precision, description, status, created_by_artifact_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, 'candidate', ?, ?, ?)
+            """,
+            (event_id, matter_scope, event_date, precision, description, artifact_id, now, now),
+        )
+        for citation in evidence_citations:
+            _add_graph_citation_span(conn, target_type="chronology_event", target_id=event_id, citation=citation)
+        writes.append({"type": "chronology_event", "chronology_event_id": event_id})
+    return writes
+
+
+def _materialize_issue_route(
+    conn: sqlite3.Connection,
+    *,
+    matter_scope: str,
+    artifact_id: str,
+    packet: Mapping[str, object],
+) -> list[dict[str, object]]:
+    writes: list[dict[str, object]] = []
+    citations_by_id = _citations_by_id(packet)
+    for finding in _packet_items(packet, "findings"):
+        citation_ids = [str(item) for item in cast(list[object], finding.get("citation_ids") or []) if str(item)]
+        evidence_citations = [citations_by_id[item] for item in citation_ids if item in citations_by_id and _is_evidence_citation(citations_by_id[item])]
+        if not evidence_citations:
+            continue
+        text = str(finding.get("text") or "").strip()
+        if not text:
+            continue
+        issue_id = f"issue-{uuid4().hex}"
+        now = utc_now()
+        _ = conn.execute(
+            """
+            INSERT INTO issues(issue_id, matter_scope, title, route, status, summary, created_at, updated_at)
+            VALUES (?, ?, ?, '', 'candidate', ?, ?, ?)
+            """,
+            (issue_id, matter_scope, text[:160], text, now, now),
+        )
+        claim_id = repo.add_claim(
+            conn,
+            matter_scope=matter_scope,
+            claim_text=text,
+            issue_id=issue_id,
+            support_status="candidate",
+            created_by_artifact_id=artifact_id,
+        )
+        for citation in evidence_citations:
+            _add_graph_citation_span(conn, target_type="claim", target_id=claim_id, citation=citation)
+        writes.append({"type": "issue_route", "issue_id": issue_id, "claim_id": claim_id})
+    return writes
+
+
+def _issue_completion_certification_if_safe(
+    conn: sqlite3.Connection,
+    *,
+    task: Mapping[str, object],
+    candidate_id: str,
+    artifact_id: str,
+    packet: Mapping[str, object],
+) -> list[dict[str, object]]:
+    task_type = str(task["task_type"])
+    certification_type = MATTER_CERTIFICATIONS_BY_TASK_TYPE.get(task_type)
+    if not certification_type:
+        return []
+    matter_scope = str(task["matter_scope"])
+    if _has_active_matter_certification(conn, matter_scope=matter_scope, certification_type=certification_type):
+        return []
+    blocker = _certification_blocker(certification_type=certification_type, packet=packet)
+    if blocker:
+        validation_id = repo.record_validation(
+            conn,
+            target_type="matter",
+            target_id=matter_scope,
+            gate_name=certification_type,
+            passed=False,
+            details={"reason": blocker, "task_id": task.get("task_id"), "candidate_id": candidate_id, "artifact_id": artifact_id},
+            severity="error",
+        )
+        _ = repo.record_human_attention(
+            conn,
+            target_type="task",
+            target_id=str(task.get("task_id") or ""),
+            severity="blocker",
+            reason=f"completion certification {certification_type} withheld: {blocker}",
+            matter_scope=matter_scope,
+        )
+        return [{"certification_type": certification_type, "withheld": True, "validation_result_id": validation_id, "reason": blocker}]
+    if certification_type in VALIDATED_CERTIFICATION_GATES:
+        outcome = run_validation(conn, gate_name=certification_type, target_type="matter", target_id=matter_scope)
+        if not outcome.passed:
+            _ = repo.record_human_attention(
+                conn,
+                target_type="task",
+                target_id=str(task.get("task_id") or ""),
+                severity="blocker",
+                reason=f"completion certification {certification_type} withheld: validation failed after reduction",
+                matter_scope=matter_scope,
+            )
+            return [{"certification_type": certification_type, "withheld": True, "validation_result_id": outcome.validation_result_id, "reason": "validation failed"}]
+        validation_id = outcome.validation_result_id
+    else:
+        validation_id = repo.record_validation(
+            conn,
+            target_type="matter",
+            target_id=matter_scope,
+            gate_name=certification_type,
+            passed=True,
+            details={
+                "task_id": task.get("task_id"),
+                "candidate_id": candidate_id,
+                "artifact_id": artifact_id,
+                "basis": "reducer accepted cited candidate packet",
+            },
+            severity="info",
+        )
+    certification_id = repo.add_certification(
+        conn,
+        subject_type="matter",
+        subject_id=matter_scope,
+        certification_type=certification_type,
+        validator="atticus-reducer",
+        validation_result_id=validation_id,
+        evidence={"task_id": str(task.get("task_id") or ""), "candidate_id": candidate_id, "artifact_id": artifact_id},
+    )
+    return [{"certification_id": certification_id, "certification_type": certification_type}]
+
+
+def _certification_blocker(*, certification_type: str, packet: Mapping[str, object]) -> str:
+    if _evidence_citation_count(packet) == 0:
+        return "reduced packet contains no evidence citations"
+    if certification_type == "authority_map" and not _has_cited_finding_type(packet, {"law", "procedure"}):
+        return "authority map contains no cited legal or procedural findings"
+    if certification_type == "chronology_citations" and not _has_cited_finding_type(packet, {"fact", "procedure", "inference", "contradiction"}):
+        return "chronology contains no cited event findings"
+    return ""
+
+
+def _has_active_matter_certification(conn: sqlite3.Connection, *, matter_scope: str, certification_type: str) -> bool:
+    row = conn.execute(
+        """
+        SELECT certification_id
+        FROM certifications
+        WHERE subject_type = 'matter'
+          AND subject_id = ?
+          AND certification_type = ?
+          AND status = 'active'
+        LIMIT 1
+        """,
+        (matter_scope, certification_type),
+    ).fetchone()
+    return row is not None
+
+
+def _packet_items(packet: Mapping[str, object], key: str) -> list[dict[str, object]]:
+    value = packet.get(key)
+    if not isinstance(value, list):
+        return []
+    return [dict(cast(Mapping[str, object], item)) for item in cast(list[object], value) if isinstance(item, Mapping)]
+
+
+def _citations_by_id(packet: Mapping[str, object]) -> dict[str, dict[str, object]]:
+    return {str(citation["citation_id"]): citation for citation in _packet_items(packet, "citations") if citation.get("citation_id")}
+
+
+def _is_evidence_citation(citation: Mapping[str, object]) -> bool:
+    return str(citation.get("target_type") or "") in EVIDENCE_TARGET_TYPES
+
+
+def _evidence_citation_count(packet: Mapping[str, object]) -> int:
+    return sum(1 for citation in _packet_items(packet, "citations") if _is_evidence_citation(citation))
+
+
+def _has_cited_finding_type(packet: Mapping[str, object], finding_types: set[str]) -> bool:
+    citations_by_id = _citations_by_id(packet)
+    for finding in _packet_items(packet, "findings"):
+        if str(finding.get("finding_type") or "") not in finding_types:
+            continue
+        citation_ids = [str(item) for item in cast(list[object], finding.get("citation_ids") or []) if str(item)]
+        if any(citation_id in citations_by_id and _is_evidence_citation(citations_by_id[citation_id]) for citation_id in citation_ids):
+            return True
+    return False
+
+
+def _date_from_text(text: str) -> tuple[str, str]:
+    match = DATE_RE.search(text)
+    if match is None:
+        return "", "unknown"
+    value = match.group(0)
+    if re.match(r"\d{4}-\d{2}-\d{2}$", value):
+        return value, "day"
+    return value, "text"
+
+
+def _add_graph_citation_span(
+    conn: sqlite3.Connection,
+    *,
+    target_type: str,
+    target_id: str,
+    citation: Mapping[str, object],
+) -> None:
+    target = str(citation.get("target_type") or "")
+    kwargs: dict[str, object] = {
+        "target_type": target_type,
+        "target_id": target_id,
+        "locator": str(citation.get("locator") or ""),
+    }
+    if target == "source":
+        kwargs["source_id"] = str(citation.get("target_id") or "")
+    elif target == "artifact":
+        kwargs["artifact_id"] = str(citation.get("target_id") or "")
+    elif target == "authority":
+        kwargs["authority_id"] = str(citation.get("target_id") or "")
+    else:
+        return
+    quote = str(citation.get("quote") or citation.get("excerpt") or "")
+    kwargs["quoted_text"] = quote
+    _ = repo.add_citation_span(conn, **kwargs)  # type: ignore[arg-type]

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+import hashlib
 import re
 import sqlite3
 from typing import cast
@@ -76,9 +77,10 @@ def plan_coordinator_work(
     clean_goal = " ".join(goal.split()).strip()
     if not clean_goal:
         raise ValueError("coordinator goal is required")
-    sources = _dedupe(source_ids)
+    explicit_sources = _dedupe(source_ids)
     artifacts = _dedupe(artifact_ids)
-    _validate_dependencies(conn, matter_scope=matter_scope, source_ids=sources, artifact_ids=artifacts)
+    _validate_dependencies(conn, matter_scope=matter_scope, source_ids=explicit_sources, artifact_ids=artifacts)
+    sources = explicit_sources or _default_source_dependencies_for_goal(conn, matter_scope=matter_scope, goal=clean_goal)
 
     templates, profile_skips = _templates_allowed_by_active_profile(
         conn,
@@ -86,8 +88,9 @@ def plan_coordinator_work(
         templates=_templates_for_goal(clean_goal),
     )
     goal_slug = _safe_component(clean_goal.lower())[:72] or "legal-work"
+    dependency_slug = _dependency_slug(sources=sources, artifacts=artifacts)
     task_id_by_key = {
-        template.key: _safe_component(f"{matter_scope}-coord-{goal_slug}-{template.key}") for template in templates
+        template.key: _safe_component(f"{matter_scope}-coord-{goal_slug}{dependency_slug}-{template.key}") for template in templates
     }
     tasks = [
         _task_from_template(
@@ -187,16 +190,18 @@ def plan_adaptive_work(
     clean_goal = " ".join(goal.split()).strip()
     if not clean_goal:
         raise ValueError("adaptive plan goal is required")
-    sources = _dedupe(source_ids)
+    explicit_sources = _dedupe(source_ids)
     artifacts = _dedupe(artifact_ids)
-    _validate_dependencies(conn, matter_scope=matter_scope, source_ids=sources, artifact_ids=artifacts)
+    _validate_dependencies(conn, matter_scope=matter_scope, source_ids=explicit_sources, artifact_ids=artifacts)
+    sources = explicit_sources or _default_source_dependencies_for_goal(conn, matter_scope=matter_scope, goal=clean_goal)
     templates, profile_skips = _templates_allowed_by_active_profile(
         conn,
         matter_scope=matter_scope,
         templates=_templates_for_goal(clean_goal),
     )
     goal_slug = _safe_component(clean_goal.lower())[:72] or "legal-work"
-    task_id_by_key = {template.key: _safe_component(f"{matter_scope}-adapt-{goal_slug}-{template.key}") for template in templates}
+    dependency_slug = _dependency_slug(sources=sources, artifacts=artifacts)
+    task_id_by_key = {template.key: _safe_component(f"{matter_scope}-adapt-{goal_slug}{dependency_slug}-{template.key}") for template in templates}
     task_payloads = [
         _task_from_template(
             template,
@@ -304,6 +309,46 @@ def _source_inventory_goal(goal: str) -> bool:
     )
 
 
+def _default_source_dependencies_for_goal(
+    conn: sqlite3.Connection,
+    *,
+    matter_scope: str,
+    goal: str,
+) -> tuple[str, ...]:
+    """Bind matter-local sources when an operator asks for matter-level work.
+
+    The coordinator is usually invoked with a matter and a goal, not a hand
+    listed source set. If sources already exist for the matter, an empty source
+    dependency list creates empty-context legal work that can only say "no
+    evidence supplied" and then dead-end downstream gates. Binding existing
+    matter sources keeps the work order self-contained while preserving matter
+    isolation and explicit citation allow-lists.
+    """
+
+    del goal  # reserved for future goal-specific source selection.
+    return tuple(
+        str(row["source_id"])
+        for row in conn.execute(
+            """
+            SELECT source_id
+            FROM sources
+            WHERE matter_scope = ? AND stale = 0
+            ORDER BY source_id
+            """,
+            (matter_scope,),
+        )
+    )
+
+
+def _dependency_slug(*, sources: tuple[str, ...], artifacts: tuple[str, ...]) -> str:
+    if not sources and not artifacts:
+        return ""
+    material = "\n".join(("source:" + source_id for source_id in sources)) + "\n" + "\n".join(
+        "artifact:" + artifact_id for artifact_id in artifacts
+    )
+    return f"-ctx-{hashlib.sha256(material.encode('utf-8')).hexdigest()[:12]}"
+
+
 def _source_inventory_templates() -> tuple[CoordinatorTaskTemplate, ...]:
     return (
         CoordinatorTaskTemplate(
@@ -357,9 +402,65 @@ def _drafting_templates() -> tuple[CoordinatorTaskTemplate, ...]:
             task_type="evidence_issue_map",
             title="Map evidence and issues before drafting",
             stage=LegalStage.S2_EVIDENCE_REGISTRY,
-            deliverable="A cited issue and evidence map identifying what can and cannot safely be alleged.",
+            deliverable=(
+                "A cited issue and evidence map identifying what can and cannot safely be alleged. "
+                "Return the primary proposed artifact as artifact_type='evidence_registry'."
+            ),
             validation_gates=("claim_evidence_support", "stale_dependency", "cross_matter_isolation"),
             risk_focus=("unsupported allegation", "missing source", "stale evidence"),
+        ),
+        CoordinatorTaskTemplate(
+            key="production-map",
+            role="production_organizer",
+            task_type="production_mapping",
+            title="Map source production order and evidence bundle identity",
+            stage=LegalStage.S3_PRODUCTION_STATUS,
+            deliverable=(
+                "A cited production/source crosswalk tying each source ID to stable bundle identity, display name, "
+                "evidence type, and order. Return the primary proposed artifact as artifact_type='production_crosswalk'."
+            ),
+            validation_gates=("production_mapping", "chain_of_custody", "cross_matter_isolation", "stale_dependency"),
+            depends_on=("evidence-map",),
+            risk_focus=("generated artifact treated as evidence", "custody break", "mislabelled source"),
+        ),
+        CoordinatorTaskTemplate(
+            key="chronology",
+            role="chronology_worker",
+            task_type="chronology_event_extraction",
+            title="Extract cited chronology before drafting",
+            stage=LegalStage.S4_BASELINE_CHRONOLOGY,
+            deliverable=(
+                "A date-ordered candidate chronology with source citations for every event, uncertainty for unclear "
+                "dates, and contradictions separated from facts."
+            ),
+            validation_gates=("chronology_citations", "date_precision", "stale_dependency"),
+            depends_on=("production-map",),
+            risk_focus=("unclear date", "missing locator", "source conflict"),
+        ),
+        CoordinatorTaskTemplate(
+            key="issue-route-map",
+            role="issue_mapper",
+            task_type="issue_route_map",
+            title="Map issues, routes, remedies, and proof gaps",
+            stage=LegalStage.S5_ISSUE_ROUTE_MAP,
+            deliverable=(
+                "A cited issue-route map separating university complaint, debt/accommodation, welfare/support, "
+                "disability/discrimination, and urgent protection routes."
+            ),
+            validation_gates=("claim_evidence_support", "chronology_citations", "cross_matter_isolation", "stale_dependency"),
+            depends_on=("chronology",),
+            risk_focus=("wrong forum", "unsupported remedy", "missing proof route"),
+        ),
+        CoordinatorTaskTemplate(
+            key="authority-map",
+            role="research_worker",
+            task_type="authority_map",
+            title="Map authorities and legal issues before drafting",
+            stage=LegalStage.S6_AUTHORITY_LAW_MAP,
+            deliverable="A jurisdiction-aware authority map with each proposition marked verified, uncertain, or needs research.",
+            validation_gates=("authority_jurisdiction", "authority_citation_format", "stale_dependency"),
+            depends_on=("issue-route-map",),
+            risk_focus=("wrong jurisdiction", "uncited legal proposition", "outdated law"),
         ),
         CoordinatorTaskTemplate(
             key="draft",
@@ -369,7 +470,7 @@ def _drafting_templates() -> tuple[CoordinatorTaskTemplate, ...]:
             stage=LegalStage.S8_DRAFT_PREPARATION,
             deliverable="A candidate draft that separates evidence-backed text from uncertain or strategic options.",
             validation_gates=("claim_evidence_support", "legal_citation_integrity", "privacy_redaction", "stale_dependency"),
-            depends_on=("evidence-map",),
+            depends_on=("evidence-map", "chronology", "authority-map"),
             risk_focus=("overstatement", "uncited claim", "forum mismatch", "privacy leak"),
         ),
         CoordinatorTaskTemplate(

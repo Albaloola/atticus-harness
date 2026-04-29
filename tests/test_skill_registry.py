@@ -72,6 +72,7 @@ def test_skills_for_task_recognises_scottish_legal_humanizer_intents():
         "scots-legal-humanizer"
     ]
     assert [skill.skill_id for skill in skills_for_task(task_type="extract", stage="S0", title="Source extraction")] == []
+    assert [skill.skill_id for skill in skills_for_task(task_type="evidence_issue_map", stage="S2", title="Map evidence before drafting")] == []
 
 
 def test_skill_cli_lists_and_shows_bundled_skill(capsys: pytest.CaptureFixture[str]):

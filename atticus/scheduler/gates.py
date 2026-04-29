@@ -17,6 +17,41 @@ class GateResult:
     reasons: list[str]
 
 
+AUTO_REQUEUE_BLOCKER_PREFIXES = (
+    "budget blocked for ",
+    "cross-matter artifact dependency:",
+    "cross-matter source dependency:",
+    "cross-matter task dependency:",
+    "inactive matter dependency:",
+    "incomplete task dependency:",
+    "malformed certification requirement",
+    "malformed task gate metadata",
+    "missing artifact dependency:",
+    "missing certification:",
+    "missing matter dependency:",
+    "missing source dependency:",
+    "missing task dependency:",
+    "provider policy for task ",
+    "stale artifact dependency:",
+    "stale source dependency:",
+    "task estimated cost ",
+)
+
+
+def blocked_task_auto_requeue_allowed(task_row: Mapping[str, object]) -> bool:
+    """Return true only for blocked tasks whose old blockers were gate-like.
+
+    Provider, runtime, quarantine, parser, and context-build failures must not
+    be retried merely because dependency gates pass; those need a repair event
+    or explicit operator/orchestrator requeue.
+    """
+
+    reasons = _blocked_reasons(task_row)
+    if not reasons:
+        return True
+    return all(any(reason.startswith(prefix) for prefix in AUTO_REQUEUE_BLOCKER_PREFIXES) for reason in reasons)
+
+
 def evaluate_task_gates(conn: sqlite3.Connection, task_row: Mapping[str, object]) -> GateResult:
     reasons: list[str] = []
     task_id = str(task_row["task_id"])
@@ -100,6 +135,16 @@ def evaluate_task_gates(conn: sqlite3.Connection, task_row: Mapping[str, object]
             reasons.append(f"missing certification: {subject_type}:{subject_id}:{cert_type}")
 
     return GateResult(allowed=not reasons, reasons=reasons)
+
+
+def _blocked_reasons(task_row: Mapping[str, object]) -> list[str]:
+    try:
+        value = json.loads(str(task_row["blocked_reasons_json"] or "[]"))
+    except (json.JSONDecodeError, KeyError, TypeError):
+        return ["malformed blocked_reasons_json"]
+    if not isinstance(value, list):
+        return ["malformed blocked_reasons_json"]
+    return [str(item) for item in cast(list[object], value) if str(item)]
 
 
 def _task_repair_limit_reached(conn: sqlite3.Connection, *, task_id: str) -> bool:

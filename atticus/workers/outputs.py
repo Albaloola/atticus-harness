@@ -12,7 +12,7 @@ from atticus.core.events import utc_now
 from atticus.core.policies import TaskStatus
 from atticus.db import repo
 from atticus.scheduler.lease import LeaseError, complete_lease, require_active_lease
-from atticus.workers.citation_context import allowed_citation_targets_for_task
+from atticus.workers.citation_context import allowed_citation_targets_for_task, proof_citation_targets_for_task
 from atticus.workers.result_parser import ResultPacketError, parse_result
 
 
@@ -33,7 +33,11 @@ def record_worker_result(
         if lease["worker_id"] != worker_id:
             raise LeaseError(f"lease {lease_id} belongs to worker {lease['worker_id']}, not {worker_id}")
         _record_blocked_external_action_requests(conn, task_id=task_id, worker_id=worker_id, payload=payload)
-        packet = parse_result(payload, allowed_citation_targets=allowed_citation_targets_for_task(conn, task_id=task_id))
+        packet = parse_result(
+            payload,
+            allowed_citation_targets=allowed_citation_targets_for_task(conn, task_id=task_id),
+            proof_citation_targets=proof_citation_targets_for_task(conn, task_id=task_id),
+        )
         if packet.task_id != task_id:
             raise ResultPacketError(f"worker result task_id {packet.task_id!r} does not match leased task {task_id!r}")
     except (LeaseError, ResultPacketError) as exc:

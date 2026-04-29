@@ -13,7 +13,7 @@ from atticus.core.policies import TaskStatus
 from atticus.db import repo
 from atticus.providers.budget import check_budget
 from atticus.scheduler.capacity import agent_capacity
-from atticus.scheduler.gates import evaluate_task_gates
+from atticus.scheduler.gates import blocked_task_auto_requeue_allowed, evaluate_task_gates
 
 
 def select_runnable_tasks(conn: sqlite3.Connection, *, capacity: int) -> list[Mapping[str, object]]:
@@ -33,6 +33,8 @@ def select_runnable_tasks(conn: sqlite3.Connection, *, capacity: int) -> list[Ma
         budget_reasons = budget_blockers(conn, task)
         if result.allowed and not budget_reasons:
             if str(task["status"]) == str(TaskStatus.BLOCKED):
+                if not blocked_task_auto_requeue_allowed(task):
+                    continue
                 _requeue_previously_blocked_task(conn, task_id=str(task["task_id"]))
                 task = cast(Mapping[str, object], conn.execute("SELECT * FROM tasks WHERE task_id = ?", (task["task_id"],)).fetchone())
             runnable.append(task)

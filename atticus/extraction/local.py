@@ -118,7 +118,7 @@ def repair_source_extractions(
 
     for row in rows:
         source_id = str(row["source_id"])
-        if _has_coverage(conn, source_id=source_id):
+        if _has_coverage(conn, source_id=source_id, source_sha256=str(row["sha256"])):
             already_covered += 1
             skipped.append({"source_id": source_id, "reason": "already covered"})
             continue
@@ -193,9 +193,10 @@ def repair_source_extractions(
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_text(normalized_text, encoding="utf-8")
             if artifact_id is None:
+                new_artifact_id = _available_extracted_artifact_id(conn, source_id=source_id, content_hash=content_hash)
                 artifact_id = repo.add_artifact(
                     conn,
-                    artifact_id=_stable_artifact_id(source_id),
+                    artifact_id=new_artifact_id,
                     matter_scope=matter_scope,
                     path=str(output_path),
                     artifact_type="extracted_text",
@@ -232,6 +233,7 @@ def repair_source_extractions(
                     engine=extracted.ocr_engine,
                     metadata={
                         **extracted.metadata,
+                        "confidence": _confidence_for_method(extracted.method),
                         "extracted_by": "atticus.local_extraction",
                         "extractor_tool": extracted.ocr_engine or extracted.metadata.get("extractor") or extracted.method,
                         "source_id": source_id,
@@ -344,15 +346,43 @@ def _select_sources(
     return [cast(Mapping[str, object], row) for row in rows]
 
 
-def _has_coverage(conn: sqlite3.Connection, *, source_id: str) -> bool:
-    for table, column in (
+def _has_coverage(conn: sqlite3.Connection, *, source_id: str, source_sha256: str) -> bool:
+    return _has_current_complete_coverage(conn, source_id=source_id, source_sha256=source_sha256)
+
+
+def _has_current_complete_coverage(conn: sqlite3.Connection, *, source_id: str, source_sha256: str) -> bool:
+    for table, id_column in (
         ("extraction_records", "extraction_id"),
         ("ocr_records", "ocr_id"),
         ("transcription_records", "transcription_id"),
     ):
-        if conn.execute(f"SELECT {column} FROM {table} WHERE source_id = ? LIMIT 1", (source_id,)).fetchone():
+        if _has_current_complete_coverage_for_table(conn, source_id=source_id, source_sha256=source_sha256, table=table, id_column=id_column):
             return True
     return False
+
+
+def _has_current_complete_coverage_for_table(
+    conn: sqlite3.Connection,
+    *,
+    source_id: str,
+    source_sha256: str,
+    table: str,
+    id_column: str,
+) -> bool:
+    row = conn.execute(
+        f"""
+        SELECT {id_column}
+        FROM {table} record
+        JOIN artifacts a ON a.artifact_id = record.artifact_id
+        WHERE record.source_id = ?
+          AND record.coverage_status = 'complete'
+          AND a.stale = 0
+          AND json_extract(record.metadata_json, '$.source_sha256') = ?
+        LIMIT 1
+        """,
+        (source_id, source_sha256),
+    ).fetchone()
+    return row is not None
 
 
 def _resolve_source_path(workspace: Path, raw_path: str) -> Path:
@@ -581,6 +611,13 @@ def _stable_artifact_id(source_id: str) -> str:
     return f"art-extracted-{safe_path_component(source_id)}"
 
 
+def _available_extracted_artifact_id(conn: sqlite3.Connection, *, source_id: str, content_hash: str) -> str:
+    stable = _stable_artifact_id(source_id)
+    if conn.execute("SELECT 1 FROM artifacts WHERE artifact_id = ?", (stable,)).fetchone() is None:
+        return stable
+    return f"{stable}-{content_hash[:12]}"
+
+
 def _ensure_extraction_record(
     conn: sqlite3.Connection,
     *,
@@ -590,7 +627,14 @@ def _ensure_extraction_record(
     confidence: float,
     metadata: dict[str, object],
 ) -> int:
-    if conn.execute("SELECT 1 FROM extraction_records WHERE source_id = ? LIMIT 1", (source_id,)).fetchone():
+    source_sha256 = str(metadata.get("source_sha256") or "")
+    if source_sha256 and _has_current_complete_coverage_for_table(
+        conn,
+        source_id=source_id,
+        source_sha256=source_sha256,
+        table="extraction_records",
+        id_column="extraction_id",
+    ):
         return 0
     _ = conn.execute(
         """
@@ -611,7 +655,14 @@ def _ensure_ocr_record(
     engine: str,
     metadata: dict[str, object],
 ) -> int:
-    if conn.execute("SELECT 1 FROM ocr_records WHERE source_id = ? LIMIT 1", (source_id,)).fetchone():
+    source_sha256 = str(metadata.get("source_sha256") or "")
+    if source_sha256 and _has_current_complete_coverage_for_table(
+        conn,
+        source_id=source_id,
+        source_sha256=source_sha256,
+        table="ocr_records",
+        id_column="ocr_id",
+    ):
         return 0
     _ = conn.execute(
         """

@@ -80,6 +80,7 @@ def parse_result(
     *,
     strict: bool = True,
     allowed_citation_targets: Mapping[str, set[str]] | None = None,
+    proof_citation_targets: Mapping[str, set[str]] | None = None,
 ) -> ParsedResultPacket:
     missing = sorted(RESULT_PACKET_REQUIRED_KEYS - set(payload))
     if missing:
@@ -97,7 +98,11 @@ def parse_result(
 
     citations = _validate_citations(_list_value(payload, "citations"), allowed_citation_targets=allowed_citation_targets)
     citations_by_id = {str(item["citation_id"]): item for item in citations}
-    findings = _validate_findings(_list_value(payload, "findings"), citations_by_id=citations_by_id)
+    findings = _validate_findings(
+        _list_value(payload, "findings"),
+        citations_by_id=citations_by_id,
+        proof_citation_targets=proof_citation_targets,
+    )
     proposed_artifacts = _validate_proposed_artifacts(_list_value(payload, "proposed_artifacts"))
     proposed_tasks = _validate_proposed_tasks(_list_value(payload, "proposed_tasks"))
     uncertainties = _mapping_list("uncertainties", _list_value(payload, "uncertainties"))
@@ -242,7 +247,12 @@ def _required_string(payload: Mapping[str, object], field: str) -> str:
     return value
 
 
-def _validate_findings(value: list[object], *, citations_by_id: Mapping[str, Mapping[str, object]]) -> list[dict[str, object]]:
+def _validate_findings(
+    value: list[object],
+    *,
+    citations_by_id: Mapping[str, Mapping[str, object]],
+    proof_citation_targets: Mapping[str, set[str]] | None,
+) -> list[dict[str, object]]:
     findings = _mapping_list("findings", value)
     seen: set[str] = set()
     for index, finding in enumerate(findings):
@@ -274,14 +284,19 @@ def _validate_findings(value: list[object], *, citations_by_id: Mapping[str, Map
         if finding_type in {"fact", "law", "procedure", "contradiction", "risk"} and reasoning_status not in {"uncertain", "needs_research"}:
             if not citation_id_list:
                 raise ResultPacketError(f"findings[{index}] {finding_type} findings require citations or an uncertain reasoning_status")
-            proof_targets = {
-                str(citations_by_id[citation_id].get("target_type") or "")
-                for citation_id in citation_id_list
-                if citation_id in citations_by_id
-            }
+            proof_targets = set()
+            for citation_id in citation_id_list:
+                if citation_id not in citations_by_id:
+                    continue
+                citation = citations_by_id[citation_id]
+                target_type = str(citation.get("target_type") or "")
+                target_id = str(citation.get("target_id") or "")
+                if proof_citation_targets is not None and target_id not in proof_citation_targets.get(target_type, set()):
+                    continue
+                proof_targets.add(target_type)
             if not proof_targets.intersection(EVIDENCE_CITATION_TARGET_TYPES):
                 raise ResultPacketError(
-                    f"findings[{index}] {finding_type} findings require source, artifact, authority, chronology_event, or claim evidence citations; memory and validation_result citations are orientation only"
+                    f"findings[{index}] {finding_type} findings require proof-allowed source, artifact, authority, chronology_event, or claim evidence citations; memory, validation_result, derivative extraction artifacts, stale artifacts, and rough drafts are orientation only"
                 )
     return findings
 

@@ -36,6 +36,10 @@ def import_proposed_tasks_from_candidate(conn: sqlite3.Connection, candidate: Ma
         task_map = cast(Mapping[object, object], raw_task)
         task_id = str(task_map.get("task_id") or f"{parent_task_id}-followup-{index}")
         proposed_matter_scope = str(task_map.get("matter_scope") or parent_matter_scope)
+        unsupported_reason = _unsupported_proposed_task_reason(task_map)
+        if unsupported_reason:
+            _record_rejected_proposed_task(conn, task_id=task_id, matter_scope=parent_matter_scope, reason=unsupported_reason)
+            continue
         if proposed_matter_scope != parent_matter_scope:
             _record_rejected_proposed_task(
                 conn,
@@ -150,6 +154,44 @@ def _load_parent_provider_policy(parent_task: Mapping[str, object] | None) -> di
     if not isinstance(raw, Mapping):
         return {}
     return {str(key): value for key, value in cast(Mapping[object, object], raw).items()}
+
+
+def _unsupported_proposed_task_reason(task_map: Mapping[object, object]) -> str:
+    """Reject worker-proposed work that Atticus cannot safely execute.
+
+    Proposed tasks are untrusted candidate output. A worker may correctly spot a
+    need for better OCR, but it must not turn that into a runnable "use Google
+    Cloud Vision/AWS Textract" task when no such bounded tool is configured.
+    """
+
+    policy = task_map.get("provider_policy")
+    capabilities: set[str] = set()
+    if isinstance(policy, Mapping):
+        raw_capabilities = policy.get("capabilities")
+        if isinstance(raw_capabilities, list):
+            capabilities.update(str(item).strip().lower() for item in raw_capabilities if str(item).strip())
+    task_type = str(task_map.get("task_type") or "").strip().lower()
+    text = " ".join(
+        str(task_map.get(key) or "")
+        for key in ("task_id", "title", "task_type", "stage", "instructions")
+    ).lower()
+    external_ocr_terms = (
+        "cloud-based ocr",
+        "cloud based ocr",
+        "google cloud vision",
+        "aws textract",
+        "azure vision",
+        "azure ai vision",
+        "external ocr service",
+        "third-party ocr",
+        "third party ocr",
+    )
+    if any(term in text for term in external_ocr_terms):
+        return "external/cloud OCR is not a configured Atticus execution capability; use local extraction/OCR repair or request human/tool setup"
+    if "ocr" in capabilities and task_type in {"ocr_enhancement", "structured_extraction"}:
+        if not any(term in text for term in ("local extraction", "local ocr", "tesseract", "atticus.local_extraction")):
+            return "proposed OCR task requested an unconfigured OCR capability instead of a bounded local Atticus OCR repair"
+    return ""
 
 
 def _task_exists(conn: sqlite3.Connection, task_id: str) -> bool:

@@ -74,6 +74,9 @@ def ensure_schema_current(conn: sqlite3.Connection) -> None:
     _ = conn.executescript(DDL)
     _ensure_columns(conn)
     _ensure_indexes(conn)
+    from atticus.db.doctor import require_schema_current
+
+    require_schema_current(conn)
     _ = conn.execute(
         "INSERT OR REPLACE INTO schema_meta(key, value) VALUES (?, ?)",
         ("schema_version", str(SCHEMA_VERSION)),

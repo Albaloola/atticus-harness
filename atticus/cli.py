@@ -24,12 +24,14 @@ from atticus.config import DEFAULT_DB_PATH
 from atticus.context.diagnostics import build_context_diagnostics
 from atticus.core.events import utc_now
 from atticus.core.matters import authorized_matter_from_env, require_matter_access
+from atticus.core.policies import TaskStatus
 from atticus.core.matter_profiles import (
     apply_matter_profile_adaptation,
     propose_matter_profile_adaptation,
     reset_matter_profile_to_default,
 )
 from atticus.db import repo
+from atticus.db.doctor import schema_check_json, verify_schema
 from atticus.extraction.local import repair_source_extractions
 from atticus.graph.certifications import CertificationBlocked, certify_subject
 from atticus.matter_seed import seed_matter_from_inventory, set_provider_policy_for_matter
@@ -56,7 +58,7 @@ from atticus.providers.policy import (
 from atticus.reducer.reducer import reduce_candidate
 from atticus.retrieval.ask import answer_question
 from atticus.retrieval.index import DEFAULT_INDEX_NAME, rebuild_search_index
-from atticus.scheduler.gates import evaluate_task_gates
+from atticus.scheduler.gates import blocked_task_auto_requeue_allowed, evaluate_task_gates
 from atticus.scheduler.capacity import MAX_PARALLEL_AGENT_CAPACITY, agent_capacity
 from atticus.scheduler.free_loop import run_free_loop
 from atticus.scheduler.lease import LeaseError, acquire_lease
@@ -500,6 +502,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     doctor = sub.add_parser("doctor", help="safety and schema diagnostics")
     _ = doctor.add_argument("--db", required=True)
+    _ = doctor.add_argument("--schema", action="store_true", help="run schema drift checks")
+    _ = doctor.add_argument("--repair", action="store_true", help="apply additive schema repair")
+    _ = doctor.add_argument("--write", action="store_true", help="allow doctor repair to write")
+    _ = doctor.add_argument("--json", dest="json_output", action="store_true")
 
     return parser
 
@@ -547,11 +553,21 @@ def _main(args: CliArgs) -> int:
         return 0
 
     if args.command == "status":
+        with repo.db_connection(args.db, read_only=True) as conn:
+            schema_check = schema_check_json(conn, db_path=args.db)
+        if not schema_check["ok"]:
+            print_json(schema_check)
+            return 2
         report = generate_status(args.db, matter_scope=args.matter)
         print_json(report.__dict__)
         return 0
 
     if args.command == "inspect":
+        with repo.db_connection(args.db, read_only=True) as conn:
+            schema_check = schema_check_json(conn, db_path=args.db)
+        if not schema_check["ok"]:
+            print_json(schema_check)
+            return 2
         print_json(inspect_record(args.db, record_type=args.type, record_id=args.id))
         return 0
 
@@ -1091,6 +1107,10 @@ def _main(args: CliArgs) -> int:
     if args.command == "maintenance":
         if args.action == "status":
             with repo.db_connection(args.db, read_only=True) as conn:
+                schema_check = schema_check_json(conn, db_path=args.db)
+                if not schema_check["ok"]:
+                    print_json(schema_check)
+                    return 2
                 result = maintenance_status(conn, matter_scope=None if args.matter == "global" else args.matter)
             print_json(result)
             return 0
@@ -1107,6 +1127,11 @@ def _main(args: CliArgs) -> int:
             return 0
         if args.action == "tick":
             with repo.db_connection(args.db, read_only=not args.write) as conn:
+                if not args.write:
+                    schema_check = schema_check_json(conn, db_path=args.db)
+                    if not schema_check["ok"]:
+                        print_json(schema_check)
+                        return 2
                 result = maintenance_tick(
                     conn,
                     matter_scope=args.matter,
@@ -1119,6 +1144,10 @@ def _main(args: CliArgs) -> int:
             if not args.maintenance_run_id:
                 raise ValueError("maintenance report requires --maintenance-run-id")
             with repo.db_connection(args.db, read_only=True) as conn:
+                schema_check = schema_check_json(conn, db_path=args.db)
+                if not schema_check["ok"]:
+                    print_json(schema_check)
+                    return 2
                 result = maintenance_report(conn, maintenance_run_id=args.maintenance_run_id)
             print_json(result)
             return 0
@@ -1403,7 +1432,23 @@ def _main(args: CliArgs) -> int:
         return 0
 
     if args.command == "doctor":
+        if args.repair:
+            if not args.write:
+                with repo.db_connection(args.db, read_only=True) as conn:
+                    schema_check = schema_check_json(conn, db_path=args.db)
+                print_json({"dry_run": True, "would_repair": not schema_check["ok"], **schema_check})
+                return 0 if schema_check["ok"] else 2
+            with repo.db_connection(args.db, read_only=False) as conn:
+                schema_check = schema_check_json(conn, db_path=args.db)
+            print_json({"dry_run": False, "repaired": schema_check["ok"], **schema_check})
+            return 0 if schema_check["ok"] else 2
+
         with repo.db_connection(args.db, read_only=True) as conn:
+            check = verify_schema(conn)
+            schema_check = check.as_dict(db_path=args.db)
+            if not check.ok:
+                print_json({"diagnostic_only": True, **schema_check})
+                return 2
             expired = [
                 _row_str(row, "lease_id")
                 for row in conn.execute(
@@ -1421,6 +1466,7 @@ def _main(args: CliArgs) -> int:
             {
                 "ok": True,
                 "diagnostic_only": True,
+                "schema_check": schema_check,
                 "schema_version": schema_version,
                 "tables": tables,
                 "expired_leases": expired,
@@ -1452,9 +1498,28 @@ def _schedule_preview(conn: sqlite3.Connection, *, capacity: int) -> tuple[list[
         blockers = result.reasons + budget_blockers(conn, task)
         if blockers:
             blocked.append({"task_id": _row_str(task, "task_id"), "title": _row_str(task, "title"), "reasons": blockers})
+        elif str(task["status"]) == str(TaskStatus.BLOCKED) and not blocked_task_auto_requeue_allowed(cast(Mapping[str, object], cast(object, task))):
+            blocked.append(
+                {
+                    "task_id": _row_str(task, "task_id"),
+                    "title": _row_str(task, "title"),
+                    "reasons": _blocked_reasons_for_preview(cast(Mapping[str, object], cast(object, task))),
+                }
+            )
         elif len(runnable) < capacity_requested:
             runnable.append(_task_summary(cast(Mapping[str, object], cast(object, task))))
     return runnable, blocked
+
+
+def _blocked_reasons_for_preview(task: Mapping[str, object]) -> list[str]:
+    try:
+        raw = json.loads(str(task["blocked_reasons_json"] or "[]"))
+    except (json.JSONDecodeError, KeyError, TypeError):
+        return ["malformed blocked_reasons_json"]
+    if not isinstance(raw, list):
+        return ["malformed blocked_reasons_json"]
+    reasons = [str(item) for item in cast(list[object], raw) if str(item)]
+    return reasons or ["blocked by prior terminal runtime failure"]
 
 
 def _set_model_policy_for_matter(

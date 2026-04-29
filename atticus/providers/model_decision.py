@@ -140,9 +140,18 @@ def decide_model(policy: ModelRoutingPolicyLike, decision_input: ModelDecisionIn
     target_tier = _target_tier(decision_input, explicit_profile=explicit_profile)
     reason = _decision_reason(decision_input, target_tier=target_tier, explicit_profile=explicit_profile)
     if target_tier == FLASH_TIER and _pro_required(decision_input):
-        reason = f"operator requested Flash for Pro-required work; human review required: {reason}"
-        profile = _profile_for_tier(policy, FLASH_TIER)
-        return _decision(profile, FLASH_TIER, reason, True, policy_fingerprint, input_fingerprint)
+        return ModelDecision(
+            provider="blocked",
+            model="blocked",
+            runtime="blocked",
+            profile_id="blocked",
+            decision_reason=f"Flash downgrade blocked: Pro-required legal work cannot run on Flash ({reason})",
+            decision_tier=BLOCKED_TIER,
+            fallback_allowed=False,
+            required_human_review=True,
+            policy_fingerprint=policy_fingerprint,
+            input_fingerprint=input_fingerprint,
+        )
     profile = _profile_for_tier(policy, target_tier)
     if profile is None:
         return ModelDecision(

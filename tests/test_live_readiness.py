@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 import json
 import sqlite3
+import time
 from pathlib import Path
 from typing import cast
 
@@ -21,7 +22,7 @@ from atticus.providers.openrouter import OpenRouterClient, OpenRouterError
 from atticus.scheduler import live_orchestrator
 from atticus.scheduler.lease import acquire_lease
 from atticus.scheduler.live_orchestrator import prepare_live_resume
-from atticus.workers.runtime import WorkerExecutionBlocked, execute_openrouter_work_order
+from atticus.workers.runtime import OPENROUTER_DEFAULT_TIMEOUT_SECONDS, WorkerExecutionBlocked, execute_openrouter_work_order
 from atticus.workers.result_parser import RESULT_PACKET_SCHEMA_VERSION
 
 
@@ -91,6 +92,7 @@ class FakeOpenRouterClient:
         self.model: str = model
         self.usage: dict[str, object] = usage or {"prompt_tokens": 120, "completion_tokens": 40, "total_tokens": 160}
         self.calls: list[dict[str, object]] = []
+        self.timeout: float = 0.0
 
     def chat_json(self, *, model: str, messages: list[dict[str, str]], max_tokens: int, temperature: float) -> dict[str, object]:
         self.calls.append({"model": model, "messages": messages, "max_tokens": max_tokens, "temperature": temperature})
@@ -500,6 +502,9 @@ def test_openrouter_runtime_records_candidate_and_provider_telemetry_with_fake_c
     assert provider_run["fallback_policy_result"] == "not_needed"
     assert provider_run["input_tokens"] == 120
     assert provider_run["output_tokens"] == 40
+    assert client.timeout == OPENROUTER_DEFAULT_TIMEOUT_SECONDS
+    raw_usage = _json_mapping(str(provider_run["raw_usage_json"]))
+    assert raw_usage["timeout_seconds"] == OPENROUTER_DEFAULT_TIMEOUT_SECONDS
     assert task["status"] == "reducer_pending"
     assert client.calls[0]["model"] == "deepseek/deepseek-v4-pro"
     messages = cast(list[dict[str, str]], client.calls[0]["messages"])
@@ -561,6 +566,105 @@ def test_openrouter_runtime_honors_deepseek_profile_generation_settings(tmp_path
     assert raw_usage["max_tokens"] == 777
     assert raw_usage["temperature"] == 0.0
     assert raw_usage["timeout_seconds"] == 33.0
+
+
+def test_openrouter_runtime_timeout_blocks_task_and_frees_lease(tmp_path: Path):
+    class SlowFakeOpenRouterClient(FakeOpenRouterClient):
+        @override
+        def chat_json(self, *, model: str, messages: list[dict[str, str]], max_tokens: int, temperature: float) -> dict[str, object]:
+            self.calls.append({"model": model, "messages": messages, "max_tokens": max_tokens, "temperature": temperature})
+            time.sleep(1.0)
+            return super().chat_json(model=model, messages=messages, max_tokens=max_tokens, temperature=temperature)
+
+    db_path = init_db(tmp_path)
+    client = SlowFakeOpenRouterClient(content=_provider_packet("slow-openrouter"))
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="slow-openrouter",
+                title="Slow OpenRouter",
+                task_type="extract",
+                provider_policy={
+                    "provider": "openrouter",
+                    "model": "deepseek/deepseek-v4-pro",
+                    "allow_fallback": False,
+                    "estimated_cost_usd": 0.0,
+                    "timeout_seconds": 0.01,
+                },
+            ),
+        )
+        lease_id = acquire_lease(conn, task_id="slow-openrouter", worker_id="openrouter-worker")
+        with pytest.raises(WorkerExecutionBlocked, match="timed out"):
+            _ = execute_openrouter_work_order(
+                conn,
+                task_id="slow-openrouter",
+                lease_id=lease_id,
+                worker_id="openrouter-worker",
+                output_dir=tmp_path / "out",
+                client=client,
+                env={"OPENROUTER_API_KEY": "sk-test", "ATTICUS_ENABLE_LIVE_OPENROUTER": "1"},
+                allow_live=True,
+            )
+        lease = cast(Mapping[str, object], conn.execute("SELECT status FROM leases WHERE lease_id = ?", (lease_id,)).fetchone())
+        attempt = cast(Mapping[str, object], conn.execute("SELECT status, error_json FROM worker_attempts WHERE task_id = 'slow-openrouter'").fetchone())
+        task = cast(Mapping[str, object], conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'slow-openrouter'").fetchone())
+        provider_run = cast(Mapping[str, object], conn.execute("SELECT fallback_policy_result, raw_usage_json FROM provider_runs WHERE task_id = 'slow-openrouter'").fetchone())
+        candidate_count = _count(conn, "SELECT COUNT(*) AS n FROM candidate_outputs WHERE task_id = 'slow-openrouter'")
+
+    raw_usage = _json_mapping(str(provider_run["raw_usage_json"]))
+    assert lease["status"] == "failed"
+    assert attempt["status"] == "failed"
+    assert "timed out" in str(attempt["error_json"])
+    assert task["status"] == TaskStatus.BLOCKED
+    assert "timed out" in str(task["blocked_reasons_json"])
+    assert provider_run["fallback_policy_result"] == "provider_timeout"
+    assert raw_usage["timeout_seconds"] == 0.01
+    assert candidate_count == 0
+
+
+def test_openrouter_runtime_classifies_wrapped_network_timeout(tmp_path: Path):
+    class WrappedTimeoutClient(FakeOpenRouterClient):
+        @override
+        def chat_json(self, *, model: str, messages: list[dict[str, str]], max_tokens: int, temperature: float) -> dict[str, object]:
+            self.calls.append({"model": model, "messages": messages, "max_tokens": max_tokens, "temperature": temperature})
+            raise OpenRouterError("OpenRouter network error: OpenRouter provider call timed out after 180s")
+
+    db_path = init_db(tmp_path)
+    client = WrappedTimeoutClient(content=_provider_packet("wrapped-timeout"))
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="wrapped-timeout",
+                title="Wrapped timeout",
+                task_type="extract",
+                provider_policy={
+                    "provider": "openrouter",
+                    "model": "deepseek/deepseek-v4-pro",
+                    "allow_fallback": False,
+                    "estimated_cost_usd": 0.0,
+                },
+            ),
+        )
+        lease_id = acquire_lease(conn, task_id="wrapped-timeout", worker_id="openrouter-worker")
+        with pytest.raises(WorkerExecutionBlocked, match="timed out"):
+            _ = execute_openrouter_work_order(
+                conn,
+                task_id="wrapped-timeout",
+                lease_id=lease_id,
+                worker_id="openrouter-worker",
+                output_dir=tmp_path / "out",
+                client=client,
+                env={"OPENROUTER_API_KEY": "sk-test", "ATTICUS_ENABLE_LIVE_OPENROUTER": "1"},
+                allow_live=True,
+            )
+        provider_run = cast(Mapping[str, object], conn.execute("SELECT fallback_policy_result, raw_usage_json FROM provider_runs WHERE task_id = 'wrapped-timeout'").fetchone())
+
+    raw_usage = _json_mapping(str(provider_run["raw_usage_json"]))
+    assert provider_run["fallback_policy_result"] == "provider_timeout"
+    assert raw_usage["error_type"] == "provider_timeout"
+    assert raw_usage["timeout_seconds"] == OPENROUTER_DEFAULT_TIMEOUT_SECONDS
 
 
 def test_openrouter_runtime_records_prompt_cache_usage_for_deepseek(tmp_path: Path):
@@ -1213,7 +1317,7 @@ def test_live_readiness_and_resume_reconsider_previously_blocked_safe_tasks(tmp_
         )
         _ = conn.execute(
             "UPDATE tasks SET blocked_reasons_json = ? WHERE task_id = ?",
-            (json.dumps(["old transient blocker"]), "blocked-safe-live"),
+            (json.dumps(["missing source dependency: src-now-present"]), "blocked-safe-live"),
         )
         report = live_readiness_report(conn, capacity=15, env=env)
         plan = prepare_live_resume(
@@ -1234,6 +1338,46 @@ def test_live_readiness_and_resume_reconsider_previously_blocked_safe_tasks(tmp_
     assert task["blocked_reasons_json"] == "[]"
     assert lease["status"] == "active"
     assert str(lease["worker_id"]).startswith("blocked-live-")
+
+
+def test_live_readiness_does_not_resume_terminal_provider_failure_without_repair(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    env = {"OPENROUTER_API_KEY": "sk-test", "ATTICUS_ENABLE_LIVE_OPENROUTER": "1"}
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="blocked-provider-failure",
+                title="Blocked provider failure",
+                task_type="source_inventory",
+                stage=LegalStage.S0_SOURCE_INVENTORY,
+                provider_policy={"provider": "openrouter", "model": "deepseek/deepseek-v4-pro", "allow_fallback": False, "estimated_cost_usd": 0.01},
+                status=TaskStatus.BLOCKED,
+            ),
+        )
+        _ = conn.execute(
+            "UPDATE tasks SET blocked_reasons_json = ? WHERE task_id = ?",
+            (json.dumps(["OpenRouter provider call failed after dispatch: OpenRouter HTTP 401"]), "blocked-provider-failure"),
+        )
+        report = live_readiness_report(conn, capacity=15, env=env)
+        plan = prepare_live_resume(
+            conn,
+            capacity=15,
+            env=env,
+            probe_result={"ok": True, "provider": "openrouter", "model": "deepseek/deepseek-v4-pro"},
+            write_leases=True,
+            worker_prefix="blocked-live",
+        )
+        task = cast(Mapping[str, object], conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'blocked-provider-failure'").fetchone())
+        lease_count = _count(conn, "SELECT COUNT(*) AS n FROM leases WHERE task_id = 'blocked-provider-failure'")
+
+    assert not report["ready"]
+    assert report["runnable_task_ids"] == []
+    assert any("OpenRouter HTTP 401" in reason for item in _object_dicts(report["blocked_tasks"]) for reason in _strings(item["reasons"]))
+    assert not plan["ready"]
+    assert task["status"] == TaskStatus.BLOCKED
+    assert "OpenRouter HTTP 401" in str(task["blocked_reasons_json"])
+    assert lease_count == 0
 
 
 def test_live_readiness_report_blocks_malformed_provider_policy_without_throwing(tmp_path: Path):

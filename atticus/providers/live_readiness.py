@@ -23,7 +23,7 @@ from atticus.providers.openrouter_failover import (
 from atticus.providers.openrouter import OpenRouterClient, OpenRouterError, validate_usage_tokens
 from atticus.providers.policy import ProviderActual, ProviderDecision, ProviderRequest, check_provider_policy
 from atticus.scheduler.capacity import MAX_PARALLEL_AGENT_CAPACITY, agent_capacity
-from atticus.scheduler.gates import evaluate_task_gates
+from atticus.scheduler.gates import blocked_task_auto_requeue_allowed, evaluate_task_gates
 
 LIVE_ENABLE_ENV = "ATTICUS_ENABLE_LIVE_OPENROUTER"
 OPENROUTER_KEY_ENV = "OPENROUTER_API_KEY"
@@ -295,6 +295,8 @@ def live_readiness_report(conn: sqlite3.Connection, *, capacity: int = 15, env: 
             budget = check_budget(conn, scope_type=scope_type, scope_id=scope_id, requested_usd=estimated)
             if not budget.allowed:
                 reasons.append(f"budget blocked for {scope_type}:{scope_id}: {budget.reason}")
+        if not reasons and str(task["status"]) == "blocked" and not blocked_task_auto_requeue_allowed(cast(Mapping[str, object], cast(object, task))):
+            reasons.extend(_blocked_reasons_for_report(task))
         if reasons:
             blocked.append({"task_id": task_id, "title": title, "reasons": reasons})
         elif len(runnable) < capacity_effective:
@@ -361,6 +363,17 @@ def parse_estimated_cost_usd(provider_policy: Mapping[str, object], *, task_id: 
 
 def _mapping_to_dict(value: Mapping[object, object]) -> dict[str, object]:
     return {str(key): item for key, item in value.items()}
+
+
+def _blocked_reasons_for_report(task: sqlite3.Row) -> list[str]:
+    try:
+        value = json.loads(str(task["blocked_reasons_json"] or "[]"))
+    except (json.JSONDecodeError, TypeError):
+        return ["terminal blocked task requires explicit repair/requeue"]
+    if not isinstance(value, list):
+        return ["terminal blocked task requires explicit repair/requeue"]
+    reasons = [str(item) for item in cast(list[object], value) if str(item)]
+    return reasons or ["terminal blocked task requires explicit repair/requeue"]
 
 
 def _row_value(row: sqlite3.Row, key: str) -> object:

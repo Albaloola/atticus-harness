@@ -17,6 +17,7 @@ from atticus.skills.registry import skills_for_task
 SOURCE_MATERIAL_TOTAL_CHARS = 20_000
 SOURCE_MATERIAL_MIN_CHARS = 250
 SOURCE_MATERIAL_MAX_CHARS = 6_000
+SOURCE_MATERIAL_COMPACT_THRESHOLD = 25
 
 
 @dataclass(frozen=True)
@@ -62,7 +63,8 @@ def build_context_pack(
         raise KeyError(f"unknown task: {task_id}")
 
     source_ids = _load_string_list(task, "source_dependencies_json")
-    artifact_ids = _load_string_list(task, "artifact_dependencies_json")
+    explicit_artifact_ids = _load_string_list(task, "artifact_dependencies_json")
+    task_dependency_ids = _load_string_list(task, "task_dependencies_json") if "task_dependencies_json" in task.keys() else []
     matter_scope = str(task["matter_scope"])
     source_rows = cast(list[Mapping[str, object]], conn.execute(
             """
@@ -84,7 +86,17 @@ def build_context_pack(
         conn,
         matter_scope=matter_scope,
         source_ids=source_ids,
-        allowed_artifact_ids=artifact_ids,
+        allowed_artifact_ids=explicit_artifact_ids,
+    )
+    artifact_ids = _dedupe_ordered(
+        [
+            *explicit_artifact_ids,
+            *_artifact_ids_produced_by_task_dependencies(
+                conn,
+                matter_scope=matter_scope,
+                task_dependency_ids=task_dependency_ids,
+            ),
+        ]
     )
     artifact_rows = cast(list[Mapping[str, object]], conn.execute(
             """
@@ -199,6 +211,32 @@ def _load_memory_index(conn: sqlite3.Connection, *, matter_scope: str) -> list[d
     ]
 
 
+def _artifact_ids_produced_by_task_dependencies(
+    conn: sqlite3.Connection,
+    *,
+    matter_scope: str,
+    task_dependency_ids: list[str],
+) -> list[str]:
+    if not task_dependency_ids:
+        return []
+    rows = conn.execute(
+        """
+        SELECT artifact_id
+        FROM artifacts
+        WHERE matter_scope = ?
+          AND stale = 0
+          AND produced_by_task_id IN (%s)
+        ORDER BY produced_by_task_id, created_at, artifact_id
+        """ % ",".join("?" for _ in task_dependency_ids),
+        (matter_scope, *task_dependency_ids),
+    ).fetchall()
+    return [str(row["artifact_id"]) for row in rows]
+
+
+def _dedupe_ordered(items: list[str]) -> list[str]:
+    return list(dict.fromkeys(item for item in items if item))
+
+
 def _load_source_materials(
     conn: sqlite3.Connection,
     *,
@@ -274,6 +312,7 @@ def _load_source_materials(
     )
     seen: set[str] = set()
     allowed_artifacts = set(allowed_artifact_ids)
+    compact = len(source_ids) > SOURCE_MATERIAL_COMPACT_THRESHOLD
     materials: list[dict[str, object]] = []
     for row in rows:
         source_id = str(row["source_id"])
@@ -285,49 +324,70 @@ def _load_source_materials(
         extraction_metadata = _json_object(str(row["extraction_metadata_json"] or "{}"))
         ocr_metadata = _json_object(str(row["ocr_metadata_json"] or "{}"))
         artifact_id = str(row["artifact_id"])
-        materials.append(
-            {
-                "source_id": source_id,
-                "artifact_id": artifact_id,
-                "citation_target": {"target_type": "source", "target_id": source_id},
-                "artifact_citation_allowed": artifact_id in allowed_artifacts,
-                "source_provenance": {
+        if compact:
+            materials.append(
+                {
                     "source_id": source_id,
-                    "path": row["source_path"],
-                    "source_type": row["source_type"],
-                    "sha256": row["source_sha256"],
-                    "size_bytes": row["source_size_bytes"],
-                    "trust_status": row["source_trust_status"],
-                    "imported_from": row["source_imported_from"] or "",
-                },
-                "extraction_provenance": {
+                    "artifact_id": artifact_id,
+                    "citation_target": {"target_type": "source", "target_id": source_id},
+                    "artifact_citation_allowed": artifact_id in allowed_artifacts,
+                    "artifact_type": row["artifact_type"],
                     "extraction_id": row["extraction_id"] or "",
-                    "method": row["extraction_method"] or "artifact_text",
-                    "tool": str(extraction_metadata.get("extractor") or extraction_metadata.get("extractor_tool") or row["extraction_method"] or "artifact_text"),
-                    "performed_by": str(extraction_metadata.get("extracted_by") or "atticus.local_extraction"),
+                    "extraction_method": row["extraction_method"] or "artifact_text",
                     "coverage_status": row["extraction_coverage_status"] or "available",
                     "confidence": row["confidence"] if row["confidence"] is not None else None,
-                    "created_at": row["extraction_created_at"] or "",
-                    "source_path": extraction_metadata.get("source_path") or row["source_path"],
-                    "output_path": extraction_metadata.get("output_path") or row["path"],
-                    "text_sha256": extraction_metadata.get("text_sha256") or row["sha256"] or "",
-                },
-                "ocr_provenance": _ocr_provenance(row, ocr_metadata),
-                "path": row["path"],
-                "artifact_type": row["artifact_type"],
-                "trust_status": row["trust_status"],
-                "sha256": row["sha256"],
-                "title": row["title"],
-                "content_excerpt": excerpt,
-                "excerpt_chars": len(excerpt),
-                "available_chars": len(content),
-                "excerpt_truncated": len(content) > len(excerpt),
-                "extraction_method": row["extraction_method"] or "artifact_text",
-                "coverage_status": row["extraction_coverage_status"] or "available",
-                "confidence": row["confidence"] if row["confidence"] is not None else None,
-                "ocr_engine": row["ocr_engine"],
-            }
-        )
+                    "ocr_id": row["ocr_id"] or "",
+                    "ocr_engine": row["ocr_engine"] or "",
+                    "content_excerpt": excerpt,
+                    "excerpt_chars": len(excerpt),
+                    "available_chars": len(content),
+                    "excerpt_truncated": len(content) > len(excerpt),
+                }
+            )
+        else:
+            materials.append(
+                {
+                    "source_id": source_id,
+                    "artifact_id": artifact_id,
+                    "citation_target": {"target_type": "source", "target_id": source_id},
+                    "artifact_citation_allowed": artifact_id in allowed_artifacts,
+                    "source_provenance": {
+                        "source_id": source_id,
+                        "path": row["source_path"],
+                        "source_type": row["source_type"],
+                        "sha256": row["source_sha256"],
+                        "size_bytes": row["source_size_bytes"],
+                        "trust_status": row["source_trust_status"],
+                        "imported_from": row["source_imported_from"] or "",
+                    },
+                    "extraction_provenance": {
+                        "extraction_id": row["extraction_id"] or "",
+                        "method": row["extraction_method"] or "artifact_text",
+                        "tool": str(extraction_metadata.get("extractor") or extraction_metadata.get("extractor_tool") or row["extraction_method"] or "artifact_text"),
+                        "performed_by": str(extraction_metadata.get("extracted_by") or "atticus.local_extraction"),
+                        "coverage_status": row["extraction_coverage_status"] or "available",
+                        "confidence": row["confidence"] if row["confidence"] is not None else None,
+                        "created_at": row["extraction_created_at"] or "",
+                        "source_path": extraction_metadata.get("source_path") or row["source_path"],
+                        "output_path": extraction_metadata.get("output_path") or row["path"],
+                        "text_sha256": extraction_metadata.get("text_sha256") or row["sha256"] or "",
+                    },
+                    "ocr_provenance": _ocr_provenance(row, ocr_metadata),
+                    "path": row["path"],
+                    "artifact_type": row["artifact_type"],
+                    "trust_status": row["trust_status"],
+                    "sha256": row["sha256"],
+                    "title": row["title"],
+                    "content_excerpt": excerpt,
+                    "excerpt_chars": len(excerpt),
+                    "available_chars": len(content),
+                    "excerpt_truncated": len(content) > len(excerpt),
+                    "extraction_method": row["extraction_method"] or "artifact_text",
+                    "coverage_status": row["extraction_coverage_status"] or "available",
+                    "confidence": row["confidence"] if row["confidence"] is not None else None,
+                    "ocr_engine": row["ocr_engine"],
+                }
+            )
     return materials
 
 

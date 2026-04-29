@@ -79,13 +79,9 @@ def build_default_sections(
     source_ids = tuple(str(row["source_id"]) for row in sources)
     source_material_artifact_ids = tuple(str(row["artifact_id"]) for row in source_materials if row.get("artifact_id"))
     artifact_ids = tuple(str(row["artifact_id"]) for row in artifacts)
+    compact_source_material_citations = len(source_materials) > 25
     source_material_citation_targets = tuple(
-        {
-            "source_id": str(row["source_id"]),
-            "extraction_artifact_id": str(row["artifact_id"]),
-            "cite_as": {"target_type": "source", "target_id": str(row["source_id"])},
-            "artifact_citation_allowed": str(row["artifact_id"]) in artifact_ids,
-        }
+        _source_material_citation_target(row, artifact_ids=artifact_ids, compact=compact_source_material_citations)
         for row in source_materials
         if row.get("source_id") and row.get("artifact_id")
     )
@@ -312,3 +308,21 @@ def _json_object(raw: object) -> dict[str, object]:
     if not isinstance(value, Mapping):
         return {}
     return {str(key): item for key, item in cast(Mapping[object, object], value).items()}
+
+
+def _source_material_citation_target(row: Mapping[str, object], *, artifact_ids: tuple[str, ...], compact: bool) -> dict[str, object]:
+    source_id = str(row["source_id"])
+    artifact_id = str(row["artifact_id"])
+    if compact:
+        return {
+            "source_id": source_id,
+            "extraction_artifact_id": artifact_id,
+            "cite_as_source_id": source_id,
+            "artifact_citation_allowed": artifact_id in artifact_ids,
+        }
+    return {
+        "source_id": source_id,
+        "extraction_artifact_id": artifact_id,
+        "cite_as": {"target_type": "source", "target_id": source_id},
+        "artifact_citation_allowed": artifact_id in artifact_ids,
+    }

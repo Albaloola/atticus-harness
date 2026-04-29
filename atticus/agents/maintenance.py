@@ -15,6 +15,7 @@ from typing import cast
 
 from atticus.core.events import utc_now
 from atticus.db import repo
+from atticus.db.doctor import schema_check_json, verify_schema
 from atticus.scheduler.lease import expire_leases
 
 
@@ -51,6 +52,9 @@ def request_maintenance(
 
 
 def maintenance_status(conn: sqlite3.Connection, *, matter_scope: str | None = None) -> dict[str, object]:
+    check = verify_schema(conn)
+    if not check.ok:
+        return schema_check_json(conn)
     params: tuple[object, ...] = ()
     where = ""
     if matter_scope:
@@ -92,6 +96,9 @@ def maintenance_tick(
     maintenance_run_id: str | None = None,
     write: bool = False,
 ) -> dict[str, object]:
+    check = verify_schema(conn)
+    if not check.ok:
+        return {"dry_run": not write, **schema_check_json(conn)}
     run = _resolve_run(conn, matter_scope=matter_scope, maintenance_run_id=maintenance_run_id, write=write)
     diagnostics = _build_diagnostics(conn, matter_scope=matter_scope)
     actions = _planned_actions(diagnostics)
@@ -148,6 +155,9 @@ def maintenance_tick(
 
 
 def maintenance_report(conn: sqlite3.Connection, *, maintenance_run_id: str) -> dict[str, object]:
+    check = verify_schema(conn)
+    if not check.ok:
+        return schema_check_json(conn)
     row = conn.execute(
         """
         SELECT *

@@ -6,6 +6,7 @@ from collections.abc import Mapping
 import json
 
 from typing import cast
+from atticus.db.doctor import schema_check_json, verify_schema
 from atticus.db.repo import db_connection, source_material_derivatives
 
 
@@ -26,6 +27,9 @@ def inspect_record(db_path: str, *, record_type: str, record_id: str) -> dict[st
         raise KeyError(f"unsupported inspect type: {record_type}")
     table, pk = table_info
     with db_connection(db_path, read_only=True) as conn:
+        check = verify_schema(conn)
+        if not check.ok:
+            return schema_check_json(conn, db_path=db_path)
         row = cast(Mapping[str, object] | None, cast(object, conn.execute(f"SELECT * FROM {table} WHERE {pk} = ?", (record_id,)).fetchone()))
         derivatives = (
             source_material_derivatives(conn, matter_scope=str(row["matter_scope"]), source_ids=(record_id,)).get(record_id, [])

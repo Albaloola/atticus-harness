@@ -12,6 +12,7 @@ import pytest
 from atticus.cli import main as cli_main
 from atticus.core.policies import LegalStage
 from atticus.db import repo
+from atticus.validation.gates import run_validation
 
 
 def init_db(tmp_path: Path) -> Path:
@@ -139,6 +140,83 @@ def test_extract_sources_write_extracts_docx_and_is_idempotent(tmp_path: Path, c
         assert _count(conn, "SELECT COUNT(*) FROM provider_runs") == 0
         assert _count(conn, "SELECT COUNT(*) FROM candidate_outputs") == 0
         assert _count(conn, "SELECT COUNT(*) FROM leases") == 0
+
+
+def test_repair_source_extractions_reextracts_when_source_sha_changes(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
+    db_path = init_db(tmp_path)
+    workspace = tmp_path / "matter"
+    source_path = workspace / "01-sources" / "SRC-CHANGED - fixture.docx"
+    source_path.parent.mkdir(parents=True)
+    _write_minimal_docx(source_path, ["Original hardship text"])
+    with repo.db_connection(db_path) as conn:
+        _add_source(conn, matter="alpha", source_id="SRC-CHANGED", path=source_path)
+
+    args = [
+        "extract-sources",
+        "--db",
+        str(db_path),
+        "--matter",
+        "alpha",
+        "--workspace",
+        str(workspace),
+        "--source-id",
+        "SRC-CHANGED",
+        "--write",
+    ]
+    assert cli_main(args) == 0
+    _ = capsys.readouterr()
+    source_path.unlink()
+    _write_minimal_docx(source_path, ["Updated accommodation arrears text"])
+    with repo.db_connection(db_path) as conn:
+        _ = conn.execute("UPDATE sources SET sha256 = ?, stale = 0 WHERE source_id = 'SRC-CHANGED'", ("b" * 64,))
+        validation_before = run_validation(conn, gate_name="extraction_coverage", target_type="matter", target_id="alpha")
+    assert validation_before.passed is False
+    assert validation_before.details["hash_mismatch_extraction"] == ["SRC-CHANGED"]
+
+    assert cli_main(args) == 0
+    output = cast(Mapping[str, object], json.loads(capsys.readouterr().out))
+
+    assert output["already_covered"] == 0
+    assert output["extraction_records_created"] == 1
+    with repo.db_connection(db_path) as conn:
+        assert _count(conn, "SELECT COUNT(*) FROM extraction_records WHERE source_id = 'SRC-CHANGED'") == 2
+        assert _count(conn, "SELECT COUNT(*) FROM artifacts WHERE matter_scope = 'alpha' AND artifact_type = 'extracted_text'") == 2
+        validation_after = run_validation(conn, gate_name="extraction_coverage", target_type="matter", target_id="alpha")
+
+    assert validation_after.passed is True
+    assert validation_after.details["hash_mismatch_extraction"] == []
+
+
+def test_extraction_coverage_fails_when_extraction_artifact_is_stale(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
+    db_path = init_db(tmp_path)
+    workspace = tmp_path / "matter"
+    source_path = workspace / "01-sources" / "SRC-STALE - fixture.docx"
+    source_path.parent.mkdir(parents=True)
+    _write_minimal_docx(source_path, ["Text that will become stale"])
+    with repo.db_connection(db_path) as conn:
+        _add_source(conn, matter="alpha", source_id="SRC-STALE", path=source_path)
+
+    assert cli_main(
+        [
+            "extract-sources",
+            "--db",
+            str(db_path),
+            "--matter",
+            "alpha",
+            "--workspace",
+            str(workspace),
+            "--source-id",
+            "SRC-STALE",
+            "--write",
+        ]
+    ) == 0
+    _ = capsys.readouterr()
+    with repo.db_connection(db_path) as conn:
+        _ = conn.execute("UPDATE artifacts SET stale = 1 WHERE artifact_type = 'extracted_text'")
+        validation = run_validation(conn, gate_name="extraction_coverage", target_type="matter", target_id="alpha")
+
+    assert validation.passed is False
+    assert validation.details["stale_extraction"] == ["SRC-STALE"]
 
 
 def test_extract_sources_registers_existing_ocr_text_for_image(tmp_path: Path, capsys: pytest.CaptureFixture[str]):

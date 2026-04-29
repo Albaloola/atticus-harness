@@ -11,7 +11,8 @@ from uuid import uuid4
 from atticus.core.events import utc_now
 from atticus.core.policies import TaskStatus
 from atticus.db import repo
-from atticus.scheduler.gates import evaluate_task_gates
+from atticus.scheduler.capacity import MAX_PARALLEL_AGENT_CAPACITY
+from atticus.scheduler.gates import blocked_task_auto_requeue_allowed, evaluate_task_gates
 
 
 class LeaseError(RuntimeError):
@@ -33,6 +34,8 @@ def acquire_lease(
 ) -> str:
     if lease_role not in {"worker", "reducer"}:
         raise LeaseError(f"unsupported lease role: {lease_role}")
+    if not dry_run and not conn.in_transaction:
+        _ = conn.execute("BEGIN IMMEDIATE")
     task = cast(Mapping[str, object] | None, cast(object, conn.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone()))
     if task is None:
         raise LeaseError(f"unknown task: {task_id}")
@@ -53,6 +56,12 @@ def acquire_lease(
         raise LeaseError(f"task {task_id} is not leaseable from status {task['status']}")
     if lease_role == "reducer" and task["status"] != TaskStatus.REDUCER_PENDING:
         raise LeaseError(f"reducer lease requires task {task_id} to be in status {TaskStatus.REDUCER_PENDING}")
+    if lease_role == "worker" and not dry_run:
+        if seconds >= 0:
+            _ = expire_leases(conn)
+        active_worker_count = _active_worker_lease_count(conn)
+        if active_worker_count >= MAX_PARALLEL_AGENT_CAPACITY:
+            raise LeaseError(f"global worker capacity reached: {active_worker_count}/{MAX_PARALLEL_AGENT_CAPACITY}")
 
     gate_result = evaluate_task_gates(conn, task)
     if not gate_result.allowed:
@@ -60,6 +69,8 @@ def acquire_lease(
             repo.update_task_blocked(conn, task_id, gate_result.reasons)
         raise LeaseError(f"task {task_id} is blocked by gates: {'; '.join(gate_result.reasons)}")
     if task["status"] == TaskStatus.BLOCKED and not dry_run:
+        if not blocked_task_auto_requeue_allowed(task):
+            raise LeaseError(f"task {task_id} is blocked by terminal runtime failure")
         _ = conn.execute(
             "UPDATE tasks SET status = ?, blocked_reasons_json = '[]', updated_at = ? WHERE task_id = ? AND status = ?",
             (TaskStatus.QUEUED, utc_now(), task_id, TaskStatus.BLOCKED),
@@ -106,6 +117,15 @@ def acquire_lease(
         payload={"lease_id": lease_id, "task_id": task_id, "worker_id": worker_id, "fencing_token": fencing_token},
     )
     return lease_id
+
+
+def _active_worker_lease_count(conn: sqlite3.Connection) -> int:
+    now = datetime.now(UTC)
+    count = 0
+    for row in conn.execute("SELECT expires_at FROM leases WHERE status = 'active' AND lease_role = 'worker'"):
+        if _parse_time(str(row["expires_at"])) > now:
+            count += 1
+    return count
 
 
 def lease_is_active(conn: sqlite3.Connection, *, lease_id: str, task_id: str | None = None) -> bool:

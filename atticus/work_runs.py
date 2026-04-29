@@ -8,6 +8,7 @@ import sqlite3
 from typing import cast
 
 from atticus.db import repo
+from atticus.retrieval.work_reuse import validate_reusable_step
 
 
 def start_work_run(conn: sqlite3.Connection, matter_scope: str, goal: str) -> dict[str, object]:
@@ -87,9 +88,9 @@ def resume_work_run(conn: sqlite3.Connection, resume_token: str, *, matter_scope
 
 def summarize_reusable_work(conn: sqlite3.Connection, matter_scope: str, goal: str) -> dict[str, object]:
     tokens = {token for token in goal.lower().split() if len(token) > 2}
-    rows = [
-        _step_row(row)
-        for row in conn.execute(
+    reusable_rows: list[dict[str, object]] = []
+    excluded_rows: list[dict[str, object]] = []
+    for row in conn.execute(
             """
             SELECT wrs.*
             FROM work_run_steps wrs
@@ -103,15 +104,30 @@ def summarize_reusable_work(conn: sqlite3.Connection, matter_scope: str, goal: s
             LIMIT 50
             """,
             (matter_scope,),
-        )
-    ]
+        ):
+        try:
+            step = _step_row(row)
+        except (json.JSONDecodeError, TypeError, KeyError) as exc:
+            excluded_rows.append({"work_run_step_id": row["work_run_step_id"], "reason": f"corrupted work-run step metadata: {exc}"})
+            continue
+        decision = validate_reusable_step(conn, str(row["work_run_step_id"]))
+        if decision.reusable:
+            step["reuse_decision"] = decision.as_dict()
+            reusable_rows.append(step)
+        else:
+            excluded_rows.append({"work_run_step_id": row["work_run_step_id"], **decision.as_dict()})
     if tokens:
-        rows = [row for row in rows if tokens.intersection(" ".join(str(row.get(key) or "").lower() for key in ("step_type", "metadata")).split()) or not row.get("metadata")]
+        reusable_rows = [
+            row
+            for row in reusable_rows
+            if tokens.intersection(" ".join(str(row.get(key) or "").lower() for key in ("step_type", "metadata")).split()) or not row.get("metadata")
+        ]
     return {
         "matter_scope": matter_scope,
         "goal": goal,
-        "reusable_steps": rows,
-        "rule": "same matter, complete status, and not invalidated; provider/model choice is not proof",
+        "reusable_steps": reusable_rows,
+        "excluded_steps": excluded_rows,
+        "rule": "same matter, complete status, current linked artifacts/context, reduced/accepted candidates where needed; provider/model choice is not proof",
     }
 
 
