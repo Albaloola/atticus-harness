@@ -404,13 +404,12 @@ def _update_source(
     _ = conn.execute(
         """
         UPDATE sources
-        SET matter_scope = ?, path = ?, source_type = ?, sha256 = ?, size_bytes = ?,
+        SET path = ?, source_type = ?, sha256 = ?, size_bytes = ?,
           trust_status = ?, stage = ?, imported_from = ?, chain_of_custody_json = ?,
           stale = 0, updated_at = ?
-        WHERE source_id = ?
+        WHERE source_id = ? AND matter_scope = ?
         """,
         (
-            matter_scope,
             record.source_path,
             record.source_type,
             record.sha256,
@@ -421,6 +420,7 @@ def _update_source(
             _json(record.metadata),
             utc_now(),
             source_id,
+            matter_scope,
         ),
     )
 
@@ -488,15 +488,15 @@ def _existing_source(
     matter_scope: str,
     source_path: str,
 ) -> Mapping[str, object] | None:
+    row = conn.execute("SELECT * FROM sources WHERE source_id = ? LIMIT 1", (source_id,)).fetchone()
+    if row is not None:
+        mapped = cast(Mapping[str, object], row)
+        if str(mapped["matter_scope"]) != matter_scope:
+            raise ValueError(f"source_id {source_id!r} already belongs to matter {mapped['matter_scope']!r}")
+        return mapped
     row = conn.execute(
-        """
-        SELECT *
-        FROM sources
-        WHERE source_id = ? OR (matter_scope = ? AND path = ?)
-        ORDER BY CASE WHEN source_id = ? THEN 0 ELSE 1 END
-        LIMIT 1
-        """,
-        (source_id, matter_scope, source_path, source_id),
+        "SELECT * FROM sources WHERE matter_scope = ? AND path = ? LIMIT 1",
+        (matter_scope, source_path),
     ).fetchone()
     return cast(Mapping[str, object] | None, row)
 

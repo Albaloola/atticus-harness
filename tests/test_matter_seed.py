@@ -229,6 +229,59 @@ def test_seed_matter_repairs_existing_source_inventory_task_dependencies(tmp_pat
     assert events == 2
 
 
+def test_seed_matter_rejects_cross_matter_source_id_collision(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    workspace = tmp_path / "collision-workspace"
+    stored = workspace / "stored"
+    stored.mkdir(parents=True)
+    source_file = stored / "beta.txt"
+    _ = source_file.write_text("beta source", encoding="utf-8")
+    inventory = workspace / "inventory.csv"
+    with inventory.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["source_id", "category", "stored_path", "size_bytes", "sha256"])
+        writer.writeheader()
+        writer.writerow(
+            {
+                "source_id": "shared-src",
+                "category": "text",
+                "stored_path": "stored/beta.txt",
+                "size_bytes": str(source_file.stat().st_size),
+                "sha256": _sha256(source_file),
+            }
+        )
+    with repo.db_connection(db_path) as conn:
+        _ = repo.add_source(conn, source_id="shared-src", matter_scope="alpha", path="/alpha/original.txt", sha256="a" * 64)
+
+    code = cli_main(
+        [
+            "seed-matter",
+            "--db",
+            str(db_path),
+            "--matter",
+            "beta",
+            "--workspace",
+            str(workspace),
+            "--inventory",
+            str(inventory),
+            "--provider",
+            "openai-codex",
+            "--model",
+            "gpt-5.5",
+            "--no-fallback",
+            "--write",
+        ]
+    )
+
+    with repo.db_connection(db_path) as conn:
+        original = cast(Mapping[str, object], conn.execute("SELECT matter_scope, path FROM sources WHERE source_id = 'shared-src'").fetchone())
+        beta_sources = _count(conn, "SELECT COUNT(*) AS n FROM sources WHERE matter_scope = 'beta'")
+
+    assert code == 2
+    assert original["matter_scope"] == "alpha"
+    assert original["path"] == "/alpha/original.txt"
+    assert beta_sources == 0
+
+
 def test_set_provider_policy_updates_only_queued_tasks_for_matter(tmp_path: Path):
     db_path = init_db(tmp_path)
     with repo.db_connection(db_path) as conn:

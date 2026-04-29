@@ -18,6 +18,8 @@ from atticus.providers.openrouter_failover import (
 )
 
 JsonObject = dict[str, object]
+MODEL_A = "qwen/qwen3-coder:free"
+MODEL_B = "openai/gpt-oss-120b:free"
 
 
 class SequencedOpenRouterClient:
@@ -49,7 +51,7 @@ def _failover(
     return OpenRouterModelFailover(
         config=OpenRouterFailoverConfig(
             provider="openrouter",
-            models=("model-a:free", "model-b:free"),
+            models=(MODEL_A, MODEL_B),
             max_failed_cycles=max_failed_cycles,
             cooldown_seconds=3.0,
             backoff_seconds=0.0,
@@ -62,31 +64,31 @@ def _failover(
 
 
 def test_openrouter_failover_rotates_requested_models_on_recoverable_error():
-    client = SequencedOpenRouterClient([OpenRouterError("rate limit", status_code=429), {"model": "model-b:free"}])
+    client = SequencedOpenRouterClient([OpenRouterError("rate limit", status_code=429), {"model": MODEL_B}])
     response = _failover(client).chat_json(model="ignored", messages=[{"role": "user", "content": "{}"}])
 
-    assert client.calls == ["model-a:free", "model-b:free"]
-    assert response["requested_model"] == "model-b:free"
-    assert response["model"] == "model-b:free"
+    assert client.calls == [MODEL_A, MODEL_B]
+    assert response["requested_model"] == MODEL_B
+    assert response["model"] == MODEL_B
 
 
 def test_openrouter_failover_returns_first_model_success():
-    client = SequencedOpenRouterClient([{"model": "model-a:free"}])
+    client = SequencedOpenRouterClient([{"model": MODEL_A}])
     response = _failover(client).chat_json(model="ignored", messages=[{"role": "user", "content": "{}"}])
 
-    assert client.calls == ["model-a:free"]
-    assert response["requested_model"] == "model-a:free"
+    assert client.calls == [MODEL_A]
+    assert response["requested_model"] == MODEL_A
 
 
 def test_openrouter_failover_wraps_from_end_to_first_model():
-    client = SequencedOpenRouterClient([OpenRouterError("provider unavailable", status_code=503), {"model": "model-a:free"}])
+    client = SequencedOpenRouterClient([OpenRouterError("provider unavailable", status_code=503), {"model": MODEL_A}])
     failover = _failover(client)
     failover.current_index = 1
 
     response = failover.chat_json(model="ignored", messages=[{"role": "user", "content": "{}"}])
 
-    assert client.calls == ["model-b:free", "model-a:free"]
-    assert response["requested_model"] == "model-a:free"
+    assert client.calls == [MODEL_B, MODEL_A]
+    assert response["requested_model"] == MODEL_A
 
 
 def test_openrouter_failover_hard_errors_do_not_rotate():
@@ -95,7 +97,7 @@ def test_openrouter_failover_hard_errors_do_not_rotate():
     with pytest.raises(OpenRouterFailoverHardError, match="OPENROUTER_API_KEY"):
         _ = _failover(client).chat_json(model="ignored", messages=[{"role": "user", "content": "{}"}])
 
-    assert client.calls == ["model-a:free"]
+    assert client.calls == [MODEL_A]
 
 
 def test_openrouter_failover_fails_closed_on_usage_and_provider_metadata_errors():
@@ -107,12 +109,12 @@ def test_openrouter_failover_fails_closed_on_usage_and_provider_metadata_errors(
         assert recoverable is False
         assert reason
 
-    client = SequencedOpenRouterClient([{"usage": ["not", "metadata"]}, {"model": "model-b:free"}])
+    client = SequencedOpenRouterClient([{"usage": ["not", "metadata"]}, {"model": MODEL_B}])
 
     with pytest.raises(OpenRouterFailoverHardError, match="usage metadata"):
         _ = _failover(client).chat_json(model="ignored", messages=[{"role": "user", "content": "{}"}])
 
-    assert client.calls == ["model-a:free"]
+    assert client.calls == [MODEL_A]
 
 
 def test_openrouter_failover_cools_down_after_failed_cycles_and_continues_from_first_model():
@@ -123,7 +125,7 @@ def test_openrouter_failover_cools_down_after_failed_cycles_and_continues_from_f
         OpenRouterError("rate limit", status_code=429),
         OpenRouterError("rate limit", status_code=429),
         OpenRouterError("rate limit", status_code=429),
-        {"model": "model-a:free"},
+        {"model": MODEL_A},
     ])
 
     response = _failover(client, max_failed_cycles=2, event_sink=events.append, sleep=sleeps.append).chat_json(
@@ -131,11 +133,11 @@ def test_openrouter_failover_cools_down_after_failed_cycles_and_continues_from_f
         messages=[{"role": "user", "content": "{}"}],
     )
 
-    assert client.calls == ["model-a:free", "model-b:free", "model-a:free", "model-b:free", "model-a:free"]
-    assert response["requested_model"] == "model-a:free"
+    assert client.calls == [MODEL_A, MODEL_B, MODEL_A, MODEL_B, MODEL_A]
+    assert response["requested_model"] == MODEL_A
     assert sleeps == [3.0]
     assert any(event["event"] == "cooldown_start" for event in events)
-    assert any(event["event"] == "cooldown_end" and event["model"] == "model-a:free" for event in events)
+    assert any(event["event"] == "cooldown_end" and event["model"] == MODEL_A for event in events)
     assert events[-1]["event"] == "model_success"
 
 
@@ -149,23 +151,23 @@ def test_openrouter_failover_bounded_attempt_guard_is_explicit():
             max_total_attempts=3,
         )
 
-    assert client.calls == ["model-a:free", "model-b:free", "model-a:free"]
+    assert client.calls == [MODEL_A, MODEL_B, MODEL_A]
 
 
 def test_openrouter_failover_retains_successful_model_for_next_request():
     client = SequencedOpenRouterClient([
         OpenRouterError("rate limit", status_code=429),
-        {"model": "model-b:free"},
-        {"model": "model-b:free"},
+        {"model": MODEL_B},
+        {"model": MODEL_B},
     ])
     failover = _failover(client)
 
     first = failover.chat_json(model="ignored", messages=[{"role": "user", "content": "{}"}])
     second = failover.chat_json(model="ignored", messages=[{"role": "user", "content": "{}"}])
 
-    assert client.calls == ["model-a:free", "model-b:free", "model-b:free"]
-    assert first["requested_model"] == "model-b:free"
-    assert second["requested_model"] == "model-b:free"
+    assert client.calls == [MODEL_A, MODEL_B, MODEL_B]
+    assert first["requested_model"] == MODEL_B
+    assert second["requested_model"] == MODEL_B
 
 
 def test_openrouter_failover_enabled_by_env_uses_ordered_requested_model_list():
@@ -173,11 +175,11 @@ def test_openrouter_failover_enabled_by_env_uses_ordered_requested_model_list():
         {"provider": "openrouter", "model": "ignored-model"},
         env={
             "ATTICUS_OPENROUTER_FAILOVER_ENABLED": "1",
-            "ATTICUS_OPENROUTER_FAILOVER_MODELS": "model-b:free, model-a:free",
+            "ATTICUS_OPENROUTER_FAILOVER_MODELS": f"{MODEL_B}, {MODEL_A}",
         },
     )
 
-    assert models == ("model-b:free", "model-a:free")
+    assert models == (MODEL_B, MODEL_A)
 
 
 def test_openrouter_failover_enabled_by_env_requires_explicit_model_list():
@@ -188,7 +190,23 @@ def test_openrouter_failover_enabled_by_env_requires_explicit_model_list():
         )
 
 
-@pytest.mark.parametrize("models", [{"bad": "shape"}, [], ["model-a:free", ""], "  ,  "])
+def test_openrouter_failover_rejects_unknown_models_in_policy_and_env() -> None:
+    with pytest.raises(OpenRouterFailoverHardError, match="unknown or unsupported"):
+        _ = openrouter_models_for_policy(
+            {"provider": "openrouter", "openrouter_failover": {"enabled": True, "models": ["unknown/model"]}},
+            env={},
+        )
+    with pytest.raises(OpenRouterFailoverHardError, match="unknown or unsupported"):
+        _ = openrouter_models_for_policy(
+            {"provider": "openrouter", "model": MODEL_A},
+            env={
+                "ATTICUS_OPENROUTER_FAILOVER_ENABLED": "1",
+                "ATTICUS_OPENROUTER_FAILOVER_MODELS": "unknown/model",
+            },
+        )
+
+
+@pytest.mark.parametrize("models", [{"bad": "shape"}, [], [MODEL_A, ""], "  ,  "])
 def test_openrouter_failover_rejects_malformed_explicit_model_config(models: object) -> None:
     with pytest.raises(OpenRouterFailoverHardError, match="models"):
         _ = openrouter_models_for_policy(
@@ -204,7 +222,7 @@ def test_openrouter_failover_rejects_non_finite_timing_values() -> None:
                 "provider": "openrouter",
                 "openrouter_failover": {
                     "enabled": True,
-                    "models": ["model-a:free"],
+                    "models": [MODEL_A],
                     "cooldown_seconds": "NaN",
                 },
             },
@@ -225,7 +243,7 @@ def test_openrouter_failover_does_not_cache_raw_api_key_in_cache_keys():
     _ = openrouter_client_for_policy(
         {
             "provider": "openrouter",
-            "openrouter_failover": {"enabled": True, "models": ["model-a:free"], "cooldown_seconds": 0},
+            "openrouter_failover": {"enabled": True, "models": [MODEL_A], "cooldown_seconds": 0},
         },
         env={"OPENROUTER_API_KEY": raw_value},
     )

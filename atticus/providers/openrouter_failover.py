@@ -17,6 +17,7 @@ import time
 from collections.abc import Callable, Mapping
 from typing import Protocol, cast
 
+from atticus.providers.deepseek import known_model
 from atticus.providers.openrouter import OpenRouterClient, OpenRouterError, validate_cache_usage_tokens, validate_usage_tokens
 
 FAILOVER_POLICY_KEY = "openrouter_failover"
@@ -441,6 +442,9 @@ def _validate_failover_config(config: OpenRouterFailoverConfig) -> None:
         raise OpenRouterFailoverHardError(f"OpenRouter failover requires provider 'openrouter', got {config.provider!r}")
     if not config.models:
         raise OpenRouterFailoverHardError("OpenRouter failover requires at least one model")
+    unknown_models = [model for model in config.models if not known_model("openrouter", model)]
+    if unknown_models:
+        raise OpenRouterFailoverHardError(f"OpenRouter failover models are unknown or unsupported: {', '.join(unknown_models)}")
     if config.max_failed_cycles < 1:
         raise OpenRouterFailoverHardError("OpenRouter failover max_failed_cycles must be >= 1")
     if config.cooldown_seconds < 0:

@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+import os
 import sqlite3
+from uuid import uuid4
 
-from atticus.validation.canonical_write_guard import assert_canonical_write_allowed
+from atticus.validation.canonical_write_guard import assert_canonical_write_allowed, resolve_canonical_filesystem_path
 
 
 def write_canonical_text(
@@ -24,4 +25,23 @@ def write_canonical_text(
         lease_id=lease_id,
         task_id=task_id,
     )
-    _ = Path(target_path).write_text(text, encoding="utf-8")
+    path = resolve_canonical_filesystem_path(conn, target_path=target_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    try:
+        with temp_path.open("w", encoding="utf-8") as handle:
+            _ = handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, path)
+        try:
+            dir_fd = os.open(path.parent, os.O_RDONLY)
+        except OSError:
+            return
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    finally:
+        if temp_path.exists():
+            temp_path.unlink()

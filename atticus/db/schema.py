@@ -8,7 +8,7 @@ the legal operating model.
 
 from __future__ import annotations
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 DDL = """
 PRAGMA foreign_keys = ON;
@@ -247,6 +247,7 @@ CREATE TABLE IF NOT EXISTS citation_spans (
 
 CREATE TABLE IF NOT EXISTS validation_results (
   validation_result_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  matter_scope TEXT NOT NULL DEFAULT 'unknown',
   target_type TEXT NOT NULL,
   target_id TEXT NOT NULL,
   gate_name TEXT NOT NULL,
@@ -285,6 +286,9 @@ CREATE TABLE IF NOT EXISTS tasks (
   validation_gates_json TEXT NOT NULL CHECK(json_valid(validation_gates_json)),
   staleness_rules_json TEXT NOT NULL CHECK(json_valid(staleness_rules_json)),
   provider_policy_json TEXT NOT NULL CHECK(json_valid(provider_policy_json)),
+  parent_task_id TEXT,
+  imported_from_candidate_id TEXT,
+  task_provenance_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(task_provenance_json)),
   cost_limit_usd REAL,
   expected_value REAL NOT NULL DEFAULT 0,
   context_pack_id TEXT,
@@ -311,6 +315,7 @@ CREATE TABLE IF NOT EXISTS leases (
   lease_id TEXT PRIMARY KEY,
   task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
   worker_id TEXT NOT NULL,
+  lease_role TEXT NOT NULL DEFAULT 'worker',
   status TEXT NOT NULL,
   fencing_token INTEGER NOT NULL,
   expires_at TEXT NOT NULL,
@@ -559,8 +564,6 @@ CREATE INDEX IF NOT EXISTS artifacts_type_stage_idx ON artifacts(artifact_type, 
 CREATE INDEX IF NOT EXISTS sources_hash_idx ON sources(sha256);
 CREATE INDEX IF NOT EXISTS certifications_subject_idx
 ON certifications(subject_type, subject_id, certification_type, status);
-CREATE INDEX IF NOT EXISTS validation_target_idx
-ON validation_results(target_type, target_id, gate_name, passed);
 CREATE INDEX IF NOT EXISTS provider_runs_task_idx ON provider_runs(task_id, created_at);
 CREATE INDEX IF NOT EXISTS budget_entries_budget_idx ON budget_entries(budget_id, created_at);
 CREATE INDEX IF NOT EXISTS citation_spans_target_idx ON citation_spans(target_type, target_id);

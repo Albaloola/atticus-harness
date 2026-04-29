@@ -26,6 +26,7 @@ def import_proposed_tasks_from_candidate(conn: sqlite3.Connection, candidate: Ma
     proposed_tasks = cast(list[object], raw_tasks)
     imported: list[str] = []
     parent_task_id = str(candidate["task_id"])
+    candidate_id = str(candidate["candidate_id"])
     parent_task = cast(Mapping[str, object] | None, conn.execute("SELECT provider_policy_json, matter_scope FROM tasks WHERE task_id = ?", (parent_task_id,)).fetchone())
     parent_policy = _load_parent_provider_policy(parent_task)
     parent_matter_scope = str(parent_task["matter_scope"]) if parent_task is not None else "atticus"
@@ -34,13 +35,37 @@ def import_proposed_tasks_from_candidate(conn: sqlite3.Connection, candidate: Ma
             continue
         task_map = cast(Mapping[object, object], raw_task)
         task_id = str(task_map.get("task_id") or f"{parent_task_id}-followup-{index}")
-        matter_scope = str(task_map.get("matter_scope") or parent_matter_scope)
+        proposed_matter_scope = str(task_map.get("matter_scope") or parent_matter_scope)
+        if proposed_matter_scope != parent_matter_scope:
+            _record_rejected_proposed_task(
+                conn,
+                task_id=task_id,
+                reason=f"proposed task matter_scope {proposed_matter_scope!r} does not match parent matter {parent_matter_scope!r}",
+            )
+            continue
+        matter_scope = parent_matter_scope
         source_dependencies = _string_list(task_map.get("source_dependencies"))
         if not source_dependencies:
             source_dependencies = _infer_source_dependencies(conn, matter_scope=matter_scope, task_map=task_map)
+        artifact_dependencies = _string_list(task_map.get("artifact_dependencies"))
+        task_dependencies = _string_list(task_map.get("task_dependencies"))
+        matter_dependencies = _string_list(task_map.get("matter_dependencies"))
+        dependency_error = _dependency_error(
+            conn,
+            matter_scope=matter_scope,
+            source_dependencies=source_dependencies,
+            artifact_dependencies=artifact_dependencies,
+            task_dependencies=task_dependencies,
+            matter_dependencies=matter_dependencies,
+        )
+        if dependency_error:
+            _record_rejected_proposed_task(conn, task_id=task_id, reason=dependency_error)
+            continue
         if _task_exists(conn, task_id):
-            if _repair_existing_source_dependencies(conn, task_id=task_id, source_dependencies=source_dependencies):
+            if _existing_task_is_same_import(conn, task_id=task_id, matter_scope=matter_scope, candidate_id=candidate_id):
                 imported.append(task_id)
+            else:
+                _record_rejected_proposed_task(conn, task_id=task_id, reason="proposed task id collides with an existing task")
             continue
         stage = str(task_map.get("stage") or LegalStage.S0_SOURCE_INVENTORY)
         try:
@@ -64,15 +89,32 @@ def import_proposed_tasks_from_candidate(conn: sqlite3.Connection, candidate: Ma
                 stage=cast(LegalStage, cast(object, stage)),
                 status=TaskStatus.QUEUED,
                 source_dependencies=source_dependencies,
-                artifact_dependencies=_string_list(task_map.get("artifact_dependencies")),
-                task_dependencies=_string_list(task_map.get("task_dependencies")),
-                matter_dependencies=_string_list(task_map.get("matter_dependencies")),
+                artifact_dependencies=artifact_dependencies,
+                task_dependencies=task_dependencies,
+                matter_dependencies=matter_dependencies,
                 required_certifications=_mapping_list(task_map.get("required_certifications")),
                 validation_gates=_string_list(task_map.get("validation_gates")),
                 staleness_rules=_dict(task_map.get("staleness_rules")),
                 provider_policy=provider_policy,
                 cost_limit_usd=_optional_float(task_map.get("cost_limit_usd")),
                 expected_value=_optional_float(task_map.get("expected_value")) or 0.0,
+            ),
+        )
+        _ = conn.execute(
+            """
+            UPDATE tasks
+            SET parent_task_id = ?, imported_from_candidate_id = ?, task_provenance_json = ?
+            WHERE task_id = ?
+            """,
+            (
+                parent_task_id,
+                candidate_id,
+                json.dumps(
+                    {"parent_task_id": parent_task_id, "imported_from_candidate_id": candidate_id, "proposed_task_index": index},
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                task_id,
             ),
         )
         imported.append(task_id)
@@ -112,20 +154,63 @@ def _task_exists(conn: sqlite3.Connection, task_id: str) -> bool:
     return conn.execute("SELECT 1 FROM tasks WHERE task_id = ?", (task_id,)).fetchone() is not None
 
 
-def _repair_existing_source_dependencies(conn: sqlite3.Connection, *, task_id: str, source_dependencies: list[str]) -> bool:
-    if not source_dependencies:
-        return False
-    row = cast(Mapping[str, object] | None, conn.execute("SELECT source_dependencies_json FROM tasks WHERE task_id = ?", (task_id,)).fetchone())
+def _existing_task_is_same_import(conn: sqlite3.Connection, *, task_id: str, matter_scope: str, candidate_id: str) -> bool:
+    row = cast(Mapping[str, object] | None, conn.execute("SELECT matter_scope, imported_from_candidate_id FROM tasks WHERE task_id = ?", (task_id,)).fetchone())
     if row is None:
         return False
-    current = _string_list_from_json(str(row["source_dependencies_json"] or "[]"))
-    if current == source_dependencies:
-        return False
-    _ = conn.execute(
-        "UPDATE tasks SET source_dependencies_json = ? WHERE task_id = ?",
-        (json.dumps(source_dependencies, sort_keys=True, separators=(",", ":")), task_id),
+    return str(row["matter_scope"]) == matter_scope and str(row["imported_from_candidate_id"] or "") == candidate_id
+
+
+def _record_rejected_proposed_task(conn: sqlite3.Connection, *, task_id: str, reason: str) -> None:
+    _ = repo.record_human_attention(
+        conn,
+        target_type="proposed_task",
+        target_id=task_id,
+        severity="blocker",
+        reason=f"proposed task rejected: {reason}",
     )
-    return True
+
+
+def _dependency_error(
+    conn: sqlite3.Connection,
+    *,
+    matter_scope: str,
+    source_dependencies: list[str],
+    artifact_dependencies: list[str],
+    task_dependencies: list[str],
+    matter_dependencies: list[str],
+) -> str:
+    bad_sources = _ids_not_in_matter(conn, table="sources", column="source_id", matter_scope=matter_scope, ids=source_dependencies)
+    if bad_sources:
+        return f"source dependencies outside parent matter {matter_scope}: {', '.join(bad_sources)}"
+    bad_artifacts = _ids_not_in_matter(conn, table="artifacts", column="artifact_id", matter_scope=matter_scope, ids=artifact_dependencies)
+    if bad_artifacts:
+        return f"artifact dependencies outside parent matter {matter_scope}: {', '.join(bad_artifacts)}"
+    bad_tasks = _ids_not_in_matter(conn, table="tasks", column="task_id", matter_scope=matter_scope, ids=task_dependencies)
+    if bad_tasks:
+        return f"task dependencies outside parent matter {matter_scope}: {', '.join(bad_tasks)}"
+    bad_matters = [item for item in matter_dependencies if item != matter_scope]
+    if bad_matters:
+        return f"matter dependencies outside parent matter {matter_scope}: {', '.join(bad_matters)}"
+    return ""
+
+
+def _ids_not_in_matter(
+    conn: sqlite3.Connection,
+    *,
+    table: str,
+    column: str,
+    matter_scope: str,
+    ids: list[str],
+) -> list[str]:
+    if not ids:
+        return []
+    rows = conn.execute(
+        f"SELECT {column} FROM {table} WHERE matter_scope = ? AND {column} IN (%s)" % ",".join("?" for _ in ids),
+        (matter_scope, *ids),
+    ).fetchall()
+    found = {str(row[column]) for row in rows}
+    return [item for item in ids if item not in found]
 
 
 def _infer_source_dependencies(conn: sqlite3.Connection, *, matter_scope: str, task_map: Mapping[object, object]) -> list[str]:
@@ -164,14 +249,6 @@ def _all_matter_source_ids(conn: sqlite3.Connection, *, matter_scope: str) -> li
 
 def _string_list(value: object) -> list[str]:
     return [str(item) for item in cast(list[object], value)] if isinstance(value, list) else []
-
-
-def _string_list_from_json(text: str) -> list[str]:
-    try:
-        value = json.loads(text)
-    except json.JSONDecodeError:
-        return []
-    return _string_list(value)
 
 
 def _mapping_list(value: object) -> list[dict[str, object]]:

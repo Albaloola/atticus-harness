@@ -150,7 +150,7 @@ def _load_reduced_accepted_candidate(
 def _source_ref_from_citation(citation: Mapping[str, object]) -> dict[str, object] | None:
     target_type = str(citation.get("target_type") or "")
     target_id = str(citation.get("target_id") or "")
-    if target_type not in {"source", "artifact", "authority", "claim", "chronology_event", "memory", "validation_result"}:
+    if target_type not in {"source", "artifact", "authority", "claim", "chronology_event"}:
         return None
     if not target_id:
         return None

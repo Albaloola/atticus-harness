@@ -55,6 +55,7 @@ def run_free_loop_once(
                 worker_id=f"atticus-reducer-{_short_id()}",
                 seconds=900,
                 dry_run=False,
+                lease_role="reducer",
             )
             reduction = reduce_candidate(
                 conn,
@@ -135,6 +136,7 @@ def run_free_loop_once(
     _ = repo.emit_event(
         conn,
         "free_loop.tick",
+        matter_scope=_tick_matter_scope(conn, leased_tasks=leased_tasks, executed_tasks=executed_tasks, reduction_errors=reduction_errors, worker_errors=worker_errors),
         payload={
             "ok": ok,
             "reduced_candidates": reduced_candidates,
@@ -199,7 +201,12 @@ def _fail_active_lease_after_worker_exception(conn: sqlite3.Connection, *, lease
     now = utc_now()
     _ = conn.execute("UPDATE leases SET status = 'failed', updated_at = ? WHERE lease_id = ?", (now, lease_id))
     repo.update_task_blocked(conn, task_id, [reason])
-    _ = repo.emit_event(conn, "lease.failed", payload={"lease_id": lease_id, "task_id": task_id, "reason": reason})
+    _ = repo.emit_event(
+        conn,
+        "lease.failed",
+        matter_scope=repo.matter_scope_for_target(conn, target_type="task", target_id=task_id) or "unknown",
+        payload={"lease_id": lease_id, "task_id": task_id, "reason": reason},
+    )
 
 
 def _pending_candidates(conn: sqlite3.Connection) -> list[Mapping[str, object]]:
@@ -219,3 +226,26 @@ def _pending_candidates(conn: sqlite3.Connection) -> list[Mapping[str, object]]:
 
 def _short_id() -> str:
     return uuid4().hex[:8]
+
+
+def _tick_matter_scope(
+    conn: sqlite3.Connection,
+    *,
+    leased_tasks: list[str],
+    executed_tasks: list[str],
+    reduction_errors: list[dict[str, str]],
+    worker_errors: list[dict[str, str]],
+) -> str:
+    task_ids = set(leased_tasks) | set(executed_tasks)
+    task_ids.update(item["task_id"] for item in reduction_errors if item.get("task_id"))
+    task_ids.update(item["task_id"] for item in worker_errors if item.get("task_id"))
+    scopes = {
+        scope
+        for task_id in task_ids
+        if (scope := repo.matter_scope_for_target(conn, target_type="task", target_id=task_id))
+    }
+    if not scopes:
+        return "atticus"
+    if len(scopes) == 1:
+        return scopes.pop()
+    return "multi"

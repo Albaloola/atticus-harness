@@ -792,7 +792,7 @@ def test_local_execution_can_flow_into_reducer_without_worker_canonical_write(tm
             output_dir=tmp_path / "out",
         )
         assert _count(conn, "SELECT COUNT(*) AS n FROM artifacts WHERE produced_by_task_id = 'e2e'") == 0
-        reducer_lease = acquire_lease(conn, task_id="e2e", worker_id="reducer-local")
+        reducer_lease = acquire_lease(conn, task_id="e2e", worker_id="reducer-local", lease_role="reducer")
         reduction = reduce_candidate(conn, candidate_id=worker_result.candidate_id, reducer_lease_id=reducer_lease, dry_run=False)
         artifact = cast(Mapping[str, object], conn.execute("SELECT trust_status, produced_by_task_id FROM artifacts WHERE artifact_id = ?", (reduction["artifact_id"],)).fetchone())
         task = cast(Mapping[str, object], conn.execute("SELECT status FROM tasks WHERE task_id = 'e2e'").fetchone())

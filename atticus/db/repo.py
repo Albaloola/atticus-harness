@@ -27,6 +27,7 @@ def connect(db_path: str | Path, *, read_only: bool = False) -> sqlite3.Connecti
         conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     _ = conn.execute("PRAGMA foreign_keys = ON")
+    _ = conn.execute("PRAGMA busy_timeout = 5000")
     return conn
 
 
@@ -45,6 +46,7 @@ def initialize_database(db_path: str | Path) -> None:
     with db_connection(db_path) as conn:
         _ = conn.executescript(DDL)
         _ensure_columns(conn)
+        _ensure_indexes(conn)
         _ = conn.execute(
             "INSERT OR REPLACE INTO schema_meta(key, value) VALUES (?, ?)",
             ("schema_version", str(SCHEMA_VERSION)),
@@ -53,7 +55,7 @@ def initialize_database(db_path: str | Path) -> None:
 
 
 def _ensure_columns(conn: sqlite3.Connection) -> None:
-    """Add v2 columns when initializing over a v1 database.
+    """Add missing additive columns when initializing older databases.
 
     SQLite cannot express all additive migrations through CREATE IF NOT EXISTS.
     This lightweight migrator keeps the prototype databases readable without
@@ -82,12 +84,17 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
             "task_dependencies_json": "TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(task_dependencies_json))",
             "matter_dependencies_json": "TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(matter_dependencies_json))",
             "context_pack_id": "TEXT",
+            "parent_task_id": "TEXT",
+            "imported_from_candidate_id": "TEXT",
+            "task_provenance_json": "TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(task_provenance_json))",
         },
         "leases": {
+            "lease_role": "TEXT NOT NULL DEFAULT 'worker'",
             "fencing_token": "INTEGER NOT NULL DEFAULT 1",
             "updated_at": "TEXT NOT NULL DEFAULT ''",
         },
         "validation_results": {
+            "matter_scope": "TEXT NOT NULL DEFAULT 'unknown'",
             "severity": "TEXT NOT NULL DEFAULT 'info'",
         },
         "provider_runs": {
@@ -105,6 +112,98 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
         for name, ddl in columns.items():
             if name not in existing:
                 _ = conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
+    _backfill_validation_matter_scope(conn)
+
+
+def _ensure_indexes(conn: sqlite3.Connection) -> None:
+    _ = conn.execute("DROP INDEX IF EXISTS validation_target_idx")
+    _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS validation_target_idx ON validation_results(matter_scope, target_type, target_id, gate_name, passed)"
+    )
+
+
+def _backfill_validation_matter_scope(conn: sqlite3.Connection) -> None:
+    try:
+        rows = conn.execute(
+            "SELECT validation_result_id, target_type, target_id FROM validation_results WHERE matter_scope = 'unknown'"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return
+    for row in rows:
+        matter_scope = _matter_scope_for_target(conn, target_type=str(row["target_type"]), target_id=str(row["target_id"]))
+        if matter_scope is None:
+            continue
+        _ = conn.execute(
+            "UPDATE validation_results SET matter_scope = ? WHERE validation_result_id = ? AND matter_scope = 'unknown'",
+            (matter_scope, row["validation_result_id"]),
+        )
+
+
+def _matter_scope_for_target(conn: sqlite3.Connection, *, target_type: str, target_id: str | None) -> str | None:
+    if not target_id:
+        return None
+    if target_type == "matter":
+        return target_id
+    table_column = {
+        "task": ("tasks", "task_id"),
+        "source": ("sources", "source_id"),
+        "artifact": ("artifacts", "artifact_id"),
+        "authority": ("legal_authorities", "authority_id"),
+        "chronology_event": ("chronology_events", "chronology_event_id"),
+        "claim": ("claims", "claim_id"),
+        "memory": ("legal_memories", "memory_id"),
+        "session": ("sessions", "session_id"),
+        "run": ("runs", "run_id"),
+    }.get(target_type)
+    try:
+        if table_column is not None:
+            table, column = table_column
+            if not _table_exists(conn, table):
+                return None
+            row = conn.execute(f"SELECT matter_scope FROM {table} WHERE {column} = ?", (target_id,)).fetchone()
+            return str(row["matter_scope"]) if row is not None else None
+        if target_type == "candidate":
+            row = conn.execute(
+                """
+                SELECT t.matter_scope
+                FROM candidate_outputs co
+                JOIN tasks t ON t.task_id = co.task_id
+                WHERE co.candidate_id = ?
+                """,
+                (target_id,),
+            ).fetchone()
+            return str(row["matter_scope"]) if row is not None else None
+        if target_type == "reducer_packet":
+            row = conn.execute(
+                """
+                SELECT t.matter_scope
+                FROM reducer_packets rp
+                JOIN candidate_outputs co ON co.candidate_id = rp.candidate_id
+                JOIN tasks t ON t.task_id = co.task_id
+                WHERE rp.reducer_packet_id = ?
+                """,
+                (target_id,),
+            ).fetchone()
+            return str(row["matter_scope"]) if row is not None else None
+        if target_type == "provider_run":
+            row = conn.execute(
+                """
+                SELECT COALESCE(t.matter_scope, r.matter_scope) AS matter_scope
+                FROM provider_runs pr
+                LEFT JOIN tasks t ON t.task_id = pr.task_id
+                LEFT JOIN runs r ON r.run_id = pr.run_id
+                WHERE pr.provider_run_id = ?
+                """,
+                (target_id,),
+            ).fetchone()
+            return str(row["matter_scope"]) if row is not None and row["matter_scope"] is not None else None
+    except sqlite3.OperationalError:
+        return None
+    return None
+
+
+def matter_scope_for_target(conn: sqlite3.Connection, *, target_type: str, target_id: str | None) -> str | None:
+    return _matter_scope_for_target(conn, target_type=target_type, target_id=target_id)
 
 
 def _json(value: object) -> str:
@@ -469,6 +568,7 @@ def add_task(conn: sqlite3.Connection, task: TaskSpec) -> None:
 
 
 def update_task_status(conn: sqlite3.Connection, task_id: str, status: str, reason: str = "") -> None:
+    matter_scope = _matter_scope_for_target(conn, target_type="task", target_id=task_id) or "unknown"
     _ = conn.execute(
         """
         UPDATE tasks
@@ -477,10 +577,11 @@ def update_task_status(conn: sqlite3.Connection, task_id: str, status: str, reas
         """,
         (str(status), utc_now(), task_id),
     )
-    _ = emit_event(conn, "task.status_changed", payload={"task_id": task_id, "status": str(status), "reason": reason})
+    _ = emit_event(conn, "task.status_changed", matter_scope=matter_scope, payload={"task_id": task_id, "status": str(status), "reason": reason})
 
 
 def update_task_blocked(conn: sqlite3.Connection, task_id: str, reasons: list[str]) -> None:
+    matter_scope = _matter_scope_for_target(conn, target_type="task", target_id=task_id) or "unknown"
     _ = conn.execute(
         """
         UPDATE tasks
@@ -496,7 +597,7 @@ def update_task_blocked(conn: sqlite3.Connection, task_id: str, reasons: list[st
         severity="blocker",
         reason="; ".join(reasons),
     )
-    _ = emit_event(conn, "task.blocked", payload={"task_id": task_id, "reasons": reasons})
+    _ = emit_event(conn, "task.blocked", matter_scope=matter_scope, payload={"task_id": task_id, "reasons": reasons})
 
 
 def record_validation(
@@ -508,13 +609,16 @@ def record_validation(
     passed: bool,
     details: dict[str, object] | None = None,
     severity: str = "info",
+    matter_scope: str | None = None,
 ) -> int:
+    resolved_matter_scope = matter_scope or _matter_scope_for_target(conn, target_type=target_type, target_id=target_id) or "unknown"
     cur = conn.execute(
         """
-        INSERT INTO validation_results(target_type, target_id, gate_name, passed, severity, details_json, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO validation_results(matter_scope, target_type, target_id, gate_name, passed, severity, details_json, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
+            resolved_matter_scope,
             target_type,
             target_id,
             gate_name,
@@ -531,8 +635,10 @@ def record_validation(
     _ = emit_event(
         conn,
         "validation.recorded",
+        matter_scope=resolved_matter_scope,
         payload={
             "validation_result_id": validation_id,
+            "matter_scope": resolved_matter_scope,
             "target_type": target_type,
             "target_id": target_id,
             "gate_name": gate_name,
@@ -562,6 +668,13 @@ def add_certification(
     certification_id: str | None = None,
 ) -> str:
     cid = certification_id or f"cert-{uuid4().hex}"
+    matter_scope = _matter_scope_for_target(conn, target_type=subject_type, target_id=subject_id)
+    if matter_scope is None:
+        row = conn.execute(
+            "SELECT matter_scope FROM validation_results WHERE validation_result_id = ?",
+            (validation_result_id,),
+        ).fetchone()
+        matter_scope = str(row["matter_scope"]) if row is not None else "unknown"
     _ = conn.execute(
         """
         INSERT INTO certifications(certification_id, subject_type, subject_id, certification_type,
@@ -583,6 +696,7 @@ def add_certification(
     _ = emit_event(
         conn,
         "certification.issued",
+        matter_scope=matter_scope,
         payload={
             "certification_id": cid,
             "subject_type": subject_type,
@@ -617,6 +731,12 @@ def record_provider_run(
     raw_usage: dict[str, object] | None = None,
 ) -> str:
     rid = provider_run_id or f"prun-{uuid4().hex}"
+    matter_scope = None
+    if task_id is not None:
+        matter_scope = _matter_scope_for_target(conn, target_type="task", target_id=task_id)
+    if matter_scope is None and run_id is not None:
+        matter_scope = _matter_scope_for_target(conn, target_type="run", target_id=run_id)
+    matter_scope = matter_scope or "unknown"
     _ = conn.execute(
         """
         INSERT INTO provider_runs(provider_run_id, task_id, run_id, stage, requested_provider,
@@ -651,6 +771,7 @@ def record_provider_run(
     _ = emit_event(
         conn,
         "provider.run_recorded",
+        matter_scope=matter_scope,
         payload={
             "provider_run_id": rid,
             "task_id": task_id,
@@ -692,16 +813,19 @@ def record_external_action_block(
     requested_by: str = "user",
     reason: str = "external legal actions are blocked",
     payload: dict[str, object] | None = None,
+    matter_scope: str | None = None,
 ) -> str:
+    payload = payload or {}
+    resolved_matter_scope = matter_scope or _matter_scope_for_target(conn, target_type="task", target_id=str(payload.get("task_id") or "")) or "unknown"
     block_id = f"block-{uuid4().hex}"
     _ = conn.execute(
         """
         INSERT INTO external_action_blocks(block_id, action_type, requested_by, reason, payload_json, created_at)
         VALUES (?, ?, ?, ?, ?, ?)
         """,
-        (block_id, action_type, requested_by, reason, _json(payload or {}), utc_now()),
+        (block_id, action_type, requested_by, reason, _json(payload), utc_now()),
     )
-    _ = emit_event(conn, "external_action.blocked", payload={"block_id": block_id, "action_type": action_type})
+    _ = emit_event(conn, "external_action.blocked", matter_scope=resolved_matter_scope, payload={"block_id": block_id, "action_type": action_type})
     return block_id
 
 
@@ -894,6 +1018,7 @@ def record_candidate_output(
     candidate_id: str | None = None,
 ) -> str:
     cid = candidate_id or f"cand-{uuid4().hex}"
+    matter_scope = _matter_scope_for_target(conn, target_type="task", target_id=task_id) or "unknown"
     payload_json = _json(payload)
     _ = conn.execute(
         """
@@ -917,6 +1042,7 @@ def record_candidate_output(
     _ = emit_event(
         conn,
         "candidate_output.recorded",
+        matter_scope=matter_scope,
         payload={"candidate_id": cid, "task_id": task_id, "status": status, "quarantined_reason": quarantined_reason},
     )
     return cid
@@ -934,6 +1060,7 @@ def record_reducer_packet(
     reducer_packet_id: str | None = None,
 ) -> str:
     rid = reducer_packet_id or f"red-{uuid4().hex}"
+    matter_scope = _matter_scope_for_target(conn, target_type="candidate", target_id=candidate_id) or "unknown"
     _ = conn.execute(
         """
         INSERT INTO reducer_packets(reducer_packet_id, candidate_id, reducer_lease_id, decision,
@@ -954,6 +1081,7 @@ def record_reducer_packet(
     _ = emit_event(
         conn,
         "reducer_packet.recorded",
+        matter_scope=matter_scope,
         payload={"reducer_packet_id": rid, "candidate_id": candidate_id, "decision": decision},
     )
     return rid
@@ -1108,6 +1236,8 @@ def _validate_legal_memory(
         target_id = str(ref.get("target_id") or "")
         if not target_type or not target_id:
             raise ValueError(f"source_refs[{index}] requires target_type and target_id")
+        if memory_type in SOURCE_REQUIRED_MEMORY_TYPES and target_type in {"memory", "validation_result"}:
+            raise ValueError(f"source_refs[{index}] cannot use orientation-only target type for {memory_type} memory: {target_type}")
         if not _memory_ref_exists(conn, matter_scope=matter_scope, target_type=target_type, target_id=target_id):
             raise ValueError(f"source_refs[{index}] target does not exist in matter {matter_scope}: {target_type}:{target_id}")
 
@@ -1126,7 +1256,10 @@ def _memory_ref_exists(conn: sqlite3.Connection, *, matter_scope: str, target_ty
     elif target_type == "memory":
         sql = "SELECT 1 FROM legal_memories WHERE memory_id = ? AND matter_scope = ? LIMIT 1"
     elif target_type == "validation_result":
-        return conn.execute("SELECT 1 FROM validation_results WHERE validation_result_id = ? LIMIT 1", (target_id,)).fetchone() is not None
+        return conn.execute(
+            "SELECT 1 FROM validation_results WHERE validation_result_id = ? AND matter_scope = ? LIMIT 1",
+            (target_id, matter_scope),
+        ).fetchone() is not None
     else:
         return False
     return conn.execute(sql, (target_id, matter_scope)).fetchone() is not None

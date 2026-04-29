@@ -104,4 +104,9 @@ def _requeue_previously_blocked_task(conn: sqlite3.Connection, *, task_id: str) 
         """,
         (TaskStatus.QUEUED, utc_now(), task_id, TaskStatus.BLOCKED),
     )
-    _ = repo.emit_event(conn, "task.unblocked", payload={"task_id": task_id, "reason": "scheduler gates passed"})
+    _ = repo.emit_event(
+        conn,
+        "task.unblocked",
+        matter_scope=repo.matter_scope_for_target(conn, target_type="task", target_id=task_id) or "unknown",
+        payload={"task_id": task_id, "reason": "scheduler gates passed"},
+    )

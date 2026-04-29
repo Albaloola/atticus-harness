@@ -138,7 +138,7 @@ def _freeze_later_stage_work(conn: sqlite3.Connection, *, matter_scope: str, fai
         repo.update_task_blocked(conn, task_id, [reason])
         frozen.append(task_id)
     if frozen:
-        _ = repo.emit_event(conn, "foundation_reconciliation.froze_tasks", payload={"matter_scope": matter_scope, "task_ids": frozen, "failed_gates": failed_gates})
+        _ = repo.emit_event(conn, "foundation_reconciliation.froze_tasks", matter_scope=matter_scope, payload={"matter_scope": matter_scope, "task_ids": frozen, "failed_gates": failed_gates})
     return frozen
 
 
@@ -178,8 +178,8 @@ def _unfreeze_foundation_blocked_work(conn: sqlite3.Connection, *, matter_scope:
                 "UPDATE tasks SET status = ?, blocked_reasons_json = '[]', updated_at = ? WHERE task_id = ?",
                 (TaskStatus.QUEUED, utc_now(), task_id),
             )
-            _ = repo.emit_event(conn, "foundation_reconciliation.unfroze_task", payload={"matter_scope": matter_scope, "task_id": task_id})
+            _ = repo.emit_event(conn, "foundation_reconciliation.unfroze_task", matter_scope=matter_scope, payload={"matter_scope": matter_scope, "task_id": task_id})
             unfrozen.append(task_id)
     if unfrozen:
-        _ = repo.emit_event(conn, "foundation_reconciliation.unfroze_tasks", payload={"matter_scope": matter_scope, "task_ids": unfrozen})
+        _ = repo.emit_event(conn, "foundation_reconciliation.unfroze_tasks", matter_scope=matter_scope, payload={"matter_scope": matter_scope, "task_ids": unfrozen})
     return unfrozen

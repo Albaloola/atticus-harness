@@ -10,6 +10,7 @@ import sqlite3
 from typing import cast, Protocol
 
 from atticus.db import repo
+from atticus.workers.citation_context import allowed_citation_targets_for_task
 from atticus.workers.result_parser import RESULT_PACKET_SCHEMA_VERSION, ResultPacketError, parse_result
 
 SHA256_RE = re.compile(r"^[a-fA-F0-9]{64}$")
@@ -303,14 +304,18 @@ def validate_reducer_packet_schema(
 ) -> tuple[bool, dict[str, object]]:
     if target_type != "candidate":
         return False, {"error": "reducer_packet_schema must target candidate"}
-    row = cast(SqlRow | None, conn.execute("SELECT payload_json FROM candidate_outputs WHERE candidate_id = ?", (target_id,)).fetchone())
+    row = cast(SqlRow | None, conn.execute("SELECT payload_json, task_id FROM candidate_outputs WHERE candidate_id = ?", (target_id,)).fetchone())
     if row is None:
         return False, {"error": "candidate output not found"}
     try:
         payload = json.loads(str(row["payload_json"]))
         if not isinstance(payload, Mapping):
             return False, {"error": "candidate output payload must be a JSON object"}
-        _ = parse_result({str(key): value for key, value in cast(Mapping[object, object], payload).items()})
+        task_id = str(row["task_id"])
+        _ = parse_result(
+            {str(key): value for key, value in cast(Mapping[object, object], payload).items()},
+            allowed_citation_targets=allowed_citation_targets_for_task(conn, task_id=task_id),
+        )
     except ResultPacketError as exc:
         return False, {"error": str(exc)}
     return True, {"schema": RESULT_PACKET_SCHEMA_VERSION}

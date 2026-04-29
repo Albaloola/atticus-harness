@@ -141,5 +141,19 @@ def _rollback_live_resume_leases(conn: sqlite3.Connection, *, leases: list[dict[
         _ = repo.emit_event(
             conn,
             "live_resume.rollback_leases",
+            matter_scope=_rollback_matter_scope(conn, leases=leases),
             payload={"reason": reason, "leases": leases},
         )
+
+
+def _rollback_matter_scope(conn: sqlite3.Connection, *, leases: list[dict[str, object]]) -> str:
+    scopes = {
+        scope
+        for lease in leases
+        if (scope := repo.matter_scope_for_target(conn, target_type="task", target_id=str(lease.get("task_id") or "")))
+    }
+    if not scopes:
+        return "unknown"
+    if len(scopes) == 1:
+        return scopes.pop()
+    return "multi"

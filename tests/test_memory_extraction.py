@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import cast
 import json
 
+import pytest
+
 from atticus.cli import main as cli_main
 from atticus.core.tasks import TaskSpec
 from atticus.db import repo
@@ -136,6 +138,27 @@ def test_memory_extract_candidates_dry_run_and_write_candidate_memory(tmp_path: 
     assert {row["type"] for row in memories} == {"contradiction", "evidence_fact"}
     assert all(row["status"] == "candidate" for row in memories)
     assert all(json.loads(str(row["source_refs_json"])) for row in memories)
+
+
+def test_source_required_memory_rejects_memory_as_proof(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        orienting_memory = repo.add_legal_memory(
+            conn,
+            matter_scope="alpha",
+            memory_type="drafting_preference",
+            name="Style",
+            content="Use plain language.",
+        )
+        with pytest.raises(ValueError, match="orientation-only"):
+            _ = repo.add_legal_memory(
+                conn,
+                matter_scope="alpha",
+                memory_type="evidence_fact",
+                name="Unsupported fact",
+                content="This fact is only backed by memory.",
+                source_refs=[{"target_type": "memory", "target_id": orienting_memory, "locator": "memory"}],
+            )
 
 
 def test_memory_consolidate_dry_run_and_write_review_task(tmp_path: Path, capsys):

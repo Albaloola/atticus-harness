@@ -29,7 +29,10 @@ def acquire_lease(
     worker_id: str,
     seconds: int = 900,
     dry_run: bool = False,
+    lease_role: str = "worker",
 ) -> str:
+    if lease_role not in {"worker", "reducer"}:
+        raise LeaseError(f"unsupported lease role: {lease_role}")
     task = cast(Mapping[str, object] | None, cast(object, conn.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone()))
     if task is None:
         raise LeaseError(f"unknown task: {task_id}")
@@ -48,6 +51,8 @@ def acquire_lease(
     }
     if task["status"] not in leaseable:
         raise LeaseError(f"task {task_id} is not leaseable from status {task['status']}")
+    if lease_role == "reducer" and task["status"] != TaskStatus.REDUCER_PENDING:
+        raise LeaseError(f"reducer lease requires task {task_id} to be in status {TaskStatus.REDUCER_PENDING}")
 
     gate_result = evaluate_task_gates(conn, task)
     if not gate_result.allowed:
@@ -59,7 +64,7 @@ def acquire_lease(
             "UPDATE tasks SET status = ?, blocked_reasons_json = '[]', updated_at = ? WHERE task_id = ? AND status = ?",
             (TaskStatus.QUEUED, utc_now(), task_id, TaskStatus.BLOCKED),
         )
-        _ = repo.emit_event(conn, "task.unblocked", payload={"task_id": task_id, "reason": "lease gates passed"})
+        _ = repo.emit_event(conn, "task.unblocked", matter_scope=str(task["matter_scope"]), payload={"task_id": task_id, "reason": "lease gates passed"})
         task = cast(Mapping[str, object], conn.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone())
 
     existing = cast(Mapping[str, object] | None, conn.execute(
@@ -83,10 +88,10 @@ def acquire_lease(
     try:
         _ = conn.execute(
             """
-            INSERT INTO leases(lease_id, task_id, worker_id, status, fencing_token, expires_at, created_at, updated_at)
-            VALUES (?, ?, ?, 'active', ?, ?, ?, ?)
+            INSERT INTO leases(lease_id, task_id, worker_id, lease_role, status, fencing_token, expires_at, created_at, updated_at)
+            VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?)
             """,
-            (lease_id, task_id, worker_id, fencing_token, expires_at, now, now),
+            (lease_id, task_id, worker_id, lease_role, fencing_token, expires_at, now, now),
         )
     except sqlite3.IntegrityError as exc:
         raise LeaseError(f"task {task_id} already has an active lease") from exc
@@ -97,6 +102,7 @@ def acquire_lease(
     _ = repo.emit_event(
         conn,
         "lease.acquired",
+        matter_scope=str(task["matter_scope"]),
         payload={"lease_id": lease_id, "task_id": task_id, "worker_id": worker_id, "fencing_token": fencing_token},
     )
     return lease_id
@@ -140,7 +146,8 @@ def complete_lease(conn: sqlite3.Connection, *, lease_id: str, task_status: str 
         "UPDATE tasks SET status = ?, updated_at = ? WHERE task_id = ?",
         (str(task_status), now, lease["task_id"]),
     )
-    _ = repo.emit_event(conn, "lease.completed", payload={"lease_id": lease_id, "task_id": lease["task_id"]})
+    matter_scope = repo.matter_scope_for_target(conn, target_type="task", target_id=str(lease["task_id"])) or "unknown"
+    _ = repo.emit_event(conn, "lease.completed", matter_scope=matter_scope, payload={"lease_id": lease_id, "task_id": lease["task_id"]})
 
 
 def expire_leases(conn: sqlite3.Connection, *, task_id: str | None = None) -> list[str]:
@@ -174,6 +181,7 @@ def expire_leases(conn: sqlite3.Connection, *, task_id: str | None = None) -> li
             _ = repo.emit_event(
                 conn,
                 "lease.expired",
+                matter_scope=repo.matter_scope_for_target(conn, target_type="task", target_id=lease_task_id) or "unknown",
                 payload={"lease_id": row["lease_id"], "task_id": row["task_id"], "worker_id": row["worker_id"]},
             )
     return expired

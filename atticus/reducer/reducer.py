@@ -13,7 +13,8 @@ from atticus.hooks import run_hooks
 from atticus.scheduler.lease import complete_lease, require_active_lease
 from atticus.validation.canonical_write_guard import assert_canonical_write_allowed
 from atticus.validation.gates import run_validation
-from atticus.workers.result_parser import parse_result
+from atticus.workers.citation_context import allowed_citation_targets_for_task
+from atticus.workers.result_parser import ResultPacketError, parse_result
 from atticus.workers.proposed_tasks import import_proposed_tasks_from_candidate
 
 
@@ -60,7 +61,13 @@ def reduce_candidate(
     payload = json.loads(str(candidate["payload_json"]))
     if not isinstance(payload, Mapping):
         raise ReductionBlocked("candidate payload must be a JSON object")
-    packet = parse_result({str(key): value for key, value in cast(Mapping[object, object], payload).items()})
+    try:
+        packet = parse_result(
+            {str(key): value for key, value in cast(Mapping[object, object], payload).items()},
+            allowed_citation_targets=allowed_citation_targets_for_task(conn, task_id=task_id),
+        )
+    except ResultPacketError as exc:
+        raise ReductionBlocked(f"candidate failed task-context schema validation: {exc}") from exc
     proposed = packet.proposed_artifacts[0] if packet.proposed_artifacts else {}
     canonical_preview = {
         "candidate_id": candidate_id,
@@ -156,4 +163,4 @@ def _load_string_list(text: str) -> list[str]:
     value = json.loads(text or "[]")
     if not isinstance(value, list):
         return []
-    return [str(item) for item in value if str(item)]
+    return [str(item) for item in cast(list[object], value) if str(item)]

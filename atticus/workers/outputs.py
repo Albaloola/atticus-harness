@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-import json
 import sqlite3
 
 from typing import cast
@@ -11,6 +10,7 @@ from atticus.core.events import utc_now
 from atticus.core.policies import TaskStatus
 from atticus.db import repo
 from atticus.scheduler.lease import LeaseError, complete_lease, require_active_lease
+from atticus.workers.citation_context import allowed_citation_targets_for_task
 from atticus.workers.result_parser import ResultPacketError, parse_result
 
 
@@ -31,7 +31,7 @@ def record_worker_result(
         if lease["worker_id"] != worker_id:
             raise LeaseError(f"lease {lease_id} belongs to worker {lease['worker_id']}, not {worker_id}")
         _record_blocked_external_action_requests(conn, task_id=task_id, worker_id=worker_id, payload=payload)
-        packet = parse_result(payload, allowed_citation_targets=_allowed_citation_targets_for_task(conn, task_id=task_id))
+        packet = parse_result(payload, allowed_citation_targets=allowed_citation_targets_for_task(conn, task_id=task_id))
         if packet.task_id != task_id:
             raise ResultPacketError(f"worker result task_id {packet.task_id!r} does not match leased task {task_id!r}")
     except (LeaseError, ResultPacketError) as exc:
@@ -63,49 +63,6 @@ def record_worker_result(
     return candidate_id
 
 
-def _allowed_citation_targets_for_task(conn: sqlite3.Connection, *, task_id: str) -> dict[str, set[str]]:
-    task = cast(Mapping[str, object] | None, conn.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone())
-    if task is None:
-        return {}
-    matter_scope = str(task["matter_scope"])
-    source_ids = _string_list_from_json(task["source_dependencies_json"])
-    artifact_ids = _string_list_from_json(task["artifact_dependencies_json"])
-    return {
-        "source": set(source_ids),
-        "artifact": set(artifact_ids),
-        "authority": _ids_for_matter(conn, "legal_authorities", "authority_id", matter_scope),
-        "chronology_event": _ids_for_matter(conn, "chronology_events", "chronology_event_id", matter_scope),
-        "claim": _ids_for_matter(conn, "claims", "claim_id", matter_scope),
-        "memory": _ids_for_matter_if_exists(conn, "legal_memories", "memory_id", matter_scope),
-        "validation_result": _validation_result_ids(conn),
-    }
-
-
-def _string_list_from_json(raw: object) -> list[str]:
-    value = json.loads(str(raw or "[]"))
-    if not isinstance(value, list):
-        return []
-    return [item for item in value if isinstance(item, str)]
-
-
-def _ids_for_matter(conn: sqlite3.Connection, table: str, column: str, matter_scope: str) -> set[str]:
-    return {
-        str(row[column])
-        for row in conn.execute(f"SELECT {column} FROM {table} WHERE matter_scope = ?", (matter_scope,)).fetchall()
-    }
-
-
-def _ids_for_matter_if_exists(conn: sqlite3.Connection, table: str, column: str, matter_scope: str) -> set[str]:
-    exists = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name = ?", (table,)).fetchone()
-    if exists is None:
-        return set()
-    return _ids_for_matter(conn, table, column, matter_scope)
-
-
-def _validation_result_ids(conn: sqlite3.Connection) -> set[str]:
-    return {str(row["validation_result_id"]) for row in conn.execute("SELECT validation_result_id FROM validation_results").fetchall()}
-
-
 def _record_blocked_external_action_requests(
     conn: sqlite3.Connection,
     *,
@@ -116,10 +73,11 @@ def _record_blocked_external_action_requests(
     requests = payload.get("external_action_requests")
     if not isinstance(requests, list):
         return
-    for request in requests:
+    for request in cast(list[object], requests):
         if isinstance(request, Mapping):
-            action_type = str(request.get("action_type") or request.get("type") or "external_action")
-            request_payload = {str(key): value for key, value in cast(Mapping[object, object], request).items()}
+            request_map = cast(Mapping[object, object], request)
+            action_type = str(request_map.get("action_type") or request_map.get("type") or "external_action")
+            request_payload = {str(key): value for key, value in request_map.items()}
         else:
             action_type = "external_action"
             request_payload = {"request": str(request)}
@@ -129,6 +87,7 @@ def _record_blocked_external_action_requests(
             requested_by=worker_id,
             reason="worker result external action requests are blocked",
             payload={"task_id": task_id, "request": request_payload},
+            matter_scope=_task_matter_scope(conn, task_id=task_id),
         )
 
 
@@ -193,6 +152,7 @@ def reject_candidate_output(
     _ = repo.emit_event(
         conn,
         "candidate.rejected",
+        matter_scope=_task_matter_scope(conn, task_id=task_id),
         payload={"candidate_id": candidate_id, "task_id": task_id, "reason": reason, "next_task_status": str(next_status)},
     )
     return result
@@ -208,7 +168,7 @@ def _fail_active_lease(conn: sqlite3.Connection, *, lease_id: str, reason: str) 
     )
     if cur.rowcount:
         _restore_task_after_failed_output_lease(conn, task_id=str(row["task_id"]))
-        _ = repo.emit_event(conn, "lease.failed", payload={"lease_id": lease_id, "task_id": row["task_id"], "reason": reason})
+        _ = repo.emit_event(conn, "lease.failed", matter_scope=_task_matter_scope(conn, task_id=str(row["task_id"])), payload={"lease_id": lease_id, "task_id": row["task_id"], "reason": reason})
 
 
 def _restore_task_after_failed_output_lease(conn: sqlite3.Connection, *, task_id: str) -> None:
@@ -221,3 +181,8 @@ def _restore_task_after_failed_output_lease(conn: sqlite3.Connection, *, task_id
         "UPDATE tasks SET status = ?, updated_at = ? WHERE task_id = ? AND status IN (?, ?)",
         (next_status, utc_now(), task_id, TaskStatus.LEASED, TaskStatus.RUNNING),
     )
+
+
+def _task_matter_scope(conn: sqlite3.Connection, *, task_id: str) -> str:
+    row = cast(Mapping[str, object] | None, conn.execute("SELECT matter_scope FROM tasks WHERE task_id = ?", (task_id,)).fetchone())
+    return str(row["matter_scope"]) if row is not None else "unknown"

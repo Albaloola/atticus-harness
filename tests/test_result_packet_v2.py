@@ -74,6 +74,21 @@ def v2_packet(task_id: str, *, citation_target_id: str | None = None) -> dict[st
     }
 
 
+def validation_result_packet(task_id: str, validation_result_id: int) -> dict[str, object]:
+    packet = v2_packet(task_id)
+    packet["citations"] = [
+        {
+            "citation_id": "cite-validation-1",
+            "target_type": "validation_result",
+            "target_id": str(validation_result_id),
+            "locator": "gate",
+        }
+    ]
+    findings = cast(list[dict[str, object]], packet["findings"])
+    findings[0]["citation_ids"] = ["cite-validation-1"]
+    return packet
+
+
 def test_result_packet_v2_rejects_missing_version_and_extra_fields():
     packet = v2_packet("packet-task")
     missing_version = dict(packet)
@@ -94,6 +109,29 @@ def test_result_packet_v2_rejects_finding_citation_id_not_defined():
     findings[0]["citation_ids"] = ["missing-citation"]
 
     with pytest.raises(ResultPacketError, match="undefined citation ids"):
+        _ = parse_result(packet)
+
+
+def test_result_packet_v2_rejects_memory_only_proof_for_material_findings():
+    packet = v2_packet("packet-task")
+    packet["citations"] = [
+        {
+            "citation_id": "cite-memory-1",
+            "target_type": "memory",
+            "target_id": "mem-1",
+            "locator": "memory",
+        }
+    ]
+    findings = cast(list[dict[str, object]], packet["findings"])
+    findings[0].update(
+        {
+            "finding_type": "fact",
+            "citation_ids": ["cite-memory-1"],
+            "reasoning_status": "supported",
+        }
+    )
+
+    with pytest.raises(ResultPacketError, match="orientation only"):
         _ = parse_result(packet)
 
 
@@ -145,6 +183,74 @@ def test_record_worker_result_accepts_v2_citations_inside_task_context(tmp_path:
 
     assert candidate["status"] == "candidate"
     assert task["status"] == "reducer_pending"
+
+
+def test_record_worker_result_rejects_legacy_cross_matter_source_dependency(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        source_id = repo.add_source(conn, matter_scope="alpha", path="/alpha/source.pdf", sha256="a" * 64)
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="beta-legacy-cross-source",
+                title="Beta legacy cross source",
+                task_type="extract",
+                matter_scope="beta",
+            ),
+        )
+        lease_id = acquire_lease(conn, task_id="beta-legacy-cross-source", worker_id="worker-1")
+        _ = conn.execute(
+            "UPDATE tasks SET source_dependencies_json = ? WHERE task_id = ?",
+            (f'["{source_id}"]', "beta-legacy-cross-source"),
+        )
+        candidate_id = record_worker_result(
+            conn,
+            task_id="beta-legacy-cross-source",
+            lease_id=lease_id,
+            worker_id="worker-1",
+            payload=v2_packet("beta-legacy-cross-source", citation_target_id=source_id),
+        )
+        candidate = cast(Mapping[str, object], conn.execute("SELECT status, quarantined_reason FROM candidate_outputs WHERE candidate_id = ?", (candidate_id,)).fetchone())
+
+    assert candidate["status"] == "quarantined"
+    assert "outside work order context" in str(candidate["quarantined_reason"])
+
+
+def test_record_worker_result_scopes_validation_result_citations_to_task_matter(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        beta_validation = repo.record_validation(conn, target_type="matter", target_id="beta", gate_name="foundation", passed=True)
+        alpha_validation = repo.record_validation(conn, target_type="matter", target_id="alpha", gate_name="foundation", passed=True)
+        repo.add_task(conn, TaskSpec(task_id="alpha-bad-validation", title="Alpha bad validation", task_type="extract", matter_scope="alpha"))
+        bad_lease = acquire_lease(conn, task_id="alpha-bad-validation", worker_id="worker-1")
+        bad_candidate_id = record_worker_result(
+            conn,
+            task_id="alpha-bad-validation",
+            lease_id=bad_lease,
+            worker_id="worker-1",
+            payload=validation_result_packet("alpha-bad-validation", beta_validation),
+        )
+        repo.add_task(conn, TaskSpec(task_id="alpha-good-validation", title="Alpha good validation", task_type="extract", matter_scope="alpha"))
+        good_lease = acquire_lease(conn, task_id="alpha-good-validation", worker_id="worker-1")
+        good_candidate_id = record_worker_result(
+            conn,
+            task_id="alpha-good-validation",
+            lease_id=good_lease,
+            worker_id="worker-1",
+            payload=validation_result_packet("alpha-good-validation", alpha_validation),
+        )
+        bad_candidate = cast(Mapping[str, object], conn.execute("SELECT status, quarantined_reason FROM candidate_outputs WHERE candidate_id = ?", (bad_candidate_id,)).fetchone())
+        good_candidate = cast(Mapping[str, object], conn.execute("SELECT status FROM candidate_outputs WHERE candidate_id = ?", (good_candidate_id,)).fetchone())
+        validation_matters = {
+            int(row["validation_result_id"]): str(row["matter_scope"])
+            for row in conn.execute("SELECT validation_result_id, matter_scope FROM validation_results").fetchall()
+        }
+
+    assert bad_candidate["status"] == "quarantined"
+    assert "outside work order context" in str(bad_candidate["quarantined_reason"])
+    assert good_candidate["status"] == "candidate"
+    assert validation_matters[beta_validation] == "beta"
+    assert validation_matters[alpha_validation] == "alpha"
 
 
 def test_external_action_request_is_blocked_and_quarantined(tmp_path: Path):

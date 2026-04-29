@@ -20,7 +20,7 @@ from atticus.providers.policy import ProviderActual, ProviderRequest, check_prov
 from atticus.reducer.canonical_writer import write_canonical_text
 from atticus.retrieval.ask import answer_question
 from atticus.retrieval.index import rebuild_search_index
-from atticus.scheduler.lease import LeaseError, acquire_lease
+from atticus.scheduler.lease import LeaseError, acquire_lease, complete_lease
 from atticus.scheduler.planner import select_runnable_tasks
 from atticus.status.report import generate_status
 from atticus.validation.canonical_write_guard import (
@@ -429,32 +429,127 @@ def test_non_reducer_workers_cannot_write_canonical_files():
 
 def test_canonical_writer_requires_active_reducer_lease_context(tmp_path: Path):
     db_path = init_db(tmp_path)
-    target_path = tmp_path / "canonical.txt"
+    target_path = "canonical.txt"
     with repo.db_connection(db_path) as conn:
         repo.add_task(conn, TaskSpec(task_id="canonical-task", title="Canonical task", task_type="reduce"))
         worker_lease = acquire_lease(conn, task_id="canonical-task", worker_id="worker-1")
-        with pytest.raises(CanonicalWriteDenied, match="not held by a reducer"):
+        with pytest.raises(CanonicalWriteDenied, match="not issued for reducer"):
             write_canonical_text(
                 conn=conn,
                 lease_id=worker_lease,
                 task_id="canonical-task",
                 writer_role="canonical_writer",
-                target_path=str(target_path),
+                target_path=target_path,
                 text="unsafe",
             )
         _ = conn.execute("UPDATE leases SET status = 'failed' WHERE lease_id = ?", (worker_lease,))
-        _ = conn.execute("UPDATE tasks SET status = ? WHERE task_id = ?", (TaskStatus.QUEUED, "canonical-task"))
-        reducer_lease = acquire_lease(conn, task_id="canonical-task", worker_id="reducer-1")
+        _ = conn.execute("UPDATE tasks SET status = ? WHERE task_id = ?", (TaskStatus.REDUCER_PENDING, "canonical-task"))
+        fake_reducer_lease = acquire_lease(conn, task_id="canonical-task", worker_id="reducer-fake")
+        with pytest.raises(CanonicalWriteDenied, match="not issued for reducer"):
+            write_canonical_text(
+                conn=conn,
+                lease_id=fake_reducer_lease,
+                task_id="canonical-task",
+                writer_role="canonical_writer",
+                target_path=target_path,
+                text="unsafe",
+            )
+        _ = conn.execute("UPDATE leases SET status = 'failed' WHERE lease_id = ?", (fake_reducer_lease,))
+        _ = conn.execute("UPDATE tasks SET status = ? WHERE task_id = ?", (TaskStatus.REDUCER_PENDING, "canonical-task"))
+        reducer_lease = acquire_lease(conn, task_id="canonical-task", worker_id="reducer-1", lease_role="reducer")
         write_canonical_text(
             conn=conn,
             lease_id=reducer_lease,
             task_id="canonical-task",
             writer_role="canonical_writer",
-            target_path=str(target_path),
+            target_path=target_path,
             text="safe",
         )
 
-    assert target_path.read_text(encoding="utf-8") == "safe"
+    assert (tmp_path / "canonical" / "canonical.txt").read_text(encoding="utf-8") == "safe"
+
+
+def test_canonical_writer_rejects_path_escape_and_symlink_targets(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(conn, TaskSpec(task_id="canonical-sandbox", title="Canonical sandbox", task_type="reduce"))
+        _ = conn.execute("UPDATE tasks SET status = ? WHERE task_id = ?", (TaskStatus.REDUCER_PENDING, "canonical-sandbox"))
+        reducer_lease = acquire_lease(conn, task_id="canonical-sandbox", worker_id="reducer-1", lease_role="reducer")
+        for target_path in (str(tmp_path / "outside.txt"), "../outside.txt", "canonical"):
+            with pytest.raises(CanonicalWriteDenied):
+                write_canonical_text(
+                    conn=conn,
+                    lease_id=reducer_lease,
+                    task_id="canonical-sandbox",
+                    writer_role="canonical_writer",
+                    target_path=target_path,
+                    text="blocked",
+                )
+        canonical_root = tmp_path / "canonical"
+        canonical_root.mkdir(exist_ok=True)
+        symlink = canonical_root / "link.txt"
+        symlink.symlink_to(tmp_path / "outside.txt")
+        with pytest.raises(CanonicalWriteDenied, match="symlink"):
+            write_canonical_text(
+                conn=conn,
+                lease_id=reducer_lease,
+                task_id="canonical-sandbox",
+                writer_role="canonical_writer",
+                target_path="link.txt",
+                text="blocked",
+            )
+
+
+def test_legacy_validation_result_schema_migrates_before_index_creation(tmp_path: Path):
+    db_path = tmp_path / "legacy.sqlite3"
+    with sqlite3.connect(db_path) as conn:
+        _ = conn.execute(
+            """
+            CREATE TABLE validation_results (
+              validation_result_id INTEGER PRIMARY KEY AUTOINCREMENT,
+              target_type TEXT NOT NULL,
+              target_id TEXT NOT NULL,
+              gate_name TEXT NOT NULL,
+              passed INTEGER NOT NULL CHECK(passed IN (0, 1)),
+              severity TEXT NOT NULL DEFAULT 'info',
+              details_json TEXT NOT NULL CHECK(json_valid(details_json)),
+              created_at TEXT NOT NULL
+            ) STRICT
+            """
+        )
+        _ = conn.execute(
+            "CREATE INDEX validation_target_idx ON validation_results(target_type, target_id, gate_name, passed)"
+        )
+        _ = conn.execute(
+            "INSERT INTO validation_results(target_type, target_id, gate_name, passed, severity, details_json, created_at) VALUES ('matter', 'beta', 'foundation', 1, 'info', '{}', 'now')"
+        )
+
+    repo.initialize_database(db_path)
+
+    with repo.db_connection(db_path) as conn:
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(validation_results)")}
+        index_columns = [row["name"] for row in conn.execute("PRAGMA index_info(validation_target_idx)")]
+        validation = cast(Mapping[str, object], conn.execute("SELECT matter_scope FROM validation_results").fetchone())
+
+    assert "matter_scope" in columns
+    assert index_columns[:2] == ["matter_scope", "target_type"]
+    assert validation["matter_scope"] == "beta"
+
+
+def test_lease_events_use_task_matter_scope(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(conn, TaskSpec(task_id="beta-lease-events", title="Beta lease events", task_type="extract", matter_scope="beta"))
+        lease_id = acquire_lease(conn, task_id="beta-lease-events", worker_id="worker-1")
+        complete_lease(conn, lease_id=lease_id, task_status=TaskStatus.COMPLETE)
+        scopes = [
+            str(row["matter_scope"])
+            for row in conn.execute(
+                "SELECT matter_scope FROM events WHERE event_type IN ('lease.acquired', 'lease.completed') ORDER BY event_id"
+            ).fetchall()
+        ]
+
+    assert scopes == ["beta", "beta"]
 
 
 def test_scheduler_under_fills_capacity_when_only_fewer_tasks_are_safe(tmp_path: Path):
@@ -546,7 +641,14 @@ def test_stale_source_hash_marks_dependent_artifacts_stale(tmp_path: Path):
             new_sha256="b" * 64,
         )
         artifact = cast(Mapping[str, object], conn.execute("SELECT stale, trust_status FROM artifacts WHERE artifact_id = ?", (artifact_id,)).fetchone())
+        source = cast(Mapping[str, object], conn.execute("SELECT stale, sha256 FROM sources WHERE source_id = ?", (source_id,)).fetchone())
+        snapshots = _count(conn, "SELECT COUNT(*) AS n FROM source_snapshots WHERE source_id = ? AND sha256 = ?", (source_id, "b" * 64))
+        event = cast(Mapping[str, object], conn.execute("SELECT matter_scope FROM events WHERE event_type = 'source.hash_changed' ORDER BY event_id DESC LIMIT 1").fetchone())
     assert changed == [artifact_id]
+    assert source["stale"] == 1
+    assert source["sha256"] == "b" * 64
+    assert snapshots == 1
+    assert event["matter_scope"] == "atticus"
     assert artifact["stale"] == 1
     assert artifact["trust_status"] == "stale"
 

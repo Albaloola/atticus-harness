@@ -482,7 +482,7 @@ def test_reducer_acceptance_rolls_back_if_proposed_task_import_crashes(tmp_path:
                 ],
             ),
         )
-        reducer_lease_id = acquire_lease(conn, task_id="atomic-parent", worker_id="reducer-01", dry_run=False)
+        reducer_lease_id = acquire_lease(conn, task_id="atomic-parent", worker_id="reducer-01", dry_run=False, lease_role="reducer")
 
         def crashing_import(conn: sqlite3.Connection, candidate: Mapping[str, object]) -> list[str]:
             del conn, candidate

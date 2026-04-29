@@ -18,6 +18,7 @@ def test_command_registry_classifies_safety_metadata():
     assert commands["session"].read_only_safe is True
     assert commands["run-free-loop"].requires_live is False
     assert commands["run-free-loop"].supports_dry_run is False
+    assert commands["run-free-loop"].requires_write is True
     assert commands["run-local"].requires_write is True
     assert commands["provider-probe"].requires_live is True
     assert all(not command.read_only_safe for command in commands.values() if command.requires_write or command.requires_live)

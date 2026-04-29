@@ -16,6 +16,7 @@ FINDING_TYPES = frozenset({"fact", "law", "procedure", "inference", "drafting_no
 CITATION_TARGET_TYPES = frozenset(
     {"source", "artifact", "authority", "chronology_event", "claim", "memory", "validation_result"}
 )
+EVIDENCE_CITATION_TARGET_TYPES = frozenset({"source", "artifact", "authority", "chronology_event", "claim"})
 REASONING_STATUSES = frozenset({"supported", "inferred", "uncertain", "needs_research", "contradicted"})
 RESULT_PACKET_REQUIRED_KEYS = frozenset(
     {
@@ -95,8 +96,8 @@ def parse_result(
         raise ResultPacketError("summary must not be empty")
 
     citations = _validate_citations(_list_value(payload, "citations"), allowed_citation_targets=allowed_citation_targets)
-    citation_ids = {str(item["citation_id"]) for item in citations}
-    findings = _validate_findings(_list_value(payload, "findings"), citation_ids=citation_ids)
+    citations_by_id = {str(item["citation_id"]): item for item in citations}
+    findings = _validate_findings(_list_value(payload, "findings"), citations_by_id=citations_by_id)
     proposed_artifacts = _validate_proposed_artifacts(_list_value(payload, "proposed_artifacts"))
     proposed_tasks = _validate_proposed_tasks(_list_value(payload, "proposed_tasks"))
     uncertainties = _mapping_list("uncertainties", _list_value(payload, "uncertainties"))
@@ -241,7 +242,7 @@ def _required_string(payload: Mapping[str, object], field: str) -> str:
     return value
 
 
-def _validate_findings(value: list[object], *, citation_ids: set[str]) -> list[dict[str, object]]:
+def _validate_findings(value: list[object], *, citations_by_id: Mapping[str, Mapping[str, object]]) -> list[dict[str, object]]:
     findings = _mapping_list("findings", value)
     seen: set[str] = set()
     for index, finding in enumerate(findings):
@@ -261,13 +262,27 @@ def _validate_findings(value: list[object], *, citation_ids: set[str]) -> list[d
         if not isinstance(confidence, int | float) or isinstance(confidence, bool) or confidence < 0 or confidence > 1:
             raise ResultPacketError(f"findings[{index}].confidence must be a number from 0 to 1")
         citation_list = finding.get("citation_ids")
-        if not isinstance(citation_list, list) or not all(isinstance(item, str) and item for item in citation_list):
+        if not isinstance(citation_list, list):
             raise ResultPacketError(f"findings[{index}].citation_ids must be an array of non-empty strings")
-        missing = sorted(set(citation_list) - citation_ids)
+        citation_items = cast(list[object], citation_list)
+        if not all(isinstance(item, str) and item for item in citation_items):
+            raise ResultPacketError(f"findings[{index}].citation_ids must be an array of non-empty strings")
+        citation_id_list = cast(list[str], citation_items)
+        missing = sorted(set(citation_id_list) - set(citations_by_id))
         if missing:
             raise ResultPacketError(f"findings[{index}] references undefined citation ids: {', '.join(missing)}")
-        if finding_type in {"fact", "law", "procedure", "contradiction", "risk"} and not citation_list and reasoning_status not in {"uncertain", "needs_research"}:
-            raise ResultPacketError(f"findings[{index}] {finding_type} findings require citations or an uncertain reasoning_status")
+        if finding_type in {"fact", "law", "procedure", "contradiction", "risk"} and reasoning_status not in {"uncertain", "needs_research"}:
+            if not citation_id_list:
+                raise ResultPacketError(f"findings[{index}] {finding_type} findings require citations or an uncertain reasoning_status")
+            proof_targets = {
+                str(citations_by_id[citation_id].get("target_type") or "")
+                for citation_id in citation_id_list
+                if citation_id in citations_by_id
+            }
+            if not proof_targets.intersection(EVIDENCE_CITATION_TARGET_TYPES):
+                raise ResultPacketError(
+                    f"findings[{index}] {finding_type} findings require source, artifact, authority, chronology_event, or claim evidence citations; memory and validation_result citations are orientation only"
+                )
     return findings
 
 
@@ -322,7 +337,10 @@ def _validate_proposed_tasks(value: list[object]) -> list[dict[str, object]]:
         for key in ("source_dependencies", "artifact_dependencies", "task_dependencies", "matter_dependencies", "validation_gates"):
             if key in task:
                 value_raw = task[key]
-                if not isinstance(value_raw, list) or not all(isinstance(item, str) for item in value_raw):
+                if not isinstance(value_raw, list):
+                    raise ResultPacketError(f"proposed_tasks[{index}].{key} must be an array of strings")
+                value_items = cast(list[object], value_raw)
+                if not all(isinstance(item, str) for item in value_items):
                     raise ResultPacketError(f"proposed_tasks[{index}].{key} must be an array of strings")
         if "required_certifications" in task:
             _ = _mapping_list(f"proposed_tasks[{index}].required_certifications", cast(list[object], task["required_certifications"]) if isinstance(task["required_certifications"], list) else [])

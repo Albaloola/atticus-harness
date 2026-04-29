@@ -20,7 +20,7 @@ from atticus.db import repo
 from atticus.migration.import_old_run import import_candidates
 from atticus.providers.budget import BudgetExceeded, require_budget
 from atticus.providers.policy import ProviderActual, ProviderRequest, record_provider_policy_decision
-from atticus.reducer.reducer import reduce_candidate
+from atticus.reducer.reducer import ReductionBlocked, reduce_candidate
 from atticus.retrieval.ask import answer_question
 from atticus.retrieval.index import rebuild_search_index
 from atticus.scheduler.lease import acquire_lease
@@ -81,6 +81,30 @@ def valid_packet(task_id: str) -> dict[str, object]:
         "redaction_flags": [],
         "external_action_requests": [],
     }
+
+
+def cited_fact_packet(task_id: str, source_id: str) -> dict[str, object]:
+    packet = valid_packet(task_id)
+    packet["findings"] = [
+        {
+            "finding_id": "finding-1",
+            "text": "source-supported fact",
+            "finding_type": "fact",
+            "citation_ids": ["cite-1"],
+            "confidence": 0.8,
+            "reasoning_status": "supported",
+        }
+    ]
+    packet["citations"] = [
+        {
+            "citation_id": "cite-1",
+            "target_type": "source",
+            "target_id": source_id,
+            "locator": "p.1",
+            "quoted_text_hash": "a" * 64,
+        }
+    ]
+    return packet
 
 
 def test_provider_mismatch_is_recorded_and_blocked(tmp_path: Path):
@@ -278,7 +302,7 @@ def test_reducer_writes_canonical_only_with_valid_lease_and_validations(tmp_path
             worker_id="worker-1",
             payload=valid_packet("reduce-me"),
         )
-        reducer_lease = acquire_lease(conn, task_id="reduce-me", worker_id="reducer-1")
+        reducer_lease = acquire_lease(conn, task_id="reduce-me", worker_id="reducer-1", lease_role="reducer")
         with pytest.raises(CanonicalWriteDenied):
             _ = reduce_candidate(
                 conn,
@@ -294,6 +318,43 @@ def test_reducer_writes_canonical_only_with_valid_lease_and_validations(tmp_path
     assert artifact["produced_by_task_id"] == "reduce-me"
 
 
+def test_reducer_revalidates_candidate_citations_against_task_context(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        allowed_source = repo.add_source(conn, matter_scope="alpha", path="/alpha/allowed.pdf", sha256="a" * 64)
+        outside_source = repo.add_source(conn, matter_scope="alpha", path="/alpha/outside.pdf", sha256="b" * 64)
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="reduce-citation-context",
+                title="Reduce citation context",
+                task_type="extract",
+                matter_scope="alpha",
+                source_dependencies=[allowed_source],
+            ),
+        )
+        worker_lease = acquire_lease(conn, task_id="reduce-citation-context", worker_id="worker-1")
+        candidate_id = record_worker_result(
+            conn,
+            task_id="reduce-citation-context",
+            lease_id=worker_lease,
+            worker_id="worker-1",
+            payload=cited_fact_packet("reduce-citation-context", allowed_source),
+        )
+        tampered = cited_fact_packet("reduce-citation-context", outside_source)
+        _ = conn.execute(
+            "UPDATE candidate_outputs SET payload_json = ? WHERE candidate_id = ?",
+            (json.dumps(tampered, sort_keys=True, separators=(",", ":")), candidate_id),
+        )
+        outcome = run_validation(conn, gate_name="reducer_packet_schema", target_type="candidate", target_id=candidate_id)
+        reducer_lease = acquire_lease(conn, task_id="reduce-citation-context", worker_id="reducer-1", lease_role="reducer")
+        with pytest.raises(ReductionBlocked, match="outside work order context"):
+            _ = reduce_candidate(conn, candidate_id=candidate_id, reducer_lease_id=reducer_lease, dry_run=False)
+
+    assert outcome.passed is False
+    assert "outside work order context" in str(outcome.details)
+
+
 def test_reducer_preserves_task_matter_on_canonical_artifact(tmp_path: Path):
     db_path = init_db(tmp_path)
     with repo.db_connection(db_path) as conn:
@@ -306,7 +367,7 @@ def test_reducer_preserves_task_matter_on_canonical_artifact(tmp_path: Path):
             worker_id="worker-1",
             payload=valid_packet("beta-reduce"),
         )
-        reducer_lease = acquire_lease(conn, task_id="beta-reduce", worker_id="reducer-1")
+        reducer_lease = acquire_lease(conn, task_id="beta-reduce", worker_id="reducer-1", lease_role="reducer")
         result = reduce_candidate(conn, candidate_id=candidate_id, reducer_lease_id=reducer_lease, dry_run=False)
         artifact = cast(Mapping[str, object], conn.execute("SELECT matter_scope, trust_status, produced_by_task_id FROM artifacts WHERE artifact_id = ?", (result["artifact_id"],)).fetchone())
     assert result["matter_scope"] == "beta"
@@ -378,7 +439,7 @@ def test_reducer_imports_accepted_candidate_proposed_tasks(tmp_path: Path):
                 "external_action_requests": [],
             },
         )
-        reducer_lease = acquire_lease(conn, task_id="parent-reduce", worker_id="reducer-1")
+        reducer_lease = acquire_lease(conn, task_id="parent-reduce", worker_id="reducer-1", lease_role="reducer")
         result = reduce_candidate(conn, candidate_id=candidate_id, reducer_lease_id=reducer_lease, dry_run=False)
         followup = cast(Mapping[str, object], conn.execute("SELECT status, matter_scope, source_dependencies_json, provider_policy_json FROM tasks WHERE task_id = 'accepted-followup'").fetchone())
         gap_search = cast(Mapping[str, object], conn.execute("SELECT source_dependencies_json FROM tasks WHERE task_id = 'accepted-gap-search'").fetchone())
@@ -389,6 +450,70 @@ def test_reducer_imports_accepted_candidate_proposed_tasks(tmp_path: Path):
     assert json.loads(str(followup["source_dependencies_json"])) == ["NAP-SRC-0001", "NAP-SRC-0002"]
     assert json.loads(str(gap_search["source_dependencies_json"])) == ["NAP-SRC-0001", "NAP-SRC-0002", "NAP-SRC-0003"]
     assert "qwen/qwen3-coder:free" in str(followup["provider_policy_json"])
+
+
+def test_reducer_rejects_cross_matter_proposed_tasks_and_task_id_collisions(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        source_id = repo.add_source(conn, source_id="BETA-SRC-0001", matter_scope="beta", path="/beta/one.pdf", sha256="1" * 64)
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="parent-collision-reduce",
+                title="Parent collision reduce",
+                task_type="source_inventory",
+                matter_scope="beta",
+                provider_policy={"provider": "openrouter", "model": "qwen/qwen3-coder:free", "allow_fallback": False, "estimated_cost_usd": 0.0},
+            ),
+        )
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="existing-followup",
+                title="Existing follow-up",
+                task_type="source_inventory",
+                matter_scope="beta",
+                source_dependencies=[source_id],
+            ),
+        )
+        packet = valid_packet("parent-collision-reduce")
+        packet["proposed_tasks"] = [
+            {
+                "task_id": "cross-matter-followup",
+                "title": "Cross matter follow-up",
+                "task_type": "source_inventory",
+                "matter_scope": "alpha",
+                "stage": "S0",
+                "instructions": "This must not be imported into alpha.",
+            },
+            {
+                "task_id": "existing-followup",
+                "title": "Collision follow-up",
+                "task_type": "source_inventory",
+                "matter_scope": "beta",
+                "stage": "S0",
+                "instructions": "This must not mutate source dependencies.",
+                "source_dependencies": [],
+            },
+        ]
+        worker_lease = acquire_lease(conn, task_id="parent-collision-reduce", worker_id="worker-1")
+        candidate_id = record_worker_result(
+            conn,
+            task_id="parent-collision-reduce",
+            lease_id=worker_lease,
+            worker_id="worker-1",
+            payload=packet,
+        )
+        reducer_lease = acquire_lease(conn, task_id="parent-collision-reduce", worker_id="reducer-1", lease_role="reducer")
+        result = reduce_candidate(conn, candidate_id=candidate_id, reducer_lease_id=reducer_lease, dry_run=False)
+        cross = conn.execute("SELECT 1 FROM tasks WHERE task_id = 'cross-matter-followup'").fetchone()
+        existing = cast(Mapping[str, object], conn.execute("SELECT source_dependencies_json FROM tasks WHERE task_id = 'existing-followup'").fetchone())
+        rejected = _count(conn, "SELECT COUNT(*) AS n FROM human_attention WHERE target_type = 'proposed_task' AND severity = 'blocker'")
+
+    assert result["imported_tasks"] == []
+    assert cross is None
+    assert json.loads(str(existing["source_dependencies_json"])) == [source_id]
+    assert rejected == 2
 
 
 def test_migration_imports_drafts_as_rough_notes_and_never_certifies(tmp_path: Path):

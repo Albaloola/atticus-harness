@@ -792,7 +792,8 @@ def _mark_lease_failed(conn: sqlite3.Connection, *, lease_id: str, reason: str) 
         "UPDATE leases SET status = 'failed', updated_at = ? WHERE lease_id = ?",
         (now, lease_id),
     )
-    _ = repo.emit_event(conn, "lease.failed", payload={"lease_id": lease_id, "task_id": row["task_id"], "reason": reason})
+    matter_scope = repo.matter_scope_for_target(conn, target_type="task", target_id=str(row["task_id"])) or "unknown"
+    _ = repo.emit_event(conn, "lease.failed", matter_scope=matter_scope, payload={"lease_id": lease_id, "task_id": row["task_id"], "reason": reason})
     return str(row["task_id"])
 
 
@@ -1092,7 +1093,8 @@ def _record_attempt_started(
         (attempt_id, task_id, lease_id, worker_id, adapter, now),
     )
     _ = conn.execute("UPDATE tasks SET status = 'running', updated_at = ? WHERE task_id = ?", (now, task_id))
-    _ = repo.emit_event(conn, "worker_attempt.started", payload={"worker_attempt_id": attempt_id, "task_id": task_id, "adapter": adapter})
+    matter_scope = repo.matter_scope_for_target(conn, target_type="task", target_id=task_id) or "unknown"
+    _ = repo.emit_event(conn, "worker_attempt.started", matter_scope=matter_scope, payload={"worker_attempt_id": attempt_id, "task_id": task_id, "adapter": adapter})
     return attempt_id
 
 
@@ -1112,4 +1114,6 @@ def _record_attempt_finished(
         """,
         (status, utc_now(), str(output_path), json.dumps(error or {}, sort_keys=True), attempt_id),
     )
-    _ = repo.emit_event(conn, "worker_attempt.finished", payload={"worker_attempt_id": attempt_id, "status": status})
+    row = conn.execute("SELECT task_id FROM worker_attempts WHERE worker_attempt_id = ?", (attempt_id,)).fetchone()
+    matter_scope = repo.matter_scope_for_target(conn, target_type="task", target_id=str(row["task_id"]) if row is not None else None) or "unknown"
+    _ = repo.emit_event(conn, "worker_attempt.finished", matter_scope=matter_scope, payload={"worker_attempt_id": attempt_id, "status": status})
