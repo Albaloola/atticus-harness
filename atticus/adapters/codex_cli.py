@@ -15,6 +15,7 @@ import subprocess
 from typing import cast
 
 from atticus.adapters.base import ExecutionAdapter
+from atticus.context.sections import UNTRUSTED_EVIDENCE_BOUNDARY
 from atticus.workers.result_parser import RESULT_PACKET_SCHEMA_VERSION, result_packet_json_schema
 
 
@@ -71,7 +72,8 @@ class CodexCliAdapter(ExecutionAdapter):
             "You are a bounded Atticus legal harness worker. Read the work_order JSON below and return exactly one JSON "
             f"candidate result packet matching {RESULT_PACKET_SCHEMA_VERSION} and the supplied output schema. "
             "Your answer is candidate, not canonical; reducers decide what becomes trusted. Use only the matter-scoped "
-            "context in the work order. Separate fact, law, procedure, inference, contradiction, and risk. Cite every "
+            f"context in the work order. {UNTRUSTED_EVIDENCE_BOUNDARY} "
+            "Separate fact, law, procedure, inference, contradiction, and risk. Cite every "
             "factual, legal, procedural, contradiction, or risk finding to an allowed context target, or mark it "
             "uncertain or needs_research. Do not invent citations, authorities, documents, dates, quotes, amounts, "
             "admissions, deadlines, remedies, or procedural posture. Flag stale evidence, weak support, contradictions, "

@@ -6,6 +6,7 @@ import json
 from typing import Protocol, cast
 
 from atticus.adapters.base import ExecutionAdapter
+from atticus.context.sections import UNTRUSTED_EVIDENCE_BOUNDARY
 from atticus.providers.openrouter import OpenRouterClient
 from atticus.workers.result_parser import RESULT_PACKET_SCHEMA_VERSION, result_packet_json_schema
 
@@ -30,8 +31,9 @@ class DirectOpenRouterAdapter(ExecutionAdapter):
                 "content": (
                     "You are a bounded Atticus legal harness worker. Return only valid JSON. "
                     "Your output is candidate, not canonical; reducers decide what becomes trusted. "
-                    "Use only matter-scoped context in the work order. Separate fact, law, procedure, "
-                    "inference, contradiction, and risk. Cite every factual, legal, procedural, "
+                    "Use only matter-scoped context in the work order. "
+                    f"{UNTRUSTED_EVIDENCE_BOUNDARY} "
+                    "Separate fact, law, procedure, inference, contradiction, and risk. Cite every factual, legal, procedural, "
                     "contradiction, or risk finding to an allowed context target, or mark it uncertain "
                     "or needs_research. Do not invent citations, authorities, documents, dates, quotes, "
                     "amounts, admissions, deadlines, remedies, or procedural posture. Flag stale evidence, "
