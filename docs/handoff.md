@@ -2,6 +2,51 @@
 
 Date: 2026-04-26
 
+## Operating Rule: Use The Agent Team
+
+The next Codex instance must not work as a lone coder.
+
+It should operate as a lead engineer coordinating a specialist agent team. For any non-trivial task, it must delegate bounded, parallel subtasks to agents before or during implementation.
+
+Use agents for:
+
+- codebase exploration
+- architecture review
+- implementation slices
+- test design
+- bug reproduction
+- security/safety review
+- documentation review
+- regression checking
+- prompt-quality review
+- legal workflow reliability review
+
+Rules:
+
+- Do not delegate vague work.
+- Each agent gets a concrete, self-contained task.
+- Agents should have clear ownership boundaries.
+- Worker agents editing code must be told not to overwrite others' changes.
+- The lead agent must integrate and review all agent outputs.
+- The lead agent remains accountable for final correctness.
+- Do not use agents to bypass tests or safety rules.
+- Do not run live provider calls through agents unless Omer explicitly approves the exact live run.
+- Do not let agents touch `/home/alba/.openclaw/workspace/`.
+- Agents may inspect or edit `/home/alba/atticus-harness` and `/home/alba/.openclaw/workspace-atticus-legal/` only as required by the task.
+
+Default pattern:
+
+1. Lead inspects the current state locally.
+2. Lead spawns specialist agents for independent subtasks.
+3. Lead continues non-overlapping work while agents run.
+4. Lead reviews agent outputs critically.
+5. Lead integrates changes.
+6. Lead runs tests and safety checks.
+7. Lead reports honestly.
+
+The expected posture is not "I will do everything myself."
+The expected posture is "I will lead the team and verify the result."
+
 ## What This Repo Now Is
 
 Atticus Harness is a safe standalone legal AI factory control plane. It has durable state, evidence graph records, validation/certification, scheduling, leases, context packs, provider policy, budgets, worker candidate packets, reducer-only canonical writes, migration reporting, and CLI status UX.
