@@ -8,6 +8,7 @@ import sqlite3
 
 from typing import cast
 from atticus.context.packs import build_context_pack
+from atticus.context.sections import UNTRUSTED_EVIDENCE_BOUNDARY
 from atticus.skills.registry import skills_for_task
 from atticus.workers.contracts import WorkOrder
 
@@ -16,6 +17,7 @@ WORK_ORDER_INSTRUCTIONS = (
     "Produce one structured worker_result_packet.v2 candidate, not canonical output. "
     "Treat Atticus as the durable source of truth: workers propose, reducers decide. "
     "Use only this matter's provided sources, artifacts, authorities, memory index, and task contract. "
+    f"{UNTRUSTED_EVIDENCE_BOUNDARY} "
     "Separate fact, law, procedure, inference, contradiction, risk, drafting note, and uncertainty. "
     "Cite every factual, legal, procedural, contradiction, and risk finding to an allowed context target; "
     "if support is missing, set reasoning_status to uncertain or needs_research and propose a follow-up task. "
@@ -68,10 +70,6 @@ def build_work_order(
     )
 
 
-def _load_json_value(text: str) -> object:
-    return json.loads(text)
-
-
 def _optional_task_text(task: Mapping[str, object], field: str) -> str:
     if field not in task.keys():
         return ""
@@ -79,7 +77,7 @@ def _optional_task_text(task: Mapping[str, object], field: str) -> str:
 
 
 def _load_string_list(task: Mapping[str, object], field: str) -> list[str]:
-    value = _load_json_value(str(task[field] or "[]"))
+    value = json.loads(str(task[field] or "[]"))
     if not isinstance(value, list):
         raise ValueError(f"{field} for task {task['task_id']} must be a JSON array")
     items: list[str] = []
@@ -91,7 +89,7 @@ def _load_string_list(task: Mapping[str, object], field: str) -> list[str]:
 
 
 def _load_mapping_list(task: Mapping[str, object], field: str) -> list[dict[str, object]]:
-    value = _load_json_value(str(task[field] or "[]"))
+    value = json.loads(str(task[field] or "[]"))
     if not isinstance(value, list):
         raise ValueError(f"{field} for task {task['task_id']} must be a JSON array")
     items: list[dict[str, object]] = []
@@ -103,7 +101,7 @@ def _load_mapping_list(task: Mapping[str, object], field: str) -> list[dict[str,
 
 
 def _load_json_object(task: Mapping[str, object], field: str) -> dict[str, object]:
-    value = _load_json_value(str(task[field] or "{}"))
+    value = json.loads(str(task[field] or "{}"))
     if not isinstance(value, Mapping):
         raise ValueError(f"{field} for task {task['task_id']} must be a JSON object")
     return {str(key): item for key, item in cast(Mapping[object, object], value).items()}
