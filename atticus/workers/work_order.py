@@ -56,6 +56,7 @@ def build_work_order(
         required_certifications=_load_mapping_list(task, "required_certifications_json"),
         validation_gates=_load_string_list(task, "validation_gates_json"),
         provider_policy=_load_json_object(task, "provider_policy_json"),
+        context_pack=context_pack.as_dict(),
         skills=[
             skill.as_work_order_context()
             for skill in skills_for_task(

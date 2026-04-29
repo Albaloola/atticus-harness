@@ -37,6 +37,7 @@ class WorkOrder:
     validation_gates: list[str] = field(default_factory=list)
     provider_policy: dict[str, object] = field(default_factory=dict)
     skills: list[dict[str, object]] = field(default_factory=list)
+    context_pack: dict[str, object] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -54,6 +55,7 @@ class WorkOrder:
             "validation_gates": self.validation_gates,
             "provider_policy": self.provider_policy,
             "skills": self.skills,
+            "context_pack": self.context_pack,
         }
 
 

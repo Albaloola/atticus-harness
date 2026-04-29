@@ -61,6 +61,7 @@ def build_default_sections(
     *,
     task: Mapping[str, object],
     sources: list[dict[str, object]],
+    source_materials: list[dict[str, object]],
     artifacts: list[dict[str, object]],
     authorities: list[dict[str, object]],
     memory_index: list[dict[str, object]],
@@ -68,6 +69,7 @@ def build_default_sections(
     tools: list[dict[str, object]],
 ) -> list[ContextSection]:
     source_ids = tuple(str(row["source_id"]) for row in sources)
+    source_material_artifact_ids = tuple(str(row["artifact_id"]) for row in source_materials if row.get("artifact_id"))
     artifact_ids = tuple(str(row["artifact_id"]) for row in artifacts)
     validation_gates = _json_list(task.get("validation_gates_json"))
     required_certifications = _json_list(task.get("required_certifications_json"))
@@ -125,6 +127,16 @@ def build_default_sections(
             inclusion_reason="source dependencies selected for this work order",
             source_dependencies=source_ids,
             content=sources,
+        ),
+        ContextSection(
+            name="source_materials",
+            kind="source_materials",
+            priority=825,
+            cache_scope="task",
+            inclusion_reason="extracted or OCR text linked to source dependencies for this work order",
+            source_dependencies=source_ids,
+            artifact_dependencies=source_material_artifact_ids,
+            content=source_materials,
         ),
         ContextSection(
             name="artifact_bundle",

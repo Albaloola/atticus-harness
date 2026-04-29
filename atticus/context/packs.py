@@ -14,6 +14,11 @@ from atticus.db import repo
 from atticus.skills.registry import skills_for_task
 
 
+SOURCE_MATERIAL_TOTAL_CHARS = 32_000
+SOURCE_MATERIAL_MIN_CHARS = 500
+SOURCE_MATERIAL_MAX_CHARS = 6_000
+
+
 @dataclass(frozen=True)
 class ContextPack:
     context_pack_id: str
@@ -49,7 +54,7 @@ def build_context_pack(
     *,
     task_id: str,
     pack_type: str = "work_order",
-    token_budget: int = 16_000,
+    token_budget: int = 32_000,
     persist: bool = True,
 ) -> ContextPack:
     task = cast(Mapping[str, object] | None, cast(object, conn.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone()))
@@ -75,6 +80,7 @@ def build_context_pack(
         record_type="source",
         matter_scope=matter_scope,
     )
+    source_materials = _load_source_materials(conn, matter_scope=matter_scope, source_ids=source_ids)
     artifact_rows = cast(list[Mapping[str, object]], conn.execute(
             """
             SELECT artifact_id, path, artifact_type, trust_status, stale, title, content
@@ -128,6 +134,7 @@ def build_context_pack(
         for section in build_default_sections(
             task=dict(task),
             sources=sources,
+            source_materials=source_materials,
             artifacts=artifacts,
             authorities=authorities,
             memory_index=memory_index,
@@ -185,6 +192,95 @@ def _load_memory_index(conn: sqlite3.Connection, *, matter_scope: str) -> list[d
             (matter_scope,),
         )
     ]
+
+
+def _load_source_materials(
+    conn: sqlite3.Connection,
+    *,
+    matter_scope: str,
+    source_ids: list[str],
+) -> list[dict[str, object]]:
+    if not source_ids:
+        return []
+    placeholders = ",".join("?" for _ in source_ids)
+    rows = conn.execute(
+        f"""
+        SELECT
+          s.source_id,
+          a.artifact_id,
+          a.path,
+          a.artifact_type,
+          a.trust_status,
+          a.sha256,
+          a.title,
+          a.content,
+          er.method AS extraction_method,
+          er.coverage_status,
+          er.confidence,
+          ocr.engine AS ocr_engine
+        FROM sources s
+        JOIN artifact_sources af ON af.source_id = s.source_id
+        JOIN artifacts a ON a.artifact_id = af.artifact_id
+        LEFT JOIN extraction_records er ON er.source_id = s.source_id AND er.artifact_id = a.artifact_id
+        LEFT JOIN ocr_records ocr ON ocr.source_id = s.source_id AND ocr.artifact_id = a.artifact_id
+        WHERE s.matter_scope = ?
+          AND a.matter_scope = ?
+          AND s.source_id IN ({placeholders})
+          AND a.artifact_type IN (
+            'extracted_text',
+            'extraction_record',
+            'ocr_extract',
+            'ocr_text',
+            'transcription_record',
+            'transcript'
+          )
+        ORDER BY
+          s.source_id,
+          CASE a.artifact_type
+            WHEN 'extracted_text' THEN 0
+            WHEN 'ocr_text' THEN 1
+            WHEN 'ocr_extract' THEN 2
+            WHEN 'transcript' THEN 3
+            ELSE 4
+          END,
+          a.created_at DESC,
+          a.artifact_id
+        """,
+        (matter_scope, matter_scope, *source_ids),
+    ).fetchall()
+    per_source_chars = max(
+        SOURCE_MATERIAL_MIN_CHARS,
+        min(SOURCE_MATERIAL_MAX_CHARS, SOURCE_MATERIAL_TOTAL_CHARS // max(1, len(source_ids))),
+    )
+    seen: set[str] = set()
+    materials: list[dict[str, object]] = []
+    for row in rows:
+        source_id = str(row["source_id"])
+        if source_id in seen:
+            continue
+        seen.add(source_id)
+        content = str(row["content"] or "")
+        excerpt = content[:per_source_chars]
+        materials.append(
+            {
+                "source_id": source_id,
+                "artifact_id": row["artifact_id"],
+                "path": row["path"],
+                "artifact_type": row["artifact_type"],
+                "trust_status": row["trust_status"],
+                "sha256": row["sha256"],
+                "title": row["title"],
+                "content_excerpt": excerpt,
+                "excerpt_chars": len(excerpt),
+                "available_chars": len(content),
+                "excerpt_truncated": len(content) > len(excerpt),
+                "extraction_method": row["extraction_method"] or "artifact_text",
+                "coverage_status": row["coverage_status"] or "available",
+                "confidence": row["confidence"] if row["confidence"] is not None else None,
+                "ocr_engine": row["ocr_engine"],
+            }
+        )
+    return materials
 
 
 def _section_priority(section: Mapping[str, object]) -> int:

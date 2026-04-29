@@ -15,7 +15,7 @@ def build_context_diagnostics(
     conn: sqlite3.Connection,
     *,
     task_id: str,
-    token_budget: int = 16_000,
+    token_budget: int = 32_000,
 ) -> dict[str, object]:
     task = cast(Mapping[str, object] | None, conn.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone())
     if task is None:
@@ -60,6 +60,7 @@ def build_context_diagnostics(
         "token_budget": pack.token_budget,
         "sections": sections,
         "source_count": len(source_ids),
+        "source_material_count": _section_count(pack.sections, "source_materials"),
         "artifact_count": len(artifact_ids),
         "authority_count": _matter_count(conn, "legal_authorities", str(task["matter_scope"])),
         "memory_count": _memory_count(conn, str(task["matter_scope"])),
@@ -128,3 +129,8 @@ def _section_content(sections: list[dict[str, object]], name: str) -> object:
         if section.get("name") == name:
             return section.get("content")
     return []
+
+
+def _section_count(sections: list[dict[str, object]], name: str) -> int:
+    content = _section_content(sections, name)
+    return len(content) if isinstance(content, list) else 0

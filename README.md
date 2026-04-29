@@ -38,9 +38,9 @@ adapters at the edge. They are not the source of truth.
 - Dependency-aware S0-S9 scheduler with source, artifact, task, matter,
   certification, stale-input, provider, and budget gates.
 - Deterministic context pack v2 section registry with fingerprints, token
-  estimates, prompt-cache telemetry fields, evidence manifests, artifacts,
-  authorities, memory index, validation gates, skills, tools, and required
-  output schema.
+  estimates, prompt-cache telemetry fields, evidence manifests, bounded
+  extracted/OCR source-material excerpts, artifacts, authorities, memory index,
+  validation gates, skills, tools, and required output schema.
 - First-class model routing for OpenRouter-hosted models, explicit OpenRouter
   fallback pools, and exact Codex GPT-5.5 policy with requested/actual
   provider/model accounting.
@@ -322,6 +322,25 @@ Coordinator-created tasks persist task-specific instructions in
 `tasks.instructions`; work orders and context packs include those instructions.
 Drafting goals include evidence mapping, draft preparation, citation audit,
 hostile review, privacy/redaction audit, and final quality gate tasks.
+
+## Context And Source Delivery
+
+`work-order --dry-run` includes the full context pack, not only its ID. The
+pack contains an `evidence_manifest` section for source metadata and a
+`source_materials` section for extracted/OCR text linked to each source
+dependency. Source material is bounded and deterministic so broad tasks fit the
+default 32k token budget while still exposing which source text was provided
+and whether each excerpt was truncated.
+
+Inspect what a worker will receive:
+
+```bash
+python -m atticus.cli work-order --db data/atticus.sqlite3 --task-id TASK_ID --dry-run
+python -m atticus.cli context --db data/atticus.sqlite3 --task-id TASK_ID --json
+```
+
+If `source_materials` is empty for a source-dependent task, run
+`extract-sources` first and re-check `extraction_coverage`.
 
 ## Worker Packets And Reduction
 

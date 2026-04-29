@@ -226,7 +226,7 @@ def build_parser() -> argparse.ArgumentParser:
     context = sub.add_parser("context", help="read-only context pack diagnostics for legal audit")
     _ = context.add_argument("--db", required=True)
     _ = context.add_argument("--task-id", required=True)
-    _ = context.add_argument("--token-budget", type=int, default=16_000)
+    _ = context.add_argument("--token-budget", type=int, default=32_000)
     _ = context.add_argument("--json", dest="json_output", action="store_true")
     _ = context.add_argument("--explain", action="store_true")
 

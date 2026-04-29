@@ -12,6 +12,7 @@ from atticus.context.diagnostics import build_context_diagnostics
 from atticus.context.packs import build_context_pack
 from atticus.core.tasks import TaskSpec
 from atticus.db import repo
+from atticus.workers.work_order import build_work_order
 from atticus.workers.result_parser import RESULT_PACKET_SCHEMA_VERSION
 
 
@@ -76,6 +77,7 @@ def test_context_diagnostics_reports_stale_dependencies_and_counts(tmp_path: Pat
     assert diagnostics["matter_scope"] == "alpha"
     assert diagnostics["result_schema_version"] == RESULT_PACKET_SCHEMA_VERSION
     assert diagnostics["source_count"] == 1
+    assert diagnostics["source_material_count"] == 0
     assert diagnostics["artifact_count"] == 1
     assert diagnostics["stale_sources"] == [source_id]
     assert diagnostics["stale_artifacts"] == [artifact_id]
@@ -98,3 +100,105 @@ def test_context_cli_json_is_read_only(tmp_path: Path, capsys: pytest.CaptureFix
     assert output["task_id"] == "ctx-cli"
     assert output["diagnostic_only"] is True
     assert context_count == 0
+
+
+def test_work_order_includes_context_pack_and_extracted_source_material(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        source_id = repo.add_source(conn, matter_scope="alpha", path="/alpha/source.pdf", sha256="a" * 64)
+        artifact_id = repo.add_artifact(
+            conn,
+            matter_scope="alpha",
+            path="/alpha/03-working/extracted-text/SRC-1.txt",
+            artifact_type="extracted_text",
+            title="SRC-1 extracted text",
+            content="Anfal disclosed rent difficulty and course risk in this source.",
+            source_ids=[source_id],
+        )
+        _ = conn.execute(
+            """
+            INSERT INTO extraction_records(extraction_id, source_id, artifact_id, method,
+              coverage_status, confidence, metadata_json, created_at)
+            VALUES ('extract-alpha', ?, ?, 'pdf_text', 'complete', 0.9, '{}', '2026-04-29T00:00:00+00:00')
+            """,
+            (source_id, artifact_id),
+        )
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="ctx-source-material",
+                title="Context source material",
+                task_type="extract",
+                matter_scope="alpha",
+                source_dependencies=[source_id],
+            ),
+        )
+        order = build_work_order(conn, task_id="ctx-source-material", persist_context=False)
+
+    payload = order.as_dict()
+    context_pack = cast(Mapping[str, object], payload["context_pack"])
+    sections = cast(list[Mapping[str, object]], context_pack["sections"])
+    source_materials = next(section for section in sections if section["name"] == "source_materials")
+    content = cast(list[Mapping[str, object]], source_materials["content"])
+
+    assert context_pack["context_pack_id"] == order.context_pack_id
+    assert content[0]["source_id"] == source_id
+    assert content[0]["artifact_id"] == artifact_id
+    assert "rent difficulty" in str(content[0]["content_excerpt"])
+    assert content[0]["extraction_method"] == "pdf_text"
+    assert content[0]["coverage_status"] == "complete"
+
+
+def test_work_order_many_source_materials_fit_default_budget_with_truncation(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        source_ids: list[str] = []
+        for index in range(60):
+            source_id = repo.add_source(
+                conn,
+                source_id=f"SRC-{index:04d}",
+                matter_scope="alpha",
+                path=f"/alpha/source-{index:04d}.pdf",
+                sha256=f"{index:064x}"[-64:],
+            )
+            source_ids.append(source_id)
+            artifact_id = repo.add_artifact(
+                conn,
+                matter_scope="alpha",
+                path=f"/alpha/extracted/SRC-{index:04d}.txt",
+                artifact_type="extracted_text",
+                title=f"SRC-{index:04d} extracted",
+                content=f"Source {index:04d} beginning. " + ("relevant extracted text " * 180),
+                source_ids=[source_id],
+            )
+            _ = conn.execute(
+                """
+                INSERT INTO extraction_records(extraction_id, source_id, artifact_id, method,
+                  coverage_status, confidence, metadata_json, created_at)
+                VALUES (?, ?, ?, 'pdf_text', 'complete', 0.9, '{}', '2026-04-29T00:00:00+00:00')
+                """,
+                (f"extract-{index:04d}", source_id, artifact_id),
+            )
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="ctx-many-source-materials",
+                title="Many source materials",
+                task_type="targeted_source_gap_search",
+                matter_scope="alpha",
+                source_dependencies=source_ids,
+            ),
+        )
+        order = build_work_order(conn, task_id="ctx-many-source-materials", persist_context=False)
+
+    context_pack = cast(Mapping[str, object], order.as_dict()["context_pack"])
+    sections = cast(list[Mapping[str, object]], context_pack["sections"])
+    materials_section = next(section for section in sections if section["name"] == "source_materials")
+    materials = cast(list[Mapping[str, object]], materials_section["content"])
+
+    estimated_tokens = int(str(context_pack["estimated_tokens"]))
+    token_budget = int(str(context_pack["token_budget"]))
+    assert estimated_tokens < token_budget
+    assert len(materials) == 60
+    assert any(bool(material["excerpt_truncated"]) for material in materials)
+    assert "Source 0000 beginning" in str(materials[0]["content_excerpt"])
