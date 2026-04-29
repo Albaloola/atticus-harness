@@ -323,10 +323,10 @@ def _inventory_record(
     size_bytes = _int_value(row.get("size_bytes"), default=absolute_path.stat().st_size)
     if size_bytes <= 0:
         size_bytes = absolute_path.stat().st_size
-    source_path = row_path
-    source_id = row.get("source_id", "").strip() or _stable_id("src", source_path, sha256)
     source_type = row.get("category", "").strip() or absolute_path.suffix.lstrip(".") or "file"
-    relative_path = _relative_to_workspace(absolute_path, workspace_path) or source_path
+    relative_path = _relative_to_workspace(absolute_path, workspace_path) or row_path
+    source_path = relative_path
+    source_id = row.get("source_id", "").strip() or _stable_id("src", source_path, sha256)
     metadata: dict[str, object] = {
         "inventory": str(inventory_path),
         "inventory_line": line_number,
@@ -357,10 +357,14 @@ def _row_path(row: Mapping[str, str]) -> str:
 
 
 def _resolve_inventory_file(workspace_path: Path, raw_path: str) -> Path:
+    workspace_root = workspace_path.resolve()
     path = Path(raw_path).expanduser()
-    if path.is_absolute():
-        return path.resolve()
-    return (workspace_path / path).resolve()
+    resolved = path.resolve() if path.is_absolute() else (workspace_root / path).resolve()
+    try:
+        _ = resolved.relative_to(workspace_root)
+    except ValueError as exc:
+        raise ValueError(f"inventory source path escapes workspace: {raw_path}") from exc
+    return resolved
 
 
 def _insert_source(conn: sqlite3.Connection, *, matter_scope: str, record: _InventoryRecord) -> None:

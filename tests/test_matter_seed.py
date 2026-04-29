@@ -8,6 +8,8 @@ from pathlib import Path
 import sqlite3
 from typing import cast
 
+import pytest
+
 from atticus.cli import main as cli_main
 from atticus.core.policies import TaskStatus
 from atticus.core.tasks import TaskSpec
@@ -280,6 +282,75 @@ def test_seed_matter_rejects_cross_matter_source_id_collision(tmp_path: Path):
     assert original["matter_scope"] == "alpha"
     assert original["path"] == "/alpha/original.txt"
     assert beta_sources == 0
+
+
+@pytest.mark.parametrize(
+    ("source_id", "matter", "path_case"),
+    [
+        ("external-src", "external-path-test", "absolute"),
+        ("relative-external-src", "relative-path-test", "relative_escape"),
+        ("symlink-external-src", "symlink-path-test", "symlink_escape"),
+    ],
+    ids=["absolute", "relative_escape", "symlink_escape"],
+)
+def test_seed_matter_rejects_source_path_outside_workspace(
+    tmp_path: Path,
+    source_id: str,
+    matter: str,
+    path_case: str,
+):
+    db_path = init_db(tmp_path)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside-source.txt"
+    _ = outside.write_text("outside matter source", encoding="utf-8")
+    if path_case == "absolute":
+        stored_path = str(outside)
+    elif path_case == "relative_escape":
+        stored_path = "../outside-source.txt"
+    else:
+        symlink = workspace / "linked-source.txt"
+        symlink.symlink_to(outside)
+        stored_path = "linked-source.txt"
+    inventory = workspace / "inventory.csv"
+    with inventory.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["source_id", "category", "stored_path", "size_bytes", "sha256"])
+        writer.writeheader()
+        writer.writerow(
+            {
+                "source_id": source_id,
+                "category": "text",
+                "stored_path": stored_path,
+                "size_bytes": str(outside.stat().st_size),
+                "sha256": _sha256(outside),
+            }
+        )
+
+    code = cli_main(
+        [
+            "seed-matter",
+            "--db",
+            str(db_path),
+            "--matter",
+            matter,
+            "--workspace",
+            str(workspace),
+            "--inventory",
+            str(inventory),
+            "--provider",
+            "openai-codex",
+            "--model",
+            "gpt-5.5",
+            "--no-fallback",
+            "--write",
+        ]
+    )
+
+    with repo.db_connection(db_path) as conn:
+        source_count = _count(conn, "SELECT COUNT(*) AS n FROM sources WHERE source_id = ?", (source_id,))
+
+    assert code == 2
+    assert source_count == 0
 
 
 def test_set_provider_policy_updates_only_queued_tasks_for_matter(tmp_path: Path):
