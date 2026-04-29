@@ -5,6 +5,7 @@ __pycache__/
 .mypy_cache/
 .venv/
 .codex
+.forge/
 atticus.sqlite3
 *.sqlite3
 *.sqlite3-shm

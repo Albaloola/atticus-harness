@@ -1,0 +1,19 @@
+{
+  "name": "atticus-forge-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Arch-native Forge control app forged from Claude-Code/OpenClaw-style engine patterns",
+  "main": "src/main/forge-core.mjs",
+  "scripts": {
+    "build:native": "mkdir -p build && gcc src/native/forge-gtk.c -o build/forge-gtk $(pkg-config --cflags --libs gtk4)",
+    "app": "npm run build:native && ./build/forge-gtk",
+    "dev": "npm run app",
+    "install:desktop": "npm run build:native && install -Dm755 build/forge-gtk ~/.local/bin/atticus-forge && install -Dm644 local.atticus.forge.desktop ~/.local/share/applications/local.atticus.forge.desktop",
+    "forge": "node src/main/forge-core.mjs",
+    "status": "node src/main/forge-core.mjs status",
+    "test": "node test/forge-core.test.mjs"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}
