@@ -40,6 +40,7 @@ def _commands() -> tuple[CommandDef, ...]:
         CommandDef("lease", "Acquire a fenced task lease.", supports_dry_run=True, requires_write=True),
         CommandDef("live-resume", "Prepare safe live OpenRouter leases.", supports_dry_run=True),
         CommandDef("memory", "List, show, extract, consolidate, reject, or mark stale typed legal memory.", supports_dry_run=True),
+        CommandDef("maintenance", "Run isolated control-plane maintenance diagnostics and reports.", supports_dry_run=True),
         CommandDef("matter-profile", "Show, propose, apply, or reset matter-local adaptive stage profiles.", supports_dry_run=True),
         CommandDef("migrate-report", "Build migration report for legacy workspace.", supports_dry_run=True),
         CommandDef("model-policy", "Validate or resolve a model routing policy file.", read_only_safe=True),

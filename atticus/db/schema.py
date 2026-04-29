@@ -8,7 +8,7 @@ the legal operating model.
 
 from __future__ import annotations
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 DDL = """
 PRAGMA foreign_keys = ON;
@@ -372,6 +372,31 @@ CREATE TABLE IF NOT EXISTS orchestrator_events (
   created_at TEXT NOT NULL
 ) STRICT;
 
+CREATE TABLE IF NOT EXISTS maintenance_runs (
+  maintenance_run_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL DEFAULT 'global',
+  status TEXT NOT NULL,
+  triggered_by TEXT NOT NULL,
+  trigger_reason TEXT NOT NULL,
+  trigger_event_id TEXT NOT NULL DEFAULT '',
+  isolation_level TEXT NOT NULL DEFAULT 'control_plane_only',
+  started_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  completed_at TEXT,
+  payload_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(payload_json))
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS maintenance_reports (
+  maintenance_report_id TEXT PRIMARY KEY,
+  maintenance_run_id TEXT NOT NULL REFERENCES maintenance_runs(maintenance_run_id) ON DELETE CASCADE,
+  matter_scope TEXT NOT NULL DEFAULT 'global',
+  summary TEXT NOT NULL,
+  diagnostics_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(diagnostics_json)),
+  actions_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(actions_json)),
+  resume_signal_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(resume_signal_json)),
+  created_at TEXT NOT NULL
+) STRICT;
+
 CREATE TABLE IF NOT EXISTS leases (
   lease_id TEXT PRIMARY KEY,
   task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
@@ -716,6 +741,8 @@ CREATE INDEX IF NOT EXISTS provider_runs_task_idx ON provider_runs(task_id, crea
 CREATE INDEX IF NOT EXISTS prompt_cache_observations_scope_idx ON prompt_cache_observations(matter_scope, created_at);
 CREATE INDEX IF NOT EXISTS matter_orchestrators_scope_idx ON matter_orchestrators(matter_scope, status);
 CREATE INDEX IF NOT EXISTS orchestrator_events_scope_idx ON orchestrator_events(matter_scope, event_type, created_at);
+CREATE INDEX IF NOT EXISTS maintenance_runs_scope_idx ON maintenance_runs(matter_scope, status, updated_at);
+CREATE INDEX IF NOT EXISTS maintenance_reports_scope_idx ON maintenance_reports(matter_scope, created_at);
 CREATE INDEX IF NOT EXISTS work_runs_scope_idx ON work_runs(matter_scope, status, updated_at);
 CREATE UNIQUE INDEX IF NOT EXISTS work_runs_resume_token_uq ON work_runs(resume_token);
 CREATE INDEX IF NOT EXISTS work_run_steps_scope_idx ON work_run_steps(matter_scope, status, created_at);

@@ -19,6 +19,7 @@ from atticus.agents.orchestrator import (
     record_operator_signal,
     report_worker_failure_to_orchestrator,
 )
+from atticus.agents.maintenance import maintenance_report, maintenance_status, maintenance_tick, request_maintenance
 from atticus.config import DEFAULT_DB_PATH
 from atticus.context.diagnostics import build_context_diagnostics
 from atticus.core.events import utc_now
@@ -404,6 +405,16 @@ def build_parser() -> argparse.ArgumentParser:
     _ = orchestrator.add_argument("--capacity", type=int, default=MAX_PARALLEL_AGENT_CAPACITY)
     _ = orchestrator.add_argument("--json", dest="json_output", action="store_true")
     _ = orchestrator.add_argument("--write", action="store_true")
+
+    maintenance = sub.add_parser("maintenance", help="isolated maintenance orchestrator diagnostics, reports, and resume signals")
+    _ = maintenance.add_argument("action", choices=["status", "trigger", "tick", "report"])
+    _ = maintenance.add_argument("--db", required=True)
+    _ = maintenance.add_argument("--matter", default="global")
+    _ = maintenance.add_argument("--reason", default="maintenance requested")
+    _ = maintenance.add_argument("--triggered-by", default="operator")
+    _ = maintenance.add_argument("--maintenance-run-id")
+    _ = maintenance.add_argument("--json", dest="json_output", action="store_true")
+    _ = maintenance.add_argument("--write", action="store_true")
 
     work_run = sub.add_parser("work-run", help="record resumable matter work runs and reusable steps")
     _ = work_run.add_argument("action", choices=["start", "complete", "step", "reuse", "reusable", "status", "resume", "export"])
@@ -1076,6 +1087,41 @@ def _main(args: CliArgs) -> int:
             )
         print_json({"dry_run": False, "orchestrator_event_id": event_id})
         return 0
+
+    if args.command == "maintenance":
+        if args.action == "status":
+            with repo.db_connection(args.db, read_only=True) as conn:
+                result = maintenance_status(conn, matter_scope=None if args.matter == "global" else args.matter)
+            print_json(result)
+            return 0
+        if args.action == "trigger":
+            with repo.db_connection(args.db, read_only=not args.write) as conn:
+                result = request_maintenance(
+                    conn,
+                    matter_scope=args.matter,
+                    reason=args.reason,
+                    triggered_by=args.triggered_by,
+                    write=args.write,
+                )
+            print_json(result)
+            return 0
+        if args.action == "tick":
+            with repo.db_connection(args.db, read_only=not args.write) as conn:
+                result = maintenance_tick(
+                    conn,
+                    matter_scope=args.matter,
+                    maintenance_run_id=args.maintenance_run_id,
+                    write=args.write,
+                )
+            print_json(result)
+            return 0 if result.get("resume_signal", {}).get("status") != "blocked_by_user_intervention" else 2
+        if args.action == "report":
+            if not args.maintenance_run_id:
+                raise ValueError("maintenance report requires --maintenance-run-id")
+            with repo.db_connection(args.db, read_only=True) as conn:
+                result = maintenance_report(conn, maintenance_run_id=args.maintenance_run_id)
+            print_json(result)
+            return 0
 
     if args.command == "work-run":
         if args.action == "status":

@@ -8,6 +8,7 @@ import pytest
 
 from atticus.agents.context_sharing import build_cache_safe_context
 from atticus.agents.coordinator import plan_adaptive_work
+from atticus.agents.maintenance import maintenance_report, maintenance_status, maintenance_tick, request_maintenance
 from atticus.agents.orchestrator import (
     orchestrator_plan_repair,
     orchestrator_tick,
@@ -27,6 +28,7 @@ from atticus.db import repo
 from atticus.providers.cache_observability import detect_prompt_cache_break, fingerprint_provider_policy
 from atticus.providers.model_decision import ModelDecision
 from atticus.retrieval.work_reuse import build_followup_context, explain_reuse_decision
+from atticus.scheduler.lease import acquire_lease
 from atticus.scheduler.planner import select_runnable_tasks
 from atticus.work_runs import resume_work_run, start_work_run, summarize_reusable_work
 
@@ -239,6 +241,15 @@ def test_repeated_worker_failures_escalate_every_five_then_require_user_interven
         ).fetchone()
         orchestrator = repo.get_matter_orchestrator(conn, matter_scope="alpha")
         runnable = select_runnable_tasks(conn, capacity=5)
+        maintenance_run = conn.execute(
+            """
+            SELECT status, triggered_by, trigger_reason, trigger_event_id
+            FROM maintenance_runs
+            WHERE matter_scope = 'alpha'
+            ORDER BY started_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
 
     terminal_payload = json.loads(str(terminal["payload_json"])) if terminal is not None else {}
     assert worker_payloads[0]["escalation_target"] == "worker_self_repair"
@@ -263,6 +274,11 @@ def test_repeated_worker_failures_escalate_every_five_then_require_user_interven
     assert "user intervention required" in str(attention["reason"])
     assert orchestrator is not None and orchestrator["status"] == "user_intervention_required"
     assert runnable == []
+    assert maintenance_run is not None
+    assert maintenance_run["status"] == "pending"
+    assert maintenance_run["triggered_by"] == "master_orchestrator"
+    assert "repair limit reached" in str(maintenance_run["trigger_reason"])
+    assert str(maintenance_run["trigger_event_id"]).startswith("orchevt-")
 
 
 def test_loop_guard_counts_consecutive_matching_failures_not_unrelated_noise(tmp_path: Path):
@@ -353,6 +369,69 @@ def test_orchestrator_tick_stops_reproposing_repairs_after_hard_limit(tmp_path: 
     terminal_blocks = cast(list[dict[str, object]], terminal_tick["terminal_blocks"])
     assert terminal_blocks and terminal_blocks[0]["task_id"] == "blocked-loop-task"
     assert terminal_blocks[0]["status"] == "user_intervention_required"
+
+
+def test_maintenance_tick_writes_report_notifies_user_and_master(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(conn, TaskSpec(task_id="maint-task", title="Maint", task_type="source_inventory", matter_scope="alpha"))
+        for _ in range(15):
+            _ = report_worker_failure_to_orchestrator(conn, "maint-task", "same terminal failure")
+        status_before = maintenance_status(conn, matter_scope="alpha")
+        run_id = str(cast(list[dict[str, object]], status_before["runs"])[0]["maintenance_run_id"])
+
+        result = maintenance_tick(conn, matter_scope="alpha", maintenance_run_id=run_id, write=True)
+        report = maintenance_report(conn, maintenance_run_id=run_id)
+        master_completed = conn.execute(
+            """
+            SELECT COUNT(*) AS n
+            FROM events
+            WHERE event_type = 'master_orchestrator.maintenance_completed'
+              AND matter_scope = 'alpha'
+            """
+        ).fetchone()
+        user_attention = conn.execute(
+            """
+            SELECT COUNT(*) AS n
+            FROM human_attention
+            WHERE matter_scope = 'alpha'
+              AND target_type = 'matter'
+              AND target_id = 'alpha'
+              AND reason LIKE 'maintenance report ready:%'
+            """
+        ).fetchone()
+        run = conn.execute("SELECT status, completed_at FROM maintenance_runs WHERE maintenance_run_id = ?", (run_id,)).fetchone()
+
+    assert result["dry_run"] is False
+    assert result["maintenance_report_id"] == report["maintenance_report_id"]
+    assert result["resume_signal"]["status"] == "blocked_by_user_intervention"
+    assert "maintenance inspected" in str(report["summary"])
+    assert int(str(master_completed["n"])) == 1
+    assert int(str(user_attention["n"])) == 1
+    assert run["status"] == "completed"
+    assert run["completed_at"]
+
+
+def test_maintenance_can_expire_stale_leases_and_emit_resume_signal(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(conn, TaskSpec(task_id="stale-lease-task", title="Stale", task_type="source_inventory", matter_scope="alpha"))
+        repo.add_task(conn, TaskSpec(task_id="beta-stale-lease-task", title="Beta stale", task_type="source_inventory", matter_scope="beta"))
+        lease_id = acquire_lease(conn, task_id="stale-lease-task", worker_id="stale-worker", seconds=-1)
+        beta_lease_id = acquire_lease(conn, task_id="beta-stale-lease-task", worker_id="beta-stale-worker", seconds=-1)
+        _ = repo.upsert_matter_orchestrator(conn, matter_scope="alpha", status="maintenance_required")
+        request = request_maintenance(conn, matter_scope="alpha", reason="stale lease maintenance", write=True)
+
+        result = maintenance_tick(conn, matter_scope="alpha", maintenance_run_id=str(request["maintenance_run_id"]), write=True)
+        lease = conn.execute("SELECT status FROM leases WHERE lease_id = ?", (lease_id,)).fetchone()
+        beta_lease = conn.execute("SELECT status FROM leases WHERE lease_id = ?", (beta_lease_id,)).fetchone()
+        orchestrator = repo.get_matter_orchestrator(conn, matter_scope="alpha")
+
+    assert result["resume_signal"]["status"] == "ready_to_resume"
+    assert any(action["type"] == "expire_stale_leases" for action in cast(list[dict[str, object]], result["applied_actions"]))
+    assert lease["status"] == "expired"
+    assert beta_lease["status"] == "active"
+    assert orchestrator is not None and orchestrator["status"] == "repair_required"
 
 
 def test_operator_signal_is_routed_once_by_orchestrator_tick(tmp_path: Path):

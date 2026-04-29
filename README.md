@@ -467,6 +467,13 @@ to `user_intervention_required`, emits
 attention, and reports the task under `terminal_blocks` on future ticks instead
 of proposing the same repair forever.
 
+Terminal repair failure also requests an isolated maintenance orchestrator run.
+The maintenance lane is control-plane only: it can inspect `error_logs`,
+orchestrator events, open human attention, terminal tasks, and leases; it can
+expire stale leases, write a maintenance report, emit master resume signals, and
+notify the user through human attention. It cannot mutate sources, artifacts,
+candidates, reducer packets, legal memory, or canonical legal outputs.
+
 The scheduler and live-resume planner can fill up to 15 independent worker
 slots in a tick. That is a hard ceiling, not a target: dependency gates, active
 leases, budget gates, provider policy, matter profiles, and human-review gates
@@ -504,6 +511,24 @@ python -m atticus.cli orchestrator signal \
   --write
 ```
 
+```bash
+python -m atticus.cli maintenance trigger \
+  --db data/atticus.sqlite3 \
+  --matter MATTER \
+  --reason "terminal loop guard fired" \
+  --write
+
+python -m atticus.cli maintenance tick \
+  --db data/atticus.sqlite3 \
+  --matter MATTER \
+  --write
+
+python -m atticus.cli maintenance status \
+  --db data/atticus.sqlite3 \
+  --matter MATTER \
+  --json
+```
+
 ```mermaid
 stateDiagram-v2
     [*] --> Active
@@ -518,7 +543,9 @@ stateDiagram-v2
     RepairProposed --> TaskQueued: extraction/context/verifier/profile repair
     RepairProposed --> MatterOrchestrator: same failure x5
     MatterOrchestrator --> MasterAttention: same failure x10
-    MasterAttention --> HumanAttention: same failure x15 retry_allowed=false
+    MasterAttention --> Maintenance: same failure x15 retry_allowed=false
+    Maintenance --> HumanAttention: report ready
+    Maintenance --> Active: resume signal if safe
     RepairProposed --> HumanAttention: needs operator
     HumanAttention --> Active: operator resolves
 ```
@@ -596,7 +623,7 @@ flowchart LR
 
 ## Durable Data Model
 
-The current schema is version 5. SQLite is the current durable store, with STRICT
+The current schema is version 6. SQLite is the current durable store, with STRICT
 tables, foreign keys, WAL mode, append-only events, mutable projections, and
 fingerprinted records that can later be migrated to a larger store without
 changing the legal operating model.
@@ -608,6 +635,8 @@ erDiagram
     matters ||--o{ tasks : schedules
     matters ||--o{ matter_profiles : adapts
     matters ||--o{ matter_orchestrators : coordinates
+    matters ||--o{ maintenance_runs : repairs
+    maintenance_runs ||--o{ maintenance_reports : reports
     matters ||--o{ work_runs : resumes
     matters ||--o{ error_logs : diagnoses
     sources ||--o{ source_snapshots : captures

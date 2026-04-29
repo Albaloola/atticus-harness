@@ -1764,6 +1764,119 @@ def record_orchestrator_event(
     return eid
 
 
+def request_maintenance_run(
+    conn: sqlite3.Connection,
+    *,
+    matter_scope: str = "global",
+    trigger_reason: str,
+    triggered_by: str = "master_orchestrator",
+    trigger_event_id: str = "",
+    payload: dict[str, object] | None = None,
+) -> str | None:
+    if not _table_exists(conn, "maintenance_runs"):
+        return None
+    if trigger_event_id:
+        existing = conn.execute(
+            """
+            SELECT maintenance_run_id
+            FROM maintenance_runs
+            WHERE trigger_event_id = ?
+            ORDER BY started_at DESC
+            LIMIT 1
+            """,
+            (trigger_event_id,),
+        ).fetchone()
+        if existing is not None:
+            return str(existing["maintenance_run_id"])
+    existing_pending = conn.execute(
+        """
+        SELECT maintenance_run_id
+        FROM maintenance_runs
+        WHERE matter_scope = ? AND status IN ('pending', 'running')
+          AND trigger_reason = ?
+        ORDER BY started_at DESC
+        LIMIT 1
+        """,
+        (matter_scope, trigger_reason),
+    ).fetchone()
+    if existing_pending is not None:
+        return str(existing_pending["maintenance_run_id"])
+    mid = f"maint-{uuid4().hex}"
+    now = utc_now()
+    _ = conn.execute(
+        """
+        INSERT INTO maintenance_runs(maintenance_run_id, matter_scope, status,
+          triggered_by, trigger_reason, trigger_event_id, isolation_level,
+          started_at, updated_at, payload_json)
+        VALUES (?, ?, 'pending', ?, ?, ?, 'control_plane_only', ?, ?, ?)
+        """,
+        (mid, matter_scope or "global", triggered_by, trigger_reason, trigger_event_id, now, now, _json(payload or {})),
+    )
+    event_payload = {
+        "maintenance_run_id": mid,
+        "matter_scope": matter_scope or "global",
+        "triggered_by": triggered_by,
+        "trigger_reason": trigger_reason,
+        "trigger_event_id": trigger_event_id,
+        "isolation_level": "control_plane_only",
+    }
+    _ = emit_event(conn, "maintenance.run_requested", matter_scope=matter_scope or "global", payload=event_payload)
+    if triggered_by == "master_orchestrator":
+        _ = emit_event(conn, "master_orchestrator.maintenance_requested", matter_scope=matter_scope or "global", payload=event_payload)
+    return mid
+
+
+def record_maintenance_report(
+    conn: sqlite3.Connection,
+    *,
+    maintenance_run_id: str,
+    summary: str,
+    diagnostics: dict[str, object],
+    actions: list[dict[str, object]],
+    resume_signal: dict[str, object],
+) -> str:
+    row = conn.execute("SELECT matter_scope FROM maintenance_runs WHERE maintenance_run_id = ?", (maintenance_run_id,)).fetchone()
+    if row is None:
+        raise ValueError(f"maintenance run not found: {maintenance_run_id}")
+    matter_scope = str(row["matter_scope"])
+    report_id = f"maintrep-{uuid4().hex}"
+    now = utc_now()
+    _ = conn.execute(
+        """
+        INSERT INTO maintenance_reports(maintenance_report_id, maintenance_run_id,
+          matter_scope, summary, diagnostics_json, actions_json, resume_signal_json, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (report_id, maintenance_run_id, matter_scope, summary, _json(diagnostics), _json(actions), _json(resume_signal), now),
+    )
+    _ = conn.execute(
+        """
+        UPDATE maintenance_runs
+        SET status = 'completed', updated_at = ?, completed_at = ?
+        WHERE maintenance_run_id = ?
+        """,
+        (now, now, maintenance_run_id),
+    )
+    event_payload = {
+        "maintenance_run_id": maintenance_run_id,
+        "maintenance_report_id": report_id,
+        "summary": summary,
+        "resume_signal": resume_signal,
+    }
+    _ = emit_event(conn, "maintenance.report_ready", matter_scope=matter_scope, payload=event_payload)
+    _ = emit_event(conn, "master_orchestrator.maintenance_completed", matter_scope=matter_scope, payload=event_payload)
+    severity = "blocker" if str(resume_signal.get("status") or "") == "blocked_by_user_intervention" else "warning"
+    _ = record_human_attention_once(
+        conn,
+        target_type="matter",
+        target_id=matter_scope,
+        severity=severity,
+        reason=f"maintenance report ready: {summary}",
+        matter_scope=matter_scope,
+    )
+    return report_id
+
+
 def get_matter_orchestrator(conn: sqlite3.Connection, *, matter_scope: str) -> dict[str, object] | None:
     row = conn.execute("SELECT * FROM matter_orchestrators WHERE matter_scope = ?", (matter_scope,)).fetchone()
     if row is None:
@@ -1962,6 +2075,14 @@ def _record_repair_limit_if_needed(
         "master_orchestrator.user_intervention_required",
         matter_scope=matter_scope,
         payload={"orchestrator_event_id": event_id, **payload},
+    )
+    _ = request_maintenance_run(
+        conn,
+        matter_scope=matter_scope,
+        trigger_reason=f"repair limit reached for task {task_id}",
+        triggered_by="master_orchestrator",
+        trigger_event_id=event_id,
+        payload={"task_id": task_id, "reason": reason, "source": source, "related_event_id": related_event_id},
     )
     return event_id
 

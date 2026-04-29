@@ -216,6 +216,9 @@ def test_cli_matter_profile_orchestrator_and_work_run_smokes(tmp_path: Path):
     assert cli_main(["matter-profile", "show", "--db", str(db_path), "--matter", "napier"]) == 0
     assert cli_main(["orchestrator", "upsert", "--db", str(db_path), "--matter", "napier", "--status", "running", "--goal", "inventory", "--write"]) == 0
     assert cli_main(["orchestrator", "event", "--db", str(db_path), "--matter", "napier", "--event-type", "tick", "--payload-json", '{"n": 1}', "--write"]) == 0
+    assert cli_main(["maintenance", "trigger", "--db", str(db_path), "--matter", "napier", "--reason", "CLI maintenance", "--write"]) == 0
+    assert cli_main(["maintenance", "tick", "--db", str(db_path), "--matter", "napier", "--write"]) == 0
+    assert cli_main(["maintenance", "status", "--db", str(db_path), "--matter", "napier"]) == 0
     assert cli_main(["work-run", "start", "--db", str(db_path), "--matter", "napier", "--goal", "inventory", "--write"]) == 0
 
     with repo.db_connection(db_path) as conn:
@@ -229,10 +232,12 @@ def test_cli_matter_profile_orchestrator_and_work_run_smokes(tmp_path: Path):
     with repo.db_connection(db_path) as conn:
         profile_count = _scalar_int(conn.execute("SELECT COUNT(*) AS n FROM matter_profiles WHERE matter_scope = 'napier'").fetchone())
         event_count = _scalar_int(conn.execute("SELECT COUNT(*) AS n FROM orchestrator_events WHERE matter_scope = 'napier'").fetchone())
+        maintenance_report_count = _scalar_int(conn.execute("SELECT COUNT(*) AS n FROM maintenance_reports WHERE matter_scope = 'napier'").fetchone())
         step_count = _scalar_int(conn.execute("SELECT COUNT(*) AS n FROM work_run_steps WHERE matter_scope = 'napier'").fetchone())
 
     assert profile_count == 1
     assert event_count == 1
+    assert maintenance_report_count == 1
     assert step_count == 1
 
 
