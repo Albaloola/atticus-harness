@@ -12,6 +12,7 @@ from atticus.cli import main as cli_main
 from atticus.core.policies import TrustStatus
 from atticus.db import repo
 from atticus.memory.types import LEGAL_MEMORY_TYPES
+from atticus.status.inspect import inspect_record
 from atticus.tools import registry as tool_registry
 from atticus.tools.base import BaseTool, ToolContext, ToolMetadata, ToolPermissionError, ToolValidationError
 from atticus.tools.registry import get_tool, invoke_tool, list_tools
@@ -57,6 +58,70 @@ def test_read_only_tool_invocation_is_matter_scoped_and_audited(tmp_path: Path):
 
     assert [row["source_id"] for row in cast(list[dict[str, object]], result["sources"])] == [alpha_source]
     assert event_count == 1
+
+
+def test_source_tools_surface_ocr_derivative_without_promoting_it_to_evidence(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        source_id = repo.add_source(conn, source_id="SRC-OCR", matter_scope="alpha", path="/alpha/scan.pdf", sha256="a" * 64)
+        artifact_id = repo.add_artifact(
+            conn,
+            artifact_id="art-extracted-SRC-OCR",
+            matter_scope="alpha",
+            path="/alpha/03-working/extracted-text/SRC-OCR.txt",
+            artifact_type="extracted_text",
+            trust_status=TrustStatus.CANDIDATE,
+            sha256="b" * 64,
+            title="SRC-OCR extracted text",
+            content="OCR text for the scan",
+            source_ids=[source_id],
+        )
+        _ = conn.execute(
+            """
+            INSERT INTO extraction_records(extraction_id, source_id, artifact_id, method,
+              coverage_status, confidence, metadata_json, created_at)
+            VALUES ('extract-ocr', ?, ?, 'existing_ocr_text', 'complete', 0.75, ?, 'now')
+            """,
+            (
+                source_id,
+                artifact_id,
+                json.dumps(
+                    {
+                        "extracted_by": "atticus.local_extraction",
+                        "extractor_tool": "existing_text",
+                        "source_path": "/alpha/scan.pdf",
+                        "output_path": "/alpha/03-working/extracted-text/SRC-OCR.txt",
+                        "text_sha256": "b" * 64,
+                    }
+                ),
+            ),
+        )
+        _ = conn.execute(
+            """
+            INSERT INTO ocr_records(ocr_id, source_id, artifact_id, engine,
+              page_count, coverage_status, metadata_json, created_at)
+            VALUES ('ocr-1', ?, ?, 'existing_text', 1, 'complete', ?, 'now')
+            """,
+            (source_id, artifact_id, json.dumps({"extracted_by": "atticus.local_extraction", "extractor_tool": "existing_text"})),
+        )
+        ctx = ToolContext(conn=conn, matter_scope="alpha", actor="test")
+        listed = invoke_tool("ListMatterSources", {}, ctx)
+        inspected = invoke_tool("InspectRecord", {"record_type": "source", "record_id": source_id}, ctx)
+    cli_inspected = inspect_record(str(db_path), record_type="source", record_id=source_id)
+
+    listed_source = cast(list[dict[str, object]], listed["sources"])[0]
+    derivative = cast(list[dict[str, object]], listed_source["source_material_derivatives"])[0]
+    inspect_derivative = cast(list[dict[str, object]], cast(dict[str, object], inspected["record"])["source_material_derivatives"])[0]
+    cli_derivative = cast(list[dict[str, object]], cli_inspected["source_material_derivatives"])[0]
+    assert listed_source["source_material_available"] is True
+    assert listed_source["ocr_available"] is True
+    assert derivative["artifact_id"] == artifact_id
+    assert derivative["derivative_role"] == "ocr_text"
+    assert derivative["evidence_role"] == "source_attached_text_derivative_not_independent_evidence"
+    assert derivative["citation_target"] == {"target_type": "source", "target_id": source_id}
+    assert derivative["ocr"]["engine"] == "existing_text"
+    assert inspect_derivative["path"].endswith("SRC-OCR.txt")
+    assert cli_derivative["artifact_id"] == artifact_id
 
 
 def test_draft_artifact_edit_requires_prior_read_hash_and_versions(tmp_path: Path):

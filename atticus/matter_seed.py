@@ -18,6 +18,17 @@ from atticus.db import repo
 from atticus.providers.policy import canonical_provider_policy
 from atticus.workers.contracts import safe_path_component
 
+GENERATED_SOURCE_PATH_PARTS = {
+    ".atticus",
+    ".omx",
+    "03-working",
+    "04-candidates",
+    "05-artifacts",
+    "context-packs",
+    "extracted-text",
+    "worker-output",
+}
+
 
 @dataclass(frozen=True)
 class MatterSeedResult:
@@ -122,6 +133,11 @@ def seed_matter_from_inventory(
         repo.ensure_matter(conn, matter_scope, _title_from_scope(matter_scope))
 
     for index, row in enumerate(rows, start=2):
+        generated_reason = _generated_source_path_reason(row)
+        if generated_reason:
+            sources_skipped += 1
+            missing_files.append({"line": index, "path": _row_path(row), "reason": generated_reason})
+            continue
         record = _inventory_record(row, workspace_path=workspace_path, inventory_path=inventory_path, line_number=index)
         if record is None:
             sources_skipped += 1
@@ -353,6 +369,19 @@ def _row_path(row: Mapping[str, str]) -> str:
         value = row.get(key, "").strip()
         if value:
             return value
+    return ""
+
+
+def _generated_source_path_reason(row: Mapping[str, str]) -> str:
+    checked = []
+    for key in ("stored_path", "path", "relative_path", "original_relative_path"):
+        value = row.get(key, "").strip()
+        if value:
+            checked.append(value)
+    for value in checked:
+        parts = {part for part in Path(value).parts if part not in {"", "."}}
+        if parts.intersection(GENERATED_SOURCE_PATH_PARTS):
+            return "generated harness path is not source evidence"
     return ""
 
 

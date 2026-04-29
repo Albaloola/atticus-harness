@@ -10,6 +10,7 @@ from atticus.core.events import utc_now
 from atticus.core.policies import TaskStatus
 from atticus.db import repo
 from atticus.providers.live_readiness import live_readiness_report
+from atticus.scheduler.capacity import agent_capacity
 from atticus.scheduler.lease import acquire_lease, expire_leases
 
 
@@ -32,6 +33,7 @@ def prepare_live_resume(
     """
 
     capacity_requested = max(0, capacity)
+    capacity_effective = agent_capacity(capacity_requested)
     expired_leases = expire_leases(conn) if write_leases else []
     readiness = live_readiness_report(conn, capacity=capacity_requested, env=env)
     plan_readiness = dict(readiness)
@@ -97,6 +99,7 @@ def prepare_live_resume(
 
     return {
         **plan_readiness,
+        "capacity_effective": capacity_effective,
         "ready": can_lease,
         "reasons": reasons,
         "probe": probe,

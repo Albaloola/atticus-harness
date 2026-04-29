@@ -16,6 +16,7 @@ from atticus.agents.coordinator import plan_coordinator_work
 from atticus.agents.orchestrator import (
     orchestrator_plan_repair,
     orchestrator_tick,
+    record_operator_signal,
     report_worker_failure_to_orchestrator,
 )
 from atticus.config import DEFAULT_DB_PATH
@@ -55,6 +56,7 @@ from atticus.reducer.reducer import reduce_candidate
 from atticus.retrieval.ask import answer_question
 from atticus.retrieval.index import DEFAULT_INDEX_NAME, rebuild_search_index
 from atticus.scheduler.gates import evaluate_task_gates
+from atticus.scheduler.capacity import MAX_PARALLEL_AGENT_CAPACITY, agent_capacity
 from atticus.scheduler.free_loop import run_free_loop
 from atticus.scheduler.lease import LeaseError, acquire_lease
 from atticus.scheduler.live_orchestrator import prepare_live_resume
@@ -244,7 +246,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     schedule = sub.add_parser("schedule", help="dependency-aware scheduling preview or write")
     _ = schedule.add_argument("--db", required=True)
-    _ = schedule.add_argument("--capacity", type=int, default=5)
+    _ = schedule.add_argument("--capacity", type=int, default=MAX_PARALLEL_AGENT_CAPACITY)
     _ = schedule.add_argument("--dry-run", dest="dry_run", action="store_true", default=True)
     _ = schedule.add_argument("--write", dest="dry_run", action="store_false", help="persist blocked reasons")
 
@@ -385,7 +387,7 @@ def build_parser() -> argparse.ArgumentParser:
     _ = matter_profile.add_argument("--write", action="store_true")
 
     orchestrator = sub.add_parser("orchestrator", help="status, tick, failures, or record matter orchestrator state")
-    _ = orchestrator.add_argument("action", choices=["show", "upsert", "event", "status", "tick", "failures", "worker-failed", "repair"])
+    _ = orchestrator.add_argument("action", choices=["show", "upsert", "event", "status", "tick", "failures", "worker-failed", "repair", "signal"])
     _ = orchestrator.add_argument("--db", required=True)
     _ = orchestrator.add_argument("--matter", required=True)
     _ = orchestrator.add_argument("--status", default="idle")
@@ -394,8 +396,12 @@ def build_parser() -> argparse.ArgumentParser:
     _ = orchestrator.add_argument("--failure-event-id")
     _ = orchestrator.add_argument("--payload-json")
     _ = orchestrator.add_argument("--task-id")
+    _ = orchestrator.add_argument("--signal-type", default="attention")
+    _ = orchestrator.add_argument("--message", default="")
+    _ = orchestrator.add_argument("--priority", default="normal")
+    _ = orchestrator.add_argument("--requested-by", default="operator")
     _ = orchestrator.add_argument("--reason", default="")
-    _ = orchestrator.add_argument("--capacity", type=int, default=5)
+    _ = orchestrator.add_argument("--capacity", type=int, default=MAX_PARALLEL_AGENT_CAPACITY)
     _ = orchestrator.add_argument("--json", dest="json_output", action="store_true")
     _ = orchestrator.add_argument("--write", action="store_true")
 
@@ -1020,6 +1026,21 @@ def _main(args: CliArgs) -> int:
                 result = orchestrator_plan_repair(conn, args.matter, failure_event_id)
             print_json(result)
             return 0
+        if args.action == "signal":
+            message = args.message or args.reason
+            with repo.db_connection(args.db, read_only=not args.write) as conn:
+                result = record_operator_signal(
+                    conn,
+                    args.matter,
+                    args.signal_type,
+                    message,
+                    target_task_id=args.task_id,
+                    priority=args.priority,
+                    requested_by=args.requested_by,
+                    write=args.write,
+                )
+            print_json(result)
+            return 0
         if not args.write:
             print_json({"dry_run": True, "matter_scope": args.matter, "action": args.action, "status": args.status, "goal": args.goal})
             return 0
@@ -1357,7 +1378,7 @@ def _main(args: CliArgs) -> int:
 
 
 def _schedule_preview(conn: sqlite3.Connection, *, capacity: int) -> tuple[list[JsonObject], list[JsonObject]]:
-    capacity_requested = max(0, capacity)
+    capacity_requested = agent_capacity(capacity)
     runnable: list[JsonObject] = []
     blocked: list[JsonObject] = []
     task_rows = cast(Iterable[sqlite3.Row], conn.execute(

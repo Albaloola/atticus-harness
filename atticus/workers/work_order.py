@@ -20,6 +20,8 @@ WORK_ORDER_INSTRUCTIONS = (
     f"{UNTRUSTED_EVIDENCE_BOUNDARY} "
     "Separate fact, law, procedure, inference, contradiction, risk, drafting note, and uncertainty. "
     "Cite every factual, legal, procedural, contradiction, and risk finding to an allowed context target; "
+    "when using source_materials or extracted/OCR text, cite the source_id as target_type='source' rather than "
+    "the generated extraction artifact unless that artifact is explicitly allowed in citation_targets. "
     "if support is missing, set reasoning_status to uncertain or needs_research and propose a follow-up task. "
     "Do not invent citations, authorities, documents, dates, quotes, admissions, deadlines, remedies, or procedural posture. "
     "Flag stale evidence, weak support, contradictions, privacy/redaction concerns, and missing certifications. "

@@ -102,6 +102,12 @@ class InspectRecordTool(BaseTool):
         summary = summarize_row(dict(row))
         if "matter_scope" in summary and summary["matter_scope"] != ctx.matter_scope:
             raise ToolPermissionError(f"{record_type} is outside matter scope {ctx.matter_scope}")
+        if record_type == "source":
+            summary["source_material_derivatives"] = repo.source_material_derivatives(
+                ctx.conn,
+                matter_scope=ctx.matter_scope,
+                source_ids=(record_id,),
+            ).get(record_id, [])
         return {"record": summary}
 
 
@@ -176,6 +182,16 @@ class ListMatterSourcesTool(BaseTool):
                 (ctx.matter_scope,),
             )
         ]
+        derivatives = repo.source_material_derivatives(
+            ctx.conn,
+            matter_scope=ctx.matter_scope,
+            source_ids=(str(row["source_id"]) for row in rows),
+        )
+        for row in rows:
+            source_derivatives = derivatives.get(str(row["source_id"]), [])
+            row["source_material_derivatives"] = source_derivatives
+            row["source_material_available"] = bool(source_derivatives)
+            row["ocr_available"] = any(item.get("ocr") for item in source_derivatives)
         return {"sources": rows}
 
 

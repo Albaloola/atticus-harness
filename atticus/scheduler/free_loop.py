@@ -15,8 +15,10 @@ from uuid import uuid4
 
 from atticus.core.events import utc_now
 from atticus.core.policies import LegalStage, TaskStatus
+from atticus.agents.orchestrator import report_worker_failure_to_orchestrator
 from atticus.db import repo
 from atticus.reducer.reducer import ReductionBlocked, reduce_candidate
+from atticus.scheduler.capacity import MAX_PARALLEL_AGENT_CAPACITY, agent_capacity
 from atticus.scheduler.lease import LeaseError, acquire_lease
 from atticus.scheduler.planner import select_runnable_tasks
 from atticus.workers.proposed_tasks import import_proposed_tasks_from_candidate
@@ -41,6 +43,8 @@ def run_free_loop_once(
     runnable tasks. This prevents a completed candidate from stranding the queue.
     """
 
+    capacity_requested = max(0, capacity)
+    capacity_effective = agent_capacity(capacity_requested)
     reduced_candidates: list[str] = []
     imported_tasks: list[str] = []
     reduction_errors: list[dict[str, str]] = []
@@ -90,8 +94,13 @@ def run_free_loop_once(
                 severity="blocker",
                 reason=f"free loop reduction failed: {exc}",
             )
+            _report_failure_without_masking(
+                conn,
+                task_id=task_id,
+                reason=f"free loop reduction failed: {exc}",
+            )
 
-    runnable = select_runnable_tasks(conn, capacity=max(0, capacity))
+    runnable = select_runnable_tasks(conn, capacity=capacity_effective)
     leased_tasks: list[str] = []
     executed_tasks: list[str] = []
     worker_errors: list[dict[str, str]] = []
@@ -136,11 +145,17 @@ def run_free_loop_once(
             if lease_id is not None:
                 _fail_active_lease_after_worker_exception(conn, lease_id=lease_id, task_id=task_id, reason=str(exc))
             worker_errors.append({"task_id": task_id, "error": str(exc)})
-            _ = repo.record_human_attention(
+            if "worker output quarantined" not in str(exc).lower():
+                _ = repo.record_human_attention(
+                    conn,
+                    target_type="task",
+                    target_id=task_id,
+                    severity="blocker",
+                    reason=f"free loop worker failed: {exc}",
+                )
+            _report_failure_without_masking(
                 conn,
-                target_type="task",
-                target_id=task_id,
-                severity="blocker",
+                task_id=task_id,
                 reason=f"free loop worker failed: {exc}",
             )
 
@@ -158,6 +173,9 @@ def run_free_loop_once(
         ),
         payload={
             "ok": ok,
+            "capacity_requested": capacity_requested,
+            "capacity_effective": capacity_effective,
+            "capacity_limit": MAX_PARALLEL_AGENT_CAPACITY,
             "reduced_candidates": reduced_candidates,
             "imported_tasks": imported_tasks,
             "leased_tasks": leased_tasks,
@@ -169,6 +187,9 @@ def run_free_loop_once(
     )
     return {
         "ok": ok,
+        "capacity_requested": capacity_requested,
+        "capacity_effective": capacity_effective,
+        "capacity_limit": MAX_PARALLEL_AGENT_CAPACITY,
         "reduced_candidates": reduced_candidates,
         "imported_tasks": imported_tasks,
         "leased_tasks": leased_tasks,
@@ -228,6 +249,35 @@ def _fail_active_lease_after_worker_exception(conn: sqlite3.Connection, *, lease
         matter_scope=repo.matter_scope_for_target(conn, target_type="task", target_id=task_id) or "unknown",
         payload={"lease_id": lease_id, "task_id": task_id, "reason": reason},
     )
+
+
+def _report_failure_without_masking(conn: sqlite3.Connection, *, task_id: str, reason: str) -> None:
+    if "worker output quarantined" in reason.lower() and _already_reported_output_quarantine(conn, task_id=task_id):
+        return
+    try:
+        _ = report_worker_failure_to_orchestrator(conn, task_id, reason)
+    except Exception as exc:
+        _ = repo.emit_event(
+            conn,
+            "orchestrator.failure_signal_failed",
+            matter_scope=repo.matter_scope_for_target(conn, target_type="task", target_id=task_id) or "unknown",
+            payload={"task_id": task_id, "reason": reason, "signal_error": str(exc)},
+        )
+
+
+def _already_reported_output_quarantine(conn: sqlite3.Connection, *, task_id: str) -> bool:
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM orchestrator_events
+        WHERE event_type = 'orchestrator.worker_failed'
+          AND json_extract(payload_json, '$.task_id') = ?
+          AND json_extract(payload_json, '$.source') = 'worker_result_quarantine'
+        LIMIT 1
+        """,
+        (task_id,),
+    ).fetchone()
+    return row is not None
 
 
 def _pending_candidates(conn: sqlite3.Connection) -> list[Mapping[str, object]]:

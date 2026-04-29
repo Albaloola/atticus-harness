@@ -1722,6 +1722,49 @@ def test_live_orchestrator_underfills_15_slots_with_only_safe_tasks(tmp_path: Pa
     assert all(str(row["worker_id"]).startswith("live-test-") for row in leases)
 
 
+def test_live_orchestrator_caps_and_fills_15_independent_slots(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        for index in range(17):
+            repo.add_task(
+                conn,
+                TaskSpec(
+                    task_id=f"safe-live-{index:02d}",
+                    title=f"Safe live {index:02d}",
+                    task_type="source_inventory",
+                    stage=LegalStage.S0_SOURCE_INVENTORY,
+                    provider_policy={
+                        "provider": "openrouter",
+                        "model": "deepseek/deepseek-v4-pro",
+                        "allow_fallback": False,
+                        "estimated_cost_usd": 0.01,
+                    },
+                    status=TaskStatus.QUEUED,
+                    expected_value=100 - index,
+                ),
+            )
+        plan = prepare_live_resume(
+            conn,
+            capacity=20,
+            env={"OPENROUTER_API_KEY": "sk-test", "ATTICUS_ENABLE_LIVE_OPENROUTER": "1"},
+            probe_result={"ok": True, "provider": "openrouter", "model": "deepseek/deepseek-v4-pro"},
+            write_leases=True,
+            worker_prefix="cap-test",
+        )
+        leases = cast(list[Mapping[str, object]], conn.execute("SELECT task_id, worker_id, status FROM leases ORDER BY worker_id").fetchall())
+
+    assert plan["ready"] is True
+    assert plan["capacity_requested"] == 20
+    assert plan["capacity_effective"] == 15
+    assert plan["capacity_limit"] == 15
+    assert plan["capacity_safe"] == 15
+    assert len(plan["runnable_task_ids"]) == 15
+    assert len(leases) == 15
+    assert [row["worker_id"] for row in leases][0] == "cap-test-01"
+    assert [row["worker_id"] for row in leases][-1] == "cap-test-15"
+    assert all(row["status"] == "active" for row in leases)
+
+
 def test_live_orchestrator_expires_stale_active_lease_before_live_resume(tmp_path: Path):
     db_path = init_db(tmp_path)
     with repo.db_connection(db_path) as conn:

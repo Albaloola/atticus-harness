@@ -14,8 +14,8 @@ from atticus.db import repo
 from atticus.skills.registry import skills_for_task
 
 
-SOURCE_MATERIAL_TOTAL_CHARS = 32_000
-SOURCE_MATERIAL_MIN_CHARS = 500
+SOURCE_MATERIAL_TOTAL_CHARS = 20_000
+SOURCE_MATERIAL_MIN_CHARS = 250
 SOURCE_MATERIAL_MAX_CHARS = 6_000
 
 
@@ -80,7 +80,12 @@ def build_context_pack(
         record_type="source",
         matter_scope=matter_scope,
     )
-    source_materials = _load_source_materials(conn, matter_scope=matter_scope, source_ids=source_ids)
+    source_materials = _load_source_materials(
+        conn,
+        matter_scope=matter_scope,
+        source_ids=source_ids,
+        allowed_artifact_ids=artifact_ids,
+    )
     artifact_rows = cast(list[Mapping[str, object]], conn.execute(
             """
             SELECT artifact_id, path, artifact_type, trust_status, stale, title, content
@@ -199,6 +204,7 @@ def _load_source_materials(
     *,
     matter_scope: str,
     source_ids: list[str],
+    allowed_artifact_ids: list[str],
 ) -> list[dict[str, object]]:
     if not source_ids:
         return []
@@ -207,6 +213,12 @@ def _load_source_materials(
         f"""
         SELECT
           s.source_id,
+          s.path AS source_path,
+          s.source_type,
+          s.sha256 AS source_sha256,
+          s.size_bytes AS source_size_bytes,
+          s.trust_status AS source_trust_status,
+          s.imported_from AS source_imported_from,
           a.artifact_id,
           a.path,
           a.artifact_type,
@@ -214,10 +226,18 @@ def _load_source_materials(
           a.sha256,
           a.title,
           a.content,
+          er.extraction_id,
           er.method AS extraction_method,
-          er.coverage_status,
+          er.coverage_status AS extraction_coverage_status,
           er.confidence,
+          er.metadata_json AS extraction_metadata_json,
+          er.created_at AS extraction_created_at,
+          ocr.ocr_id,
           ocr.engine AS ocr_engine
+          , ocr.page_count AS ocr_page_count
+          , ocr.coverage_status AS ocr_coverage_status
+          , ocr.metadata_json AS ocr_metadata_json
+          , ocr.created_at AS ocr_created_at
         FROM sources s
         JOIN artifact_sources af ON af.source_id = s.source_id
         JOIN artifacts a ON a.artifact_id = af.artifact_id
@@ -253,6 +273,7 @@ def _load_source_materials(
         min(SOURCE_MATERIAL_MAX_CHARS, SOURCE_MATERIAL_TOTAL_CHARS // max(1, len(source_ids))),
     )
     seen: set[str] = set()
+    allowed_artifacts = set(allowed_artifact_ids)
     materials: list[dict[str, object]] = []
     for row in rows:
         source_id = str(row["source_id"])
@@ -261,10 +282,37 @@ def _load_source_materials(
         seen.add(source_id)
         content = str(row["content"] or "")
         excerpt = content[:per_source_chars]
+        extraction_metadata = _json_object(str(row["extraction_metadata_json"] or "{}"))
+        ocr_metadata = _json_object(str(row["ocr_metadata_json"] or "{}"))
+        artifact_id = str(row["artifact_id"])
         materials.append(
             {
                 "source_id": source_id,
-                "artifact_id": row["artifact_id"],
+                "artifact_id": artifact_id,
+                "citation_target": {"target_type": "source", "target_id": source_id},
+                "artifact_citation_allowed": artifact_id in allowed_artifacts,
+                "source_provenance": {
+                    "source_id": source_id,
+                    "path": row["source_path"],
+                    "source_type": row["source_type"],
+                    "sha256": row["source_sha256"],
+                    "size_bytes": row["source_size_bytes"],
+                    "trust_status": row["source_trust_status"],
+                    "imported_from": row["source_imported_from"] or "",
+                },
+                "extraction_provenance": {
+                    "extraction_id": row["extraction_id"] or "",
+                    "method": row["extraction_method"] or "artifact_text",
+                    "tool": str(extraction_metadata.get("extractor") or extraction_metadata.get("extractor_tool") or row["extraction_method"] or "artifact_text"),
+                    "performed_by": str(extraction_metadata.get("extracted_by") or "atticus.local_extraction"),
+                    "coverage_status": row["extraction_coverage_status"] or "available",
+                    "confidence": row["confidence"] if row["confidence"] is not None else None,
+                    "created_at": row["extraction_created_at"] or "",
+                    "source_path": extraction_metadata.get("source_path") or row["source_path"],
+                    "output_path": extraction_metadata.get("output_path") or row["path"],
+                    "text_sha256": extraction_metadata.get("text_sha256") or row["sha256"] or "",
+                },
+                "ocr_provenance": _ocr_provenance(row, ocr_metadata),
                 "path": row["path"],
                 "artifact_type": row["artifact_type"],
                 "trust_status": row["trust_status"],
@@ -275,12 +323,35 @@ def _load_source_materials(
                 "available_chars": len(content),
                 "excerpt_truncated": len(content) > len(excerpt),
                 "extraction_method": row["extraction_method"] or "artifact_text",
-                "coverage_status": row["coverage_status"] or "available",
+                "coverage_status": row["extraction_coverage_status"] or "available",
                 "confidence": row["confidence"] if row["confidence"] is not None else None,
                 "ocr_engine": row["ocr_engine"],
             }
         )
     return materials
+
+
+def _json_object(text: str) -> dict[str, object]:
+    try:
+        value = json.loads(text or "{}")
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    if not isinstance(value, Mapping):
+        return {}
+    return {str(key): item for key, item in cast(Mapping[object, object], value).items()}
+
+
+def _ocr_provenance(row: Mapping[str, object], metadata: Mapping[str, object]) -> dict[str, object] | None:
+    if not row["ocr_id"] and not row["ocr_engine"]:
+        return None
+    return {
+        "ocr_id": row["ocr_id"] or "",
+        "engine": row["ocr_engine"] or "",
+        "performed_by": str(metadata.get("extracted_by") or "atticus.local_extraction"),
+        "page_count": row["ocr_page_count"] if row["ocr_page_count"] is not None else 0,
+        "coverage_status": row["ocr_coverage_status"] or "",
+        "created_at": row["ocr_created_at"] or "",
+    }
 
 
 def _section_priority(section: Mapping[str, object]) -> int:

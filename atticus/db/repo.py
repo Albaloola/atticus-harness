@@ -245,6 +245,135 @@ def matter_scope_for_target(conn: sqlite3.Connection, *, target_type: str, targe
     return _matter_scope_for_target(conn, target_type=target_type, target_id=target_id)
 
 
+def source_material_derivatives(
+    conn: sqlite3.Connection,
+    *,
+    matter_scope: str,
+    source_ids: Iterable[str] | None = None,
+) -> dict[str, list[dict[str, object]]]:
+    """Return OCR/extracted text derivatives attached to matter sources.
+
+    The source remains the evidence target. These rows are discoverable
+    source-attached text views that tell workers where the OCR/extraction lives
+    and how to cite it safely.
+    """
+
+    requested = tuple(str(source_id) for source_id in (source_ids or ()) if str(source_id))
+    if requested:
+        placeholders = ",".join("?" for _ in requested)
+        source_rows = conn.execute(
+            f"SELECT source_id FROM sources WHERE matter_scope = ? AND source_id IN ({placeholders}) ORDER BY source_id",
+            (matter_scope, *requested),
+        ).fetchall()
+    else:
+        source_rows = conn.execute(
+            "SELECT source_id FROM sources WHERE matter_scope = ? ORDER BY source_id",
+            (matter_scope,),
+        ).fetchall()
+    found_source_ids = [str(row["source_id"]) for row in source_rows]
+    derivatives: dict[str, list[dict[str, object]]] = {source_id: [] for source_id in found_source_ids}
+    if not found_source_ids:
+        return derivatives
+    placeholders = ",".join("?" for _ in found_source_ids)
+    rows = conn.execute(
+        f"""
+        SELECT
+          s.source_id,
+          a.artifact_id,
+          a.path,
+          a.artifact_type,
+          a.trust_status,
+          a.sha256,
+          a.title,
+          a.stale,
+          er.extraction_id,
+          er.method AS extraction_method,
+          er.coverage_status AS extraction_coverage_status,
+          er.confidence,
+          er.metadata_json AS extraction_metadata_json,
+          er.created_at AS extraction_created_at,
+          ocr.ocr_id,
+          ocr.engine AS ocr_engine,
+          ocr.page_count AS ocr_page_count,
+          ocr.coverage_status AS ocr_coverage_status,
+          ocr.metadata_json AS ocr_metadata_json,
+          ocr.created_at AS ocr_created_at
+        FROM sources s
+        JOIN artifact_sources af ON af.source_id = s.source_id
+        JOIN artifacts a ON a.artifact_id = af.artifact_id
+        LEFT JOIN extraction_records er ON er.source_id = s.source_id AND er.artifact_id = a.artifact_id
+        LEFT JOIN ocr_records ocr ON ocr.source_id = s.source_id AND ocr.artifact_id = a.artifact_id
+        WHERE s.matter_scope = ?
+          AND s.source_id IN ({placeholders})
+          AND a.matter_scope = s.matter_scope
+          AND a.artifact_type IN (
+            'extracted_text',
+            'extraction_record',
+            'ocr_extract',
+            'ocr_text',
+            'transcription_record',
+            'transcript'
+          )
+        ORDER BY
+          s.source_id,
+          CASE a.artifact_type
+            WHEN 'extracted_text' THEN 0
+            WHEN 'ocr_text' THEN 1
+            WHEN 'ocr_extract' THEN 2
+            WHEN 'transcript' THEN 3
+            ELSE 4
+          END,
+          a.created_at DESC,
+          a.artifact_id
+        """,
+        (matter_scope, *found_source_ids),
+    ).fetchall()
+    for row in rows:
+        source_id = str(row["source_id"])
+        extraction_metadata = _json_dict(str(row["extraction_metadata_json"] or "{}"))
+        ocr_metadata = _json_dict(str(row["ocr_metadata_json"] or "{}"))
+        method = str(row["extraction_method"] or extraction_metadata.get("extractor") or "artifact_text")
+        artifact_type = str(row["artifact_type"])
+        derivative_role = "ocr_text" if row["ocr_id"] or "ocr" in method or "ocr" in artifact_type else "extracted_text"
+        derivatives.setdefault(source_id, []).append(
+            {
+                "source_id": source_id,
+                "artifact_id": str(row["artifact_id"]),
+                "artifact_type": artifact_type,
+                "derivative_role": derivative_role,
+                "evidence_role": "source_attached_text_derivative_not_independent_evidence",
+                "citation_target": {"target_type": "source", "target_id": source_id},
+                "artifact_citation_rule": "cite the source_id for facts found in this derivative unless the work order explicitly allows artifact citation",
+                "path": row["path"],
+                "title": row["title"],
+                "trust_status": row["trust_status"],
+                "stale": bool(row["stale"]),
+                "text_sha256": str(extraction_metadata.get("text_sha256") or row["sha256"] or ""),
+                "extraction": {
+                    "extraction_id": row["extraction_id"] or "",
+                    "method": method,
+                    "coverage_status": row["extraction_coverage_status"] or "",
+                    "confidence": row["confidence"] if row["confidence"] is not None else None,
+                    "created_at": row["extraction_created_at"] or "",
+                    "performed_by": str(extraction_metadata.get("extracted_by") or "atticus.local_extraction"),
+                    "tool": str(extraction_metadata.get("extractor_tool") or extraction_metadata.get("extractor") or method),
+                    "source_path": str(extraction_metadata.get("source_path") or ""),
+                    "output_path": str(extraction_metadata.get("output_path") or row["path"] or ""),
+                },
+                "ocr": {
+                    "ocr_id": row["ocr_id"] or "",
+                    "engine": row["ocr_engine"] or "",
+                    "page_count": row["ocr_page_count"] if row["ocr_page_count"] is not None else 0,
+                    "coverage_status": row["ocr_coverage_status"] or "",
+                    "created_at": row["ocr_created_at"] or "",
+                    "performed_by": str(ocr_metadata.get("extracted_by") or "atticus.local_extraction"),
+                    "tool": str(ocr_metadata.get("extractor_tool") or row["ocr_engine"] or ""),
+                } if row["ocr_id"] or row["ocr_engine"] else None,
+            }
+        )
+    return derivatives
+
+
 def _require_target_in_matter(
     conn: sqlite3.Connection,
     *,
@@ -266,6 +395,22 @@ def _require_target_in_matter(
 
 def _json(value: object) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
+def _json_list_or_empty(text: str) -> list[object]:
+    try:
+        value = json.loads(text or "[]")
+    except (json.JSONDecodeError, TypeError):
+        return []
+    return cast(list[object], value) if isinstance(value, list) else []
+
+
+def _json_dict(text: str) -> dict[str, object]:
+    try:
+        value = json.loads(text or "{}")
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    return {str(key): item for key, item in cast(Mapping[object, object], value).items()} if isinstance(value, Mapping) else {}
 
 
 def _hash_file(path: Path) -> tuple[str, int]:
@@ -752,7 +897,16 @@ def update_task_status(conn: sqlite3.Connection, task_id: str, status: str, reas
 
 
 def update_task_blocked(conn: sqlite3.Connection, task_id: str, reasons: list[str]) -> None:
-    matter_scope = _matter_scope_for_target(conn, target_type="task", target_id=task_id) or "unknown"
+    task_row = conn.execute(
+        "SELECT matter_scope, status, blocked_reasons_json FROM tasks WHERE task_id = ?",
+        (task_id,),
+    ).fetchone()
+    matter_scope = str(task_row["matter_scope"]) if task_row is not None else _matter_scope_for_target(conn, target_type="task", target_id=task_id) or "unknown"
+    existing_reasons = _json_list_or_empty(str(task_row["blocked_reasons_json"] or "[]")) if task_row is not None else []
+    if task_row is not None and str(task_row["status"]) == str(TaskStatus.BLOCKED) and existing_reasons == reasons:
+        if _orchestrator_signal_count_for_task(conn, task_id=task_id) == 0:
+            _ = record_orchestrator_task_blocked(conn, task_id=task_id, reasons=reasons, matter_scope=matter_scope)
+        return
     _ = conn.execute(
         """
         UPDATE tasks
@@ -761,7 +915,7 @@ def update_task_blocked(conn: sqlite3.Connection, task_id: str, reasons: list[st
         """,
         (TaskStatus.BLOCKED, _json(reasons), utc_now(), task_id),
     )
-    _ = record_human_attention(
+    _ = record_human_attention_once(
         conn,
         target_type="task",
         target_id=task_id,
@@ -769,6 +923,7 @@ def update_task_blocked(conn: sqlite3.Connection, task_id: str, reasons: list[st
         reason="; ".join(reasons),
     )
     _ = emit_event(conn, "task.blocked", matter_scope=matter_scope, payload={"task_id": task_id, "reasons": reasons})
+    _ = record_orchestrator_task_blocked(conn, task_id=task_id, reasons=reasons, matter_scope=matter_scope)
 
 
 def record_validation(
@@ -1181,6 +1336,130 @@ def record_human_attention(
     return int(lastrowid)
 
 
+def record_human_attention_once(
+    conn: sqlite3.Connection,
+    *,
+    target_type: str,
+    target_id: str,
+    severity: str,
+    reason: str,
+    status: str = "open",
+    matter_scope: str | None = None,
+) -> int | None:
+    target_matter_scope = _matter_scope_for_target(conn, target_type=target_type, target_id=target_id)
+    if matter_scope is not None and target_matter_scope is not None and matter_scope != target_matter_scope:
+        raise ValueError(f"human attention matter_scope {matter_scope!r} does not match target matter {target_matter_scope!r}")
+    resolved_matter_scope = matter_scope or target_matter_scope or "unknown"
+    row = conn.execute(
+        """
+        SELECT attention_id
+        FROM human_attention
+        WHERE matter_scope = ? AND target_type = ? AND target_id = ?
+          AND severity = ? AND reason = ? AND status = ?
+        ORDER BY attention_id DESC
+        LIMIT 1
+        """,
+        (resolved_matter_scope, target_type, target_id, severity, reason, status),
+    ).fetchone()
+    if row is not None:
+        return None
+    return record_human_attention(
+        conn,
+        target_type=target_type,
+        target_id=target_id,
+        severity=severity,
+        reason=reason,
+        status=status,
+        matter_scope=resolved_matter_scope,
+    )
+
+
+def record_orchestrator_task_blocked(
+    conn: sqlite3.Connection,
+    *,
+    task_id: str,
+    reasons: list[str],
+    matter_scope: str | None = None,
+    source: str = "task.blocked",
+) -> str | None:
+    row = conn.execute("SELECT matter_scope FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
+    if row is None:
+        return None
+    task_matter_scope = str(row["matter_scope"])
+    if matter_scope is not None and matter_scope not in {"", "unknown"} and matter_scope != task_matter_scope:
+        raise ValueError(f"task {task_id} belongs to matter {task_matter_scope}, not {matter_scope}")
+    orchestrator_id = _ensure_signal_orchestrator(conn, matter_scope=task_matter_scope)
+    if orchestrator_id is None:
+        return None
+    prior_signals = _orchestrator_signal_count_for_task(conn, task_id=task_id)
+    escalation = _escalation_payload(prior_signals)
+    now = utc_now()
+    _ = conn.execute(
+        "UPDATE matter_orchestrators SET status = 'repair_required', updated_at = ? WHERE orchestrator_id = ?",
+        (now, orchestrator_id),
+    )
+    return record_orchestrator_event(
+        conn,
+        orchestrator_id=orchestrator_id,
+        event_type="orchestrator.task_blocked",
+        payload={
+            "task_id": task_id,
+            "reasons": reasons,
+            "source": source,
+            "retry_policy": "no silent infinite retry",
+            **escalation,
+        },
+    )
+
+
+def record_orchestrator_worker_failure(
+    conn: sqlite3.Connection,
+    *,
+    task_id: str,
+    failure_reason: str,
+    matter_scope: str | None = None,
+    source: str = "worker",
+) -> str:
+    row = conn.execute("SELECT matter_scope FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
+    if row is None:
+        raise ValueError(f"unknown task: {task_id}")
+    task_matter_scope = str(row["matter_scope"])
+    if matter_scope is not None and task_matter_scope != matter_scope:
+        raise ValueError(f"task {task_id} belongs to matter {task_matter_scope}, not {matter_scope}")
+    orchestrator_id = _ensure_signal_orchestrator(conn, matter_scope=task_matter_scope)
+    if orchestrator_id is None:
+        raise ValueError("orchestrator tables are unavailable")
+    _ = record_human_attention_once(
+        conn,
+        target_type="task",
+        target_id=task_id,
+        severity="warning",
+        reason=f"worker failure reported to orchestrator: {failure_reason}",
+    )
+    prior_signals = _orchestrator_signal_count_for_task(conn, task_id=task_id)
+    escalation = _escalation_payload(prior_signals)
+    _ = conn.execute(
+        """
+        UPDATE matter_orchestrators
+        SET failure_count = failure_count + 1, status = 'repair_required', updated_at = ?
+        WHERE orchestrator_id = ?
+        """,
+        (utc_now(), orchestrator_id),
+    )
+    return record_orchestrator_event(
+        conn,
+        orchestrator_id=orchestrator_id,
+        event_type="orchestrator.worker_failed",
+        payload={
+            "task_id": task_id,
+            "failure_reason": failure_reason,
+            "source": source,
+            "retry_policy": "no silent infinite retry",
+            **escalation,
+        },
+    )
+
+
 def record_external_action_block(
     conn: sqlite3.Connection,
     *,
@@ -1271,6 +1550,44 @@ def get_matter_orchestrator(conn: sqlite3.Connection, *, matter_scope: str) -> d
     result = _row_to_plain_dict(row)
     result["model_decision"] = json.loads(str(result.pop("model_decision_json") or "{}"))
     return result
+
+
+def _ensure_signal_orchestrator(conn: sqlite3.Connection, *, matter_scope: str) -> str | None:
+    if not _table_exists(conn, "matter_orchestrators") or not _table_exists(conn, "orchestrator_events"):
+        return None
+    row = conn.execute("SELECT orchestrator_id FROM matter_orchestrators WHERE matter_scope = ?", (matter_scope,)).fetchone()
+    if row is not None:
+        return str(row["orchestrator_id"])
+    return upsert_matter_orchestrator(conn, matter_scope=matter_scope, status="repair_required")
+
+
+def _orchestrator_signal_count_for_task(conn: sqlite3.Connection, *, task_id: str) -> int:
+    if not _table_exists(conn, "orchestrator_events"):
+        return 0
+    row = conn.execute(
+        """
+        SELECT COUNT(*) AS n
+        FROM orchestrator_events
+        WHERE event_type IN ('orchestrator.task_blocked', 'orchestrator.worker_failed')
+          AND json_extract(payload_json, '$.task_id') = ?
+        """,
+        (task_id,),
+    ).fetchone()
+    return int(row["n"]) if row is not None else 0
+
+
+def _escalation_payload(prior_signals: int) -> dict[str, object]:
+    level = 1 if prior_signals <= 0 else 2 if prior_signals == 1 else 3
+    target = {
+        1: "worker_self_repair",
+        2: "matter_orchestrator_repair",
+        3: "master_orchestrator_attention",
+    }[level]
+    return {
+        "signal_count": prior_signals + 1,
+        "escalation_level": level,
+        "escalation_target": target,
+    }
 
 
 def start_work_run(

@@ -14,6 +14,7 @@
         "structured_extraction",
         "extraction_qa",
         "source_material_retrieval",
+        "evidence_organization",
         "routine_redaction_scan",
         "chronology_event_extraction",
         "candidate_packet_formatting"
@@ -102,6 +103,7 @@
       "extraction_qa": "deepseek_flash_worker",
       "classification": "deepseek_flash_worker",
       "duplicate_detection": "deepseek_flash_worker",
+      "evidence_organization_plan": "deepseek_flash_worker",
       "chronology_event_extraction": "deepseek_flash_worker",
       "authority_map": "deepseek_pro_orchestrator",
       "authority_audit": "deepseek_pro_orchestrator",

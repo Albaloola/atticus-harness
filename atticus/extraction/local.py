@@ -215,7 +215,11 @@ def repair_source_extractions(
                 confidence=_confidence_for_method(extracted.method),
                 metadata={
                     **extracted.metadata,
+                    "extracted_by": "atticus.local_extraction",
+                    "extractor_tool": extracted.metadata.get("extractor") or extracted.method,
+                    "source_id": source_id,
                     "source_path": str(source_path),
+                    "source_sha256": row["sha256"],
                     "output_path": str(output_path),
                     "text_sha256": content_hash,
                 },
@@ -228,7 +232,11 @@ def repair_source_extractions(
                     engine=extracted.ocr_engine,
                     metadata={
                         **extracted.metadata,
+                        "extracted_by": "atticus.local_extraction",
+                        "extractor_tool": extracted.ocr_engine or extracted.metadata.get("extractor") or extracted.method,
+                        "source_id": source_id,
                         "source_path": str(source_path),
+                        "source_sha256": row["sha256"],
                         "output_path": str(output_path),
                         "text_sha256": content_hash,
                     },

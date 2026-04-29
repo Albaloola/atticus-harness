@@ -94,6 +94,7 @@ FLASH_TASK_TYPES = {
     "deduplication",
     "source_triage",
     "production_mapping",
+    "evidence_organization_plan",
     "chronology_event_extraction",
     "chunk_retrieval",
     "index_building",

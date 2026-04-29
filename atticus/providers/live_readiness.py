@@ -22,6 +22,7 @@ from atticus.providers.openrouter_failover import (
 )
 from atticus.providers.openrouter import OpenRouterClient, OpenRouterError, validate_usage_tokens
 from atticus.providers.policy import ProviderActual, ProviderDecision, ProviderRequest, check_provider_policy
+from atticus.scheduler.capacity import MAX_PARALLEL_AGENT_CAPACITY, agent_capacity
 from atticus.scheduler.gates import evaluate_task_gates
 
 LIVE_ENABLE_ENV = "ATTICUS_ENABLE_LIVE_OPENROUTER"
@@ -246,6 +247,7 @@ def live_readiness_report(conn: sqlite3.Connection, *, capacity: int = 15, env: 
 
     env = env if env is not None else os.environ
     capacity_requested = max(0, capacity)
+    capacity_effective = agent_capacity(capacity_requested)
     runnable: list[dict[str, object]] = []
     blocked: list[dict[str, object]] = []
     global_reasons: list[str] = []
@@ -295,7 +297,7 @@ def live_readiness_report(conn: sqlite3.Connection, *, capacity: int = 15, env: 
                 reasons.append(f"budget blocked for {scope_type}:{scope_id}: {budget.reason}")
         if reasons:
             blocked.append({"task_id": task_id, "title": title, "reasons": reasons})
-        elif len(runnable) < capacity_requested:
+        elif len(runnable) < capacity_effective:
             runnable.append(
                 {
                     "task_id": task_id,
@@ -313,6 +315,8 @@ def live_readiness_report(conn: sqlite3.Connection, *, capacity: int = 15, env: 
         "ready": ready,
         "reasons": global_reasons,
         "capacity_requested": capacity_requested,
+        "capacity_effective": capacity_effective,
+        "capacity_limit": MAX_PARALLEL_AGENT_CAPACITY,
         "capacity_safe": len(runnable),
         "runnable_task_ids": [item["task_id"] for item in runnable],
         "runnable_tasks": runnable,

@@ -823,6 +823,34 @@ def test_scheduler_under_fills_capacity_when_only_fewer_tasks_are_safe(tmp_path:
     assert [task["task_id"] for task in runnable] == ["safe"]
 
 
+def test_scheduler_caps_parallel_agent_slots_at_15(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        for index in range(17):
+            source_id = repo.add_source(
+                conn,
+                source_id=f"src-{index:02d}",
+                path=f"/raw/{index:02d}.pdf",
+                sha256=f"{index:064x}"[-64:],
+                trust_status=TrustStatus.CANDIDATE,
+            )
+            repo.add_task(
+                conn,
+                TaskSpec(
+                    task_id=f"safe-{index:02d}",
+                    title=f"Safe {index:02d}",
+                    task_type="extract",
+                    source_dependencies=[source_id],
+                    status=TaskStatus.QUEUED,
+                    expected_value=100 - index,
+                ),
+            )
+        runnable = select_runnable_tasks(conn, capacity=20)
+
+    assert len(runnable) == 15
+    assert [task["task_id"] for task in runnable][:2] == ["safe-00", "safe-01"]
+
+
 def test_cost_provider_metadata_can_be_recorded(tmp_path: Path):
     db_path = init_db(tmp_path)
     cost = estimate_cost_usd(

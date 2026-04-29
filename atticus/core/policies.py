@@ -124,7 +124,7 @@ STAGE_FOUNDATION_REQUIREMENTS: dict[str, list[dict[str, str]]] = {
     LegalStage.S8_DRAFT_PREPARATION: [
         {"subject_type": "matter", "subject_id": "atticus", "certification_type": "chronology_citations"},
         {"subject_type": "matter", "subject_id": "atticus", "certification_type": "authority_map"},
-        {"subject_type": "matter", "subject_id": "atticus", "certification_type": "hostile_review"},
+        # Hostile review gates final QA, not draft creation; otherwise S8 and S7 deadlock.
     ],
     LegalStage.S9_FINAL_QUALITY_GATE: [
         {"subject_type": "matter", "subject_id": "atticus", "certification_type": "draft_preparation"},

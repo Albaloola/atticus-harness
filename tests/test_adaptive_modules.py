@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import cast
 
@@ -10,6 +11,7 @@ from atticus.agents.coordinator import plan_adaptive_work
 from atticus.agents.orchestrator import (
     orchestrator_plan_repair,
     orchestrator_tick,
+    record_operator_signal,
     report_worker_failure_to_orchestrator,
 )
 from atticus.agents.subagents import SubagentSpec, create_subagent_task
@@ -25,6 +27,7 @@ from atticus.db import repo
 from atticus.providers.cache_observability import detect_prompt_cache_break, fingerprint_provider_policy
 from atticus.providers.model_decision import ModelDecision
 from atticus.retrieval.work_reuse import build_followup_context, explain_reuse_decision
+from atticus.scheduler.planner import select_runnable_tasks
 from atticus.work_runs import resume_work_run, start_work_run, summarize_reusable_work
 
 
@@ -97,6 +100,171 @@ def test_orchestrator_failure_repair_and_tick_are_matter_scoped(tmp_path: Path):
     assert write_tick["leased"][0]["task_id"] == "alpha-task"
     assert int(str(alpha_leases["n"])) == 1
     assert int(str(beta_leases["n"])) == 0
+
+
+def test_scheduler_gate_block_signals_orchestrator_and_dedupes_attention(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="blocked-source-task",
+                title="Blocked source",
+                task_type="extract",
+                matter_scope="alpha",
+                source_dependencies=["missing-source"],
+            ),
+        )
+
+        assert select_runnable_tasks(conn, capacity=5) == []
+        assert select_runnable_tasks(conn, capacity=5) == []
+        event = cast(
+            dict[str, object],
+            conn.execute(
+                """
+                SELECT event_type, payload_json
+                FROM orchestrator_events
+                WHERE matter_scope = 'alpha'
+                ORDER BY created_at DESC
+                LIMIT 1
+                """
+            ).fetchone(),
+        )
+        attention_count = conn.execute(
+            """
+            SELECT COUNT(*) AS n
+            FROM human_attention
+            WHERE target_id = 'blocked-source-task' AND status = 'open'
+            """
+        ).fetchone()
+        tick = orchestrator_tick(conn, "alpha", 5, dry_run=True)
+        orchestrator = repo.get_matter_orchestrator(conn, matter_scope="alpha")
+
+    payload = cast(dict[str, object], json.loads(str(event["payload_json"])))
+    repairs = cast(list[dict[str, object]], tick["blocked_repairs"])
+    assert event["event_type"] == "orchestrator.task_blocked"
+    assert payload["escalation_target"] == "worker_self_repair"
+    assert payload["retry_policy"] == "no silent infinite retry"
+    assert attention_count is not None and int(str(attention_count["n"])) == 1
+    assert orchestrator is not None and orchestrator["status"] == "repair_required"
+    assert repairs and repairs[0]["proposed_actions"][0]["type"] == "context_rebuild"
+
+
+def test_operator_signal_is_routed_once_by_orchestrator_tick(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(conn, TaskSpec(task_id="alpha-task", title="Alpha", task_type="source_inventory", matter_scope="alpha"))
+
+        dry = record_operator_signal(
+            conn,
+            "alpha",
+            "directive",
+            "Prioritize bank records before draft work",
+            target_task_id="alpha-task",
+            priority="high",
+            write=False,
+        )
+        assert dry["dry_run"] is True
+        assert dry["would_create_orchestrator"] is True
+        assert conn.execute("SELECT COUNT(*) AS n FROM orchestrator_events").fetchone()["n"] == 0
+
+        signal = record_operator_signal(
+            conn,
+            "alpha",
+            "directive",
+            "Prioritize bank records before draft work",
+            target_task_id="alpha-task",
+            priority="high",
+            write=True,
+        )
+        dry_tick = orchestrator_tick(conn, "alpha", 0, dry_run=True)
+        write_tick = orchestrator_tick(conn, "alpha", 0, dry_run=False)
+        second_write_tick = orchestrator_tick(conn, "alpha", 0, dry_run=False)
+        routed_count = conn.execute(
+            """
+            SELECT COUNT(*) AS n
+            FROM orchestrator_events
+            WHERE matter_scope = 'alpha' AND event_type = 'orchestrator.operator_signal_routed'
+            """
+        ).fetchone()
+        master_count = conn.execute(
+            """
+            SELECT COUNT(*) AS n
+            FROM events
+            WHERE matter_scope = 'alpha' AND event_type IN (
+                'master_orchestrator.operator_signal_received',
+                'master_orchestrator.operator_signal_routed'
+            )
+            """
+        ).fetchone()
+        attention = conn.execute(
+            """
+            SELECT target_type, target_id, severity, reason
+            FROM human_attention
+            WHERE matter_scope = 'alpha'
+            """
+        ).fetchone()
+
+    pending = cast(list[dict[str, object]], dry_tick["operator_signals"])
+    routed = cast(list[dict[str, object]], write_tick["routed_operator_signals"])
+    second_routed = cast(list[dict[str, object]], second_write_tick["routed_operator_signals"])
+    assert signal["dry_run"] is False
+    assert pending and pending[0]["operator_signal_event_id"] == signal["orchestrator_event_id"]
+    assert routed and routed[0]["operator_signal_event_id"] == signal["orchestrator_event_id"]
+    assert second_routed == []
+    assert int(str(routed_count["n"])) == 1
+    assert int(str(master_count["n"])) == 2
+    assert attention["target_type"] == "task"
+    assert attention["target_id"] == "alpha-task"
+    assert attention["severity"] == "warning"
+    assert "operator directive" in str(attention["reason"])
+
+
+def test_operator_signal_rejects_wrong_matter_task(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(conn, TaskSpec(task_id="beta-task", title="Beta", task_type="source_inventory", matter_scope="beta"))
+        with pytest.raises(ValueError, match="belongs to matter beta"):
+            record_operator_signal(conn, "alpha", "attention", "Wrong matter", target_task_id="beta-task", write=True)
+
+
+def test_s8_draft_does_not_wait_on_hostile_review_before_draft_exists(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="draft-after-foundation",
+                title="Draft after foundation",
+                task_type="draft_preparation",
+                matter_scope="alpha",
+                stage=LegalStage.S8_DRAFT_PREPARATION,
+            ),
+        )
+        for gate in ("chronology_citations", "authority_map"):
+            validation_id = repo.record_validation(
+                conn,
+                target_type="matter",
+                target_id="alpha",
+                gate_name=gate,
+                passed=True,
+                details={"test": "foundation satisfied"},
+                matter_scope="alpha",
+            )
+            _ = repo.add_certification(
+                conn,
+                subject_type="matter",
+                subject_id="alpha",
+                certification_type=gate,
+                validator="test",
+                validation_result_id=validation_id,
+            )
+
+        runnable = select_runnable_tasks(conn, capacity=5)
+        task = cast(dict[str, object], conn.execute("SELECT blocked_reasons_json FROM tasks WHERE task_id = 'draft-after-foundation'").fetchone())
+
+    assert [row["task_id"] for row in runnable] == ["draft-after-foundation"]
+    assert "hostile_review" not in str(task["blocked_reasons_json"])
 
 
 def test_cache_context_subagent_and_followup_reuse_surfaces(tmp_path: Path):
@@ -195,10 +363,13 @@ def test_cache_break_detection_and_adaptive_plan_are_explicit(tmp_path: Path):
     current = {**previous, "cache_hit_tokens": 0}
 
     with repo.db_connection(db_path) as conn:
+        source_plan = plan_adaptive_work(conn, matter_scope="alpha", goal="source inventory and extraction")
         plan = plan_adaptive_work(conn, matter_scope="alpha", goal="Draft a complaint", prior_work_state={"contradiction_count": 1})
 
     assert fingerprint_provider_policy({"model": "x"}) == fingerprint_provider_policy({"model": "x"})
     assert detect_prompt_cache_break(previous, current)["reason"].startswith("cache hit drop with unchanged")
+    assert source_plan.selected_stages == ("S0", "S1")
+    assert [task.task_type for task in source_plan.tasks] == ["source_inventory", "extraction_qa"]
     assert "S8" in plan.selected_stages
     assert "hostile_review" in plan.required_gates
     assert any(decision.decision_tier == "pro_orchestrator" for decision in plan.model_decisions)

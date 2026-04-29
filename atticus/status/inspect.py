@@ -6,7 +6,7 @@ from collections.abc import Mapping
 import json
 
 from typing import cast
-from atticus.db.repo import db_connection
+from atticus.db.repo import db_connection, source_material_derivatives
 
 
 TABLES_BY_TYPE: dict[str, tuple[str, str]] = {
@@ -27,9 +27,17 @@ def inspect_record(db_path: str, *, record_type: str, record_id: str) -> dict[st
     table, pk = table_info
     with db_connection(db_path, read_only=True) as conn:
         row = cast(Mapping[str, object] | None, cast(object, conn.execute(f"SELECT * FROM {table} WHERE {pk} = ?", (record_id,)).fetchone()))
+        derivatives = (
+            source_material_derivatives(conn, matter_scope=str(row["matter_scope"]), source_ids=(record_id,)).get(record_id, [])
+            if row is not None and record_type == "source"
+            else []
+        )
     if row is None:
         raise KeyError(f"{record_type} not found: {record_id}")
-    return summarize_row(dict(row))
+    summary = summarize_row(dict(row))
+    if record_type == "source":
+        summary["source_material_derivatives"] = derivatives
+    return summary
 
 
 def summarize_row(row: dict[str, object]) -> dict[str, object]:

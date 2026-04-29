@@ -80,7 +80,11 @@ def plan_coordinator_work(
     artifacts = _dedupe(artifact_ids)
     _validate_dependencies(conn, matter_scope=matter_scope, source_ids=sources, artifact_ids=artifacts)
 
-    templates = _templates_for_goal(clean_goal)
+    templates, profile_skips = _templates_allowed_by_active_profile(
+        conn,
+        matter_scope=matter_scope,
+        templates=_templates_for_goal(clean_goal),
+    )
     goal_slug = _safe_component(clean_goal.lower())[:72] or "legal-work"
     task_id_by_key = {
         template.key: _safe_component(f"{matter_scope}-coord-{goal_slug}-{template.key}") for template in templates
@@ -153,6 +157,7 @@ def plan_coordinator_work(
         "matter_scope": matter_scope,
         "goal": clean_goal,
         "tasks": tasks,
+        "profile_skipped_tasks": list(profile_skips),
         "existing_task_ids": sorted(existing),
         "created_task_ids": created,
         "external_actions": "blocked",
@@ -185,7 +190,11 @@ def plan_adaptive_work(
     sources = _dedupe(source_ids)
     artifacts = _dedupe(artifact_ids)
     _validate_dependencies(conn, matter_scope=matter_scope, source_ids=sources, artifact_ids=artifacts)
-    templates = _templates_for_goal(clean_goal)
+    templates, profile_skips = _templates_allowed_by_active_profile(
+        conn,
+        matter_scope=matter_scope,
+        templates=_templates_for_goal(clean_goal),
+    )
     goal_slug = _safe_component(clean_goal.lower())[:72] or "legal-work"
     task_id_by_key = {template.key: _safe_component(f"{matter_scope}-adapt-{goal_slug}-{template.key}") for template in templates}
     task_payloads = [
@@ -201,8 +210,16 @@ def plan_adaptive_work(
         for template in templates
     ]
     selected = tuple(sorted({str(task["stage"]) for task in task_payloads}))
+    active_enabled_stages = _active_profile_enabled_stages(conn, matter_scope=matter_scope)
     skipped = tuple(
-        {"stage": stage.value, "reason": _skip_reason(stage.value, selected, clean_goal, prior_work_state or {})}
+        {
+            "stage": stage.value,
+            "reason": (
+                "disabled by active matter profile"
+                if active_enabled_stages is not None and stage.value not in active_enabled_stages
+                else _skip_reason(stage.value, selected, clean_goal, prior_work_state or {})
+            ),
+        }
         for stage in LegalStage
         if stage.value not in selected
     )
@@ -239,7 +256,7 @@ def plan_adaptive_work(
         )
         for task in task_payloads
     )
-    reasons = tuple(_adaptive_reasons(clean_goal, templates, prior_work_state or {}))
+    reasons = tuple([*_adaptive_reasons(clean_goal, templates, prior_work_state or {}), *profile_skips])
     return AdaptivePlan(
         matter_scope=matter_scope,
         goal=clean_goal,
@@ -257,6 +274,10 @@ def _templates_for_goal(goal: str) -> tuple[CoordinatorTaskTemplate, ...]:
     lowered = goal.lower()
     if _contains_any(lowered, ("draft", "complaint", "letter", "correspondence", "pleading", "submission", "witness statement")):
         return _drafting_templates()
+    if _contains_any(lowered, ("organize evidence", "organise evidence", "rename", "renaming", "order evidence", "bundle order", "evidence bundle", "sort evidence", "sorted evidence")):
+        return _evidence_organization_templates()
+    if _source_inventory_goal(lowered):
+        return _source_inventory_templates()
     if _contains_any(lowered, ("chronology", "timeline", "sequence", "events")):
         return _chronology_templates()
     if _contains_any(lowered, ("authority", "case law", "statute", "legal research", "law map", "research")):
@@ -264,6 +285,68 @@ def _templates_for_goal(goal: str) -> tuple[CoordinatorTaskTemplate, ...]:
     if _contains_any(lowered, ("sar", "disclosure", "gdpr", "productions", "bundle")):
         return _disclosure_templates()
     return _evidence_triage_templates()
+
+
+def _source_inventory_goal(goal: str) -> bool:
+    return _contains_any(
+        goal,
+        (
+            "source inventory",
+            "inventory",
+            "extract sources",
+            "extraction",
+            "ocr",
+            "source triage",
+            "source qa",
+            "deduplicate sources",
+            "source dedup",
+        ),
+    )
+
+
+def _source_inventory_templates() -> tuple[CoordinatorTaskTemplate, ...]:
+    return (
+        CoordinatorTaskTemplate(
+            key="source-inventory",
+            role="source_inventory_worker",
+            task_type="source_inventory",
+            title="Inventory matter sources and extraction gaps",
+            stage=LegalStage.S0_SOURCE_INVENTORY,
+            deliverable="A matter-local source inventory with custody notes, extraction status, and missing-source gaps.",
+            validation_gates=("source_inventory", "chain_of_custody", "cross_matter_isolation"),
+            risk_focus=("missing source", "generated artifact treated as evidence", "cross-matter contamination"),
+        ),
+        CoordinatorTaskTemplate(
+            key="extraction-qa",
+            role="extraction_qa_worker",
+            task_type="extraction_qa",
+            title="Check extraction and OCR coverage",
+            stage=LegalStage.S1_EXTRACTION,
+            deliverable="An extraction/OCR coverage check tied back to source IDs and extraction provenance.",
+            validation_gates=("extraction_coverage", "citation_integrity", "stale_dependency"),
+            depends_on=("source-inventory",),
+            risk_focus=("bad OCR", "missing text", "unsupported extracted quote"),
+        ),
+    )
+
+
+def _evidence_organization_templates() -> tuple[CoordinatorTaskTemplate, ...]:
+    return (
+        CoordinatorTaskTemplate(
+            key="evidence-organization",
+            role="production_organizer",
+            task_type="evidence_organization_plan",
+            title="Organize evidence bundle naming and order",
+            stage=LegalStage.S3_PRODUCTION_STATUS,
+            deliverable=(
+                "A candidate organization map that groups sources by evidence type, provenance, chronology, "
+                "and issue; proposes stable display names and bundle order without renaming source files."
+            ),
+            validation_gates=("production_mapping", "chain_of_custody", "cross_matter_isolation", "stale_dependency"),
+            required_certifications=("source_inventory", "extraction_coverage"),
+            risk_focus=("custody break", "mislabelled source", "generated artifact treated as evidence", "privacy leak"),
+        ),
+    )
 
 
 def _drafting_templates() -> tuple[CoordinatorTaskTemplate, ...]:
@@ -509,6 +592,46 @@ def _model_layer_for_template(template: CoordinatorTaskTemplate) -> str:
     return "worker"
 
 
+def _templates_allowed_by_active_profile(
+    conn: sqlite3.Connection,
+    *,
+    matter_scope: str,
+    templates: tuple[CoordinatorTaskTemplate, ...],
+) -> tuple[tuple[CoordinatorTaskTemplate, ...], tuple[str, ...]]:
+    enabled_stages = _active_profile_enabled_stages(conn, matter_scope=matter_scope)
+    if enabled_stages is None:
+        return templates, ()
+    kept: list[CoordinatorTaskTemplate] = []
+    skipped: list[str] = []
+    for template in templates:
+        if template.stage.value in enabled_stages:
+            kept.append(template)
+        else:
+            skipped.append(f"active matter profile disabled {template.stage.value}; skipped {template.task_type}")
+    kept_keys = {template.key for template in kept}
+    filtered = tuple(template for template in kept if all(dep in kept_keys for dep in template.depends_on))
+    dropped_for_dependency = tuple(template for template in kept if any(dep not in kept_keys for dep in template.depends_on))
+    skipped.extend(
+        f"active matter profile removed dependency for {template.task_type}; skipped until prerequisite stage is enabled"
+        for template in dropped_for_dependency
+    )
+    return filtered, tuple(skipped)
+
+
+def _active_profile_enabled_stages(conn: sqlite3.Connection, *, matter_scope: str) -> set[str] | None:
+    active = repo.get_active_matter_profile(conn, matter_scope=matter_scope)
+    if active is None:
+        return None
+    stage_rows = active.get("stages")
+    if not isinstance(stage_rows, list | tuple):
+        return None
+    return {
+        str(stage["stage"])
+        for stage in cast(list[Mapping[str, object]], stage_rows)
+        if bool(stage.get("enabled"))
+    }
+
+
 def _skip_reason(stage: str, selected: tuple[str, ...], goal: str, prior_work_state: Mapping[str, object]) -> str:
     if stage in selected:
         return ""
@@ -565,6 +688,7 @@ def _instructions_for(
         "Use only matter-scoped sources, artifacts, authorities, active legal memory, and dependencies provided in the work order. "
         "Separate fact, law, procedure, inference, drafting note, contradiction, risk, uncertainty, and redaction concerns. "
         "Cite every factual, legal, procedural, contradiction, or risk finding to an allowed context target; otherwise mark it uncertain or needs_research. "
+        "When using extracted or OCR source_materials, cite the source_id as source evidence rather than the generated extraction artifact unless citation_targets explicitly allows that artifact. "
         "Do not invent evidence, authorities, quotations, dates, amounts, deadlines, remedies, procedural posture, or user instructions. "
         "Memory may orient work but is not proof. Flag stale evidence, weak support, missing certification, privacy risk, and contradiction. "
         "Propose follow-up tasks for gaps rather than hiding uncertainty. "

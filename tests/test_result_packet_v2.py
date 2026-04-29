@@ -74,6 +74,28 @@ def v2_packet(task_id: str, *, citation_target_id: str | None = None) -> dict[st
     }
 
 
+def artifact_citation_packet(task_id: str, artifact_id: str) -> dict[str, object]:
+    packet = v2_packet(task_id)
+    packet["citations"] = [
+        {
+            "citation_id": "cite-artifact-1",
+            "target_type": "artifact",
+            "target_id": artifact_id,
+            "locator": "extracted text",
+        }
+    ]
+    findings = cast(list[dict[str, object]], packet["findings"])
+    findings[0].update(
+        {
+            "finding_type": "fact",
+            "citation_ids": ["cite-artifact-1"],
+            "confidence": 0.8,
+            "reasoning_status": "supported",
+        }
+    )
+    return packet
+
+
 def validation_result_packet(task_id: str, validation_result_id: int) -> dict[str, object]:
     packet = v2_packet(task_id)
     packet["citations"] = [
@@ -183,6 +205,57 @@ def test_record_worker_result_accepts_v2_citations_inside_task_context(tmp_path:
 
     assert candidate["status"] == "candidate"
     assert task["status"] == "reducer_pending"
+
+
+def test_extracted_artifact_citation_quarantine_names_source_citation_repair(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        source_id = repo.add_source(conn, matter_scope="alpha", path="/alpha/source.pdf", sha256="a" * 64)
+        artifact_id = repo.add_artifact(
+            conn,
+            matter_scope="alpha",
+            path="/alpha/03-working/extracted-text/source.txt",
+            artifact_type="extracted_text",
+            title="source extracted",
+            content="extracted source text",
+            source_ids=[source_id],
+        )
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="alpha-artifact-citation",
+                title="Alpha artifact citation",
+                task_type="extract",
+                matter_scope="alpha",
+                source_dependencies=[source_id],
+            ),
+        )
+        lease_id = acquire_lease(conn, task_id="alpha-artifact-citation", worker_id="worker-1")
+        candidate_id = record_worker_result(
+            conn,
+            task_id="alpha-artifact-citation",
+            lease_id=lease_id,
+            worker_id="worker-1",
+            payload=artifact_citation_packet("alpha-artifact-citation", artifact_id),
+        )
+        candidate = cast(Mapping[str, object], conn.execute("SELECT status, quarantined_reason FROM candidate_outputs WHERE candidate_id = ?", (candidate_id,)).fetchone())
+        event = cast(
+            Mapping[str, object],
+            conn.execute(
+                """
+                SELECT event_type, payload_json
+                FROM orchestrator_events
+                WHERE matter_scope = 'alpha'
+                ORDER BY created_at DESC
+                LIMIT 1
+                """
+            ).fetchone(),
+        )
+
+    assert candidate["status"] == "quarantined"
+    assert f"Cite source:{source_id}" in str(candidate["quarantined_reason"])
+    assert event["event_type"] == "orchestrator.worker_failed"
+    assert "worker output quarantined" in str(event["payload_json"])
 
 
 def test_record_worker_result_rejects_legacy_cross_matter_source_dependency(tmp_path: Path):

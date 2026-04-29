@@ -290,6 +290,10 @@ def test_free_loop_once_closes_active_lease_if_worker_crashes_before_cleanup(tmp
         task = cast(Mapping[str, object], conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'codex-crash'").fetchone())
         active_leases = _scalar_int(conn, "SELECT COUNT(*) FROM leases WHERE status = 'active'")
         failed_leases = _scalar_int(conn, "SELECT COUNT(*) FROM leases WHERE status = 'failed'")
+        orchestrator_events = _scalar_int(
+            conn,
+            "SELECT COUNT(*) FROM orchestrator_events WHERE event_type = 'orchestrator.worker_failed' AND matter_scope = 'atticus'",
+        )
 
     assert result["worker_errors"] == [{"task_id": "codex-crash", "error": "simulated worker crash before cleanup"}]
     assert captured["timeout_seconds"] == 12.5
@@ -298,6 +302,7 @@ def test_free_loop_once_closes_active_lease_if_worker_crashes_before_cleanup(tmp
     assert "simulated worker crash before cleanup" in str(task["blocked_reasons_json"])
     assert active_leases == 0
     assert failed_leases == 1
+    assert orchestrator_events == 1
 
 
 def test_run_free_loop_cli_returns_nonzero_on_worker_errors(tmp_path: Path, capsys: pytest.CaptureFixture[str]):

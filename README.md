@@ -84,7 +84,10 @@ become trusted merely because it sounds confident.
 Core capabilities:
 
 - Imports and snapshots matter-local sources with chain-of-custody metadata.
-- Extracts local text and OCR coverage without provider calls.
+- Extracts local text and OCR coverage without provider calls, retaining source,
+  tool, method, output, hash, and extraction/OCR provenance for citations.
+- Plans candidate evidence bundle organization, display names, and ordering
+  without silently renaming source files or weakening chain of custody.
 - Builds deterministic context packs with evidence manifests, source excerpts,
   artifact bundles, memory orientation, validation gates, skills, tools, and
   required output schema.
@@ -262,10 +265,10 @@ from that baseline.
 | --- | --- | --- | --- |
 | S0 | Source inventory | File intake, inventory, source triage, extraction gaps | Flash worker |
 | S1 | Extraction QA | OCR/text coverage, direct citation checks | Flash worker |
-| S2 | Classification | Source classification, duplicate detection, production mapping | Flash worker |
-| S3 | Chronology | Direct event extraction where citations are straightforward | Flash worker |
-| S4 | Issue mapping | Factual issue grouping and routine scaffolding | Flash worker |
-| S5 | Strategy planning | Matter orchestration and synthesis | Pro orchestrator |
+| S2 | Evidence registry | Source classification, duplicate detection, evidence registry | Flash worker |
+| S3 | Production status | Production mapping, evidence organization, candidate bundle naming/order | Flash worker |
+| S4 | Baseline chronology | Direct event extraction where citations are straightforward | Flash worker |
+| S5 | Issue route map | Factual issue grouping and routine scaffolding | Pro orchestrator |
 | S6 | Authority mapping | Law and authority analysis | Pro orchestrator |
 | S7 | Hostile review | Opponent review, contradiction analysis, risk attack | Pro orchestrator |
 | S8 | Draft preparation | Draft-influencing analysis and filing-pack preparation | Pro or Codex only where policy explicitly says code |
@@ -410,6 +413,9 @@ OAuth tokens are never logged. Raw provider errors are redacted.
 Matter profiles let Atticus adapt the baseline S0-S9 structure per case without
 changing global defaults. Adaptations are versioned, fingerprinted, matter-local,
 and reversible.
+Coordinator planning reads the active profile: disabled stages are skipped for
+that matter, and any task whose prerequisite stage was filtered out is also
+withheld instead of being spawned into a dead dependency.
 
 Guardrails:
 
@@ -449,6 +455,17 @@ event, and proposes bounded repair such as missing extraction, context rebuild,
 Pro review, profile adaptation, verifier task, or human intervention. It must
 not silently retry forever.
 
+The scheduler and live-resume planner can fill up to 15 independent worker
+slots in a tick. That is a hard ceiling, not a target: dependency gates, active
+leases, budget gates, provider policy, matter profiles, and human-review gates
+under-fill the plan whenever work is blocked or sequential.
+
+Operators can also interrupt a live matter with a suggestion, directive,
+redirect, or attention note. The signal is stored as human attention, emitted to
+the master orchestrator event stream, and routed exactly once to the matter
+orchestrator on the next tick. It is not an external legal action and it does not
+bypass gates.
+
 ```bash
 python -m atticus.cli orchestrator status \
   --db data/atticus.sqlite3 \
@@ -458,12 +475,21 @@ python -m atticus.cli orchestrator status \
 python -m atticus.cli orchestrator tick \
   --db data/atticus.sqlite3 \
   --matter MATTER \
-  --capacity 5
+  --capacity 15
 
 python -m atticus.cli orchestrator failures \
   --db data/atticus.sqlite3 \
   --matter MATTER \
   --json
+
+python -m atticus.cli orchestrator signal \
+  --db data/atticus.sqlite3 \
+  --matter MATTER \
+  --signal-type directive \
+  --message "Prioritize bank records before drafting" \
+  --task-id TASK_ID \
+  --priority high \
+  --write
 ```
 
 ```mermaid
@@ -474,6 +500,8 @@ stateDiagram-v2
     PlanningTick --> HumanAttention: unsafe or ambiguous
     TaskQueued --> Active
     Active --> FailureObserved: worker failure
+    Active --> OperatorSignal: operator signal
+    OperatorSignal --> RepairProposed: master routes to matter orchestrator
     FailureObserved --> RepairProposed: bounded repair plan
     RepairProposed --> TaskQueued: extraction/context/verifier/profile repair
     RepairProposed --> HumanAttention: needs operator
@@ -641,6 +669,15 @@ python -m atticus.cli extract-sources \
 Supported local paths include DOCX, legacy DOC through local conversion tools,
 PDF through `pdftotext`, text/HTML files, and images through existing OCR text
 or local `tesseract`.
+
+OCR and extracted text are attached to the original source as source-material
+derivatives. The source remains the evidence record; the derivative is the
+readable transcript/view of that evidence. Agents can discover it through
+`ListMatterSources`, `InspectRecord` on the source, or the `source_materials`
+context section. The derivative record includes artifact path, extraction/OCR
+method, tool, hash, coverage, and citation guidance. Facts found in the OCR text
+should cite the source ID unless the work order explicitly allows citing the
+derivative artifact itself.
 
 ### Schedule And Build Context
 

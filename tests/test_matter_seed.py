@@ -231,6 +231,61 @@ def test_seed_matter_repairs_existing_source_inventory_task_dependencies(tmp_pat
     assert events == 2
 
 
+def test_seed_matter_skips_generated_harness_outputs_as_source_evidence(tmp_path: Path, capsys):
+    db_path = init_db(tmp_path)
+    workspace = tmp_path / "matter-workspace"
+    generated = workspace / "03-working" / "extracted-text"
+    generated.mkdir(parents=True)
+    generated_file = generated / "SRC-0001.txt"
+    _ = generated_file.write_text("generated extraction should not be core evidence", encoding="utf-8")
+    inventory = workspace / "02-registers" / "file_inventory.csv"
+    inventory.parent.mkdir(parents=True)
+    with inventory.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["source_id", "category", "stored_path", "size_bytes", "sha256"])
+        writer.writeheader()
+        writer.writerow(
+            {
+                "source_id": "generated-src",
+                "category": "text",
+                "stored_path": "03-working/extracted-text/SRC-0001.txt",
+                "size_bytes": str(generated_file.stat().st_size),
+                "sha256": _sha256(generated_file),
+            }
+        )
+
+    assert (
+        cli_main(
+            [
+                "seed-matter",
+                "--db",
+                str(db_path),
+                "--matter",
+                MATTER,
+                "--workspace",
+                str(workspace),
+                "--inventory",
+                str(inventory),
+                "--provider",
+                "openai-codex",
+                "--model",
+                "gpt-5.5",
+                "--no-fallback",
+                "--write",
+            ]
+        )
+        == 0
+    )
+    output = cast(Mapping[str, object], json.loads(capsys.readouterr().out))
+
+    with repo.db_connection(db_path) as conn:
+        sources = _count(conn, "SELECT COUNT(*) AS n FROM sources WHERE matter_scope = ?", (MATTER,))
+
+    missing = cast(list[Mapping[str, object]], output["missing_files"])
+    assert sources == 0
+    assert output["sources_skipped"] == 1
+    assert missing[0]["reason"] == "generated harness path is not source evidence"
+
+
 def test_seed_matter_rejects_cross_matter_source_id_collision(tmp_path: Path):
     db_path = init_db(tmp_path)
     workspace = tmp_path / "collision-workspace"

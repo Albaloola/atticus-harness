@@ -79,6 +79,16 @@ def build_default_sections(
     source_ids = tuple(str(row["source_id"]) for row in sources)
     source_material_artifact_ids = tuple(str(row["artifact_id"]) for row in source_materials if row.get("artifact_id"))
     artifact_ids = tuple(str(row["artifact_id"]) for row in artifacts)
+    source_material_citation_targets = tuple(
+        {
+            "source_id": str(row["source_id"]),
+            "extraction_artifact_id": str(row["artifact_id"]),
+            "cite_as": {"target_type": "source", "target_id": str(row["source_id"])},
+            "artifact_citation_allowed": str(row["artifact_id"]) in artifact_ids,
+        }
+        for row in source_materials
+        if row.get("source_id") and row.get("artifact_id")
+    )
     validation_gates = _json_list(task.get("validation_gates_json"))
     required_certifications = _json_list(task.get("required_certifications_json"))
     return [
@@ -152,10 +162,29 @@ def build_default_sections(
             kind="source_materials",
             priority=825,
             cache_scope="task",
-            inclusion_reason="extracted or OCR text linked to source dependencies for this work order",
+            inclusion_reason="extracted or OCR text linked to source dependencies; cite the source_id unless the artifact is separately allowed",
             source_dependencies=source_ids,
             artifact_dependencies=source_material_artifact_ids,
             content=source_materials,
+        ),
+        ContextSection(
+            name="citation_targets",
+            kind="validation",
+            priority=820,
+            cache_scope="task",
+            inclusion_reason="explicit allow-list guidance for worker citations",
+            source_dependencies=source_ids,
+            artifact_dependencies=artifact_ids,
+            content={
+                "allowed_source_targets": list(source_ids),
+                "allowed_artifact_targets": list(artifact_ids),
+                "source_material_rule": (
+                    "source_materials are extracted/OCR views of source evidence. For facts found in source_materials, "
+                    "cite target_type='source' with the source_id. Do not cite the extraction artifact_id unless it is "
+                    "also listed in allowed_artifact_targets."
+                ),
+                "source_material_citation_targets": list(source_material_citation_targets),
+            },
         ),
         ContextSection(
             name="artifact_bundle",
@@ -225,7 +254,8 @@ def build_default_sections(
                 "schema": result_packet_json_schema(),
                 "citation_rule": (
                     "Every factual, legal, procedural, contradiction, or risk assertion must cite an allowed "
-                    "context target or be explicitly uncertain."
+                    "context target or be explicitly uncertain. Source_material text must be cited through its "
+                    "source_id, not through a generated extraction artifact, unless that artifact is explicitly allowed."
                 ),
                 "canonical_write_rule": "Workers may not write canonical state.",
                 "finding_taxonomy": [

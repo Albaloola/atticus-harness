@@ -283,3 +283,57 @@ def test_cli_orchestrator_worker_failed_rejects_wrong_matter(tmp_path: Path):
 
     assert event_count == 0
     assert attention_count == 0
+
+
+def test_cli_orchestrator_signal_records_and_routes_operator_direction(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(conn, TaskSpec(task_id="napier-task", title="Napier", task_type="source_inventory", matter_scope="napier"))
+
+    assert cli_main([
+        "orchestrator",
+        "signal",
+        "--db",
+        str(db_path),
+        "--matter",
+        "napier",
+        "--signal-type",
+        "redirect",
+        "--message",
+        "Inspect scanned invoices before drafting",
+        "--task-id",
+        "napier-task",
+        "--priority",
+        "high",
+    ]) == 0
+
+    with repo.db_connection(db_path) as conn:
+        assert _scalar_int(conn.execute("SELECT COUNT(*) AS n FROM orchestrator_events").fetchone()) == 0
+
+    assert cli_main([
+        "orchestrator",
+        "signal",
+        "--db",
+        str(db_path),
+        "--matter",
+        "napier",
+        "--signal-type",
+        "redirect",
+        "--message",
+        "Inspect scanned invoices before drafting",
+        "--task-id",
+        "napier-task",
+        "--priority",
+        "high",
+        "--write",
+    ]) == 0
+    assert cli_main(["orchestrator", "tick", "--db", str(db_path), "--matter", "napier", "--capacity", "0", "--write"]) == 0
+
+    with repo.db_connection(db_path) as conn:
+        signal_count = _scalar_int(conn.execute("SELECT COUNT(*) AS n FROM orchestrator_events WHERE event_type = 'orchestrator.operator_signal'").fetchone())
+        routed_count = _scalar_int(conn.execute("SELECT COUNT(*) AS n FROM orchestrator_events WHERE event_type = 'orchestrator.operator_signal_routed'").fetchone())
+        attention_count = _scalar_int(conn.execute("SELECT COUNT(*) AS n FROM human_attention WHERE target_id = 'napier-task' AND severity = 'warning'").fetchone())
+
+    assert signal_count == 1
+    assert routed_count == 1
+    assert attention_count == 1

@@ -12,11 +12,12 @@ from atticus.core.events import utc_now
 from atticus.core.policies import TaskStatus
 from atticus.db import repo
 from atticus.providers.budget import check_budget
+from atticus.scheduler.capacity import agent_capacity
 from atticus.scheduler.gates import evaluate_task_gates
 
 
 def select_runnable_tasks(conn: sqlite3.Connection, *, capacity: int) -> list[Mapping[str, object]]:
-    capacity_requested = max(0, capacity)
+    capacity_requested = agent_capacity(capacity)
     if capacity_requested == 0:
         return []
 

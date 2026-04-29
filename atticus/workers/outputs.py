@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import json
+import re
 import sqlite3
 
 from typing import cast
@@ -36,7 +38,7 @@ def record_worker_result(
             raise ResultPacketError(f"worker result task_id {packet.task_id!r} does not match leased task {task_id!r}")
     except (LeaseError, ResultPacketError) as exc:
         status = "quarantined"
-        quarantine_reason = str(exc)
+        quarantine_reason = _augment_quarantine_reason(conn, task_id=task_id, reason=str(exc))
         _fail_active_lease(conn, lease_id=lease_id, reason=quarantine_reason)
         _ = repo.record_human_attention(
             conn,
@@ -45,6 +47,7 @@ def record_worker_result(
             severity="blocker",
             reason=f"worker output quarantined: {quarantine_reason}",
         )
+        _report_quarantine_to_orchestrator(conn, task_id=task_id, reason=quarantine_reason)
 
     candidate_id = repo.record_candidate_output(
         conn,
@@ -169,6 +172,54 @@ def _fail_active_lease(conn: sqlite3.Connection, *, lease_id: str, reason: str) 
     if cur.rowcount:
         _restore_task_after_failed_output_lease(conn, task_id=str(row["task_id"]))
         _ = repo.emit_event(conn, "lease.failed", matter_scope=_task_matter_scope(conn, task_id=str(row["task_id"])), payload={"lease_id": lease_id, "task_id": row["task_id"], "reason": reason})
+
+
+def _augment_quarantine_reason(conn: sqlite3.Connection, *, task_id: str, reason: str) -> str:
+    match = re.search(r"target artifact:([^ ]+) is outside work order context", reason)
+    if match is None:
+        return reason
+    artifact_id = match.group(1)
+    task = conn.execute("SELECT source_dependencies_json FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
+    if task is None:
+        return reason
+    try:
+        source_deps_raw = json.loads(str(task["source_dependencies_json"] or "[]"))
+    except (json.JSONDecodeError, TypeError):
+        return reason
+    if not isinstance(source_deps_raw, list):
+        return reason
+    source_deps = [str(item) for item in source_deps_raw if isinstance(item, str)]
+    if not source_deps:
+        return reason
+    rows = conn.execute(
+        "SELECT source_id FROM artifact_sources WHERE artifact_id = ? AND source_id IN (%s) ORDER BY source_id"
+        % ",".join("?" for _ in source_deps),
+        (artifact_id, *source_deps),
+    ).fetchall()
+    source_ids = [str(row["source_id"]) for row in rows]
+    if not source_ids:
+        return reason
+    return (
+        f"{reason}; extracted source-material artifacts are provenance, not primary evidence targets. "
+        f"Cite source:{source_ids[0]} instead unless the artifact is explicitly listed in artifact_dependencies."
+    )
+
+
+def _report_quarantine_to_orchestrator(conn: sqlite3.Connection, *, task_id: str, reason: str) -> None:
+    try:
+        _ = repo.record_orchestrator_worker_failure(
+            conn,
+            task_id=task_id,
+            failure_reason=f"worker output quarantined: {reason}",
+            source="worker_result_quarantine",
+        )
+    except Exception as exc:
+        _ = repo.emit_event(
+            conn,
+            "orchestrator.failure_signal_failed",
+            matter_scope=_task_matter_scope(conn, task_id=task_id),
+            payload={"task_id": task_id, "reason": reason, "signal_error": str(exc)},
+        )
 
 
 def _restore_task_after_failed_output_lease(conn: sqlite3.Connection, *, task_id: str) -> None:

@@ -6,6 +6,7 @@ from typing import cast
 import json
 
 from atticus.cli import main as cli_main
+from atticus.core.policies import LegalStage
 from atticus.db import repo
 from atticus.workers.work_order import build_work_order
 
@@ -143,6 +144,83 @@ def test_coordinator_write_assigns_smart_model_decisions(tmp_path: Path, capsys)
     assert evidence_decision["decision_tier"] == "flash_worker"
     assert policies["hostile_opponent_review"]["model"] == "deepseek/deepseek-v4-pro"
     assert hostile_decision["decision_tier"] == "pro_orchestrator"
+
+
+def test_coordinator_respects_active_matter_profile_stage_filter(tmp_path: Path, capsys):
+    db_path = init_db(tmp_path)
+    stages = [
+        {
+            "stage": stage.value,
+            "enabled": stage.value in {"S0", "S1"},
+            "gate_policy": {"external_actions_enabled": False},
+            "worker_policy": {"candidate_only": True, "canonical_writes": "reducer_only"},
+            "model_policy": {"high_risk_flash_requires_human_review": True},
+        }
+        for stage in LegalStage
+    ]
+    with repo.db_connection(db_path) as conn:
+        repo.create_matter_profile(
+            conn,
+            matter_scope="alpha",
+            profile_name="Source-only profile",
+            stages=stages,
+            reason="operator narrowed matter to source work",
+        )
+
+    assert (
+        cli_main(
+            [
+                "coordinator",
+                "plan",
+                "--db",
+                str(db_path),
+                "--matter",
+                "alpha",
+                "--goal",
+                "Draft a formal complaint",
+            ]
+        )
+        == 0
+    )
+    output = cast(Mapping[str, object], json.loads(capsys.readouterr().out))
+
+    assert output["tasks"] == []
+    assert any("disabled S8" in reason for reason in cast(list[str], output["profile_skipped_tasks"]))
+
+
+def test_coordinator_adds_evidence_organization_stage_without_file_mutation(tmp_path: Path, capsys):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        source_id = repo.add_source(conn, matter_scope="alpha", path="/alpha/source.pdf", sha256="a" * 64)
+
+    assert (
+        cli_main(
+            [
+                "coordinator",
+                "plan",
+                "--db",
+                str(db_path),
+                "--matter",
+                "alpha",
+                "--goal",
+                "Organize evidence bundle and propose rename/order after OCR",
+                "--source-id",
+                source_id,
+            ]
+        )
+        == 0
+    )
+    output = cast(Mapping[str, object], json.loads(capsys.readouterr().out))
+    tasks = cast(list[Mapping[str, object]], output["tasks"])
+
+    assert len(tasks) == 1
+    task = tasks[0]
+    assert task["task_type"] == "evidence_organization_plan"
+    assert task["stage"] == "S3"
+    assert task["role"] == "production_organizer"
+    assert "without renaming source files" in str(task["instructions"])
+    assert "generated artifact treated as evidence" in cast(list[str], task["risk_focus"])
+    assert task["provider_policy"]["model"] == "deepseek/deepseek-v4-flash"
 
 
 def test_coordinator_rejects_cross_matter_dependencies(tmp_path: Path):

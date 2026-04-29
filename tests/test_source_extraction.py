@@ -124,9 +124,16 @@ def test_extract_sources_write_extracts_docx_and_is_idempotent(tmp_path: Path, c
     assert second["already_covered"] == 1
     with repo.db_connection(db_path) as conn:
         artifact = cast(Mapping[str, object], conn.execute("SELECT * FROM artifacts WHERE matter_scope = 'alpha'").fetchone())
+        extraction = cast(Mapping[str, object], conn.execute("SELECT metadata_json FROM extraction_records WHERE source_id = 'SRC-0002'").fetchone())
+        extraction_metadata = cast(Mapping[str, object], json.loads(str(extraction["metadata_json"])))
         assert artifact["artifact_type"] == "extracted_text"
         assert artifact["stage"] == "S1"
         assert artifact["trust_status"] == "candidate"
+        assert extraction_metadata["extracted_by"] == "atticus.local_extraction"
+        assert extraction_metadata["extractor_tool"] == "python-docx-zip"
+        assert extraction_metadata["source_id"] == "SRC-0002"
+        assert extraction_metadata["source_sha256"] == "a" * 64
+        assert str(extraction_metadata["output_path"]).endswith("03-working/extracted-text/SRC-0002.txt")
         assert _count(conn, "SELECT COUNT(*) FROM artifact_sources WHERE source_id = 'SRC-0002'") == 1
         assert _count(conn, "SELECT COUNT(*) FROM extraction_records WHERE source_id = 'SRC-0002'") == 1
         assert _count(conn, "SELECT COUNT(*) FROM provider_runs") == 0
