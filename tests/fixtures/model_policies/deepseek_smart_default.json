@@ -1,0 +1,114 @@
+{
+  "version": 2,
+  "profiles": {
+    "deepseek_flash_worker": {
+      "provider": "openrouter",
+      "model": "deepseek/deepseek-v4-flash",
+      "runtime": "openrouter",
+      "allow_fallback": false,
+      "estimated_cost_usd": 0.01,
+      "capabilities": [
+        "triage",
+        "indexing",
+        "classification",
+        "structured_extraction",
+        "extraction_qa",
+        "source_material_retrieval",
+        "routine_redaction_scan",
+        "chronology_event_extraction",
+        "candidate_packet_formatting"
+      ]
+    },
+    "deepseek_pro_orchestrator": {
+      "provider": "openrouter",
+      "model": "deepseek/deepseek-v4-pro",
+      "runtime": "openrouter",
+      "allow_fallback": false,
+      "estimated_cost_usd": 0.04,
+      "capabilities": [
+        "orchestration",
+        "legal_reasoning",
+        "authority_mapping",
+        "contradiction_analysis",
+        "hostile_review",
+        "high_risk_synthesis",
+        "final_quality_gate",
+        "reducer_decision_support"
+      ]
+    },
+    "codex_gpt55_exact": {
+      "provider": "openai-codex",
+      "model": "gpt-5.5",
+      "runtime": "codex",
+      "allow_fallback": false,
+      "estimated_cost_usd": 0.0,
+      "capabilities": [
+        "coding_agent",
+        "schema_migration",
+        "test_generation",
+        "repository_refactor"
+      ]
+    },
+    "anthropic_opus_reserved": {
+      "provider": "anthropic",
+      "model": "opus-4.7",
+      "runtime": "anthropic",
+      "allow_fallback": false,
+      "estimated_cost_usd": 0.0,
+      "reserved": true,
+      "enabled": false,
+      "capabilities": [
+        "reserved_high_end_reasoning"
+      ]
+    },
+    "anthropic_sonnet_reserved": {
+      "provider": "anthropic",
+      "model": "sonnet-4.7",
+      "runtime": "anthropic",
+      "allow_fallback": false,
+      "estimated_cost_usd": 0.0,
+      "reserved": true,
+      "enabled": false,
+      "capabilities": [
+        "reserved_balanced_reasoning"
+      ]
+    }
+  },
+  "routes": {
+    "default": "deepseek_flash_worker",
+    "layers": {
+      "worker": "deepseek_flash_worker",
+      "subagent": "deepseek_flash_worker",
+      "orchestrator": "deepseek_pro_orchestrator",
+      "reducer": "deepseek_pro_orchestrator",
+      "hostile_review": "deepseek_pro_orchestrator",
+      "verifier": "deepseek_pro_orchestrator"
+    },
+    "stages": {
+      "S0": "deepseek_flash_worker",
+      "S1": "deepseek_flash_worker",
+      "S2": "deepseek_flash_worker",
+      "S3": "deepseek_flash_worker",
+      "S4": "deepseek_flash_worker",
+      "S5": "deepseek_pro_orchestrator",
+      "S6": "deepseek_pro_orchestrator",
+      "S7": "deepseek_pro_orchestrator",
+      "S8": "deepseek_pro_orchestrator",
+      "S9": "deepseek_pro_orchestrator"
+    },
+    "task_types": {
+      "source_inventory": "deepseek_flash_worker",
+      "extract": "deepseek_flash_worker",
+      "extraction_qa": "deepseek_flash_worker",
+      "classification": "deepseek_flash_worker",
+      "duplicate_detection": "deepseek_flash_worker",
+      "chronology_event_extraction": "deepseek_flash_worker",
+      "authority_map": "deepseek_pro_orchestrator",
+      "authority_audit": "deepseek_pro_orchestrator",
+      "hostile_opponent_review": "deepseek_pro_orchestrator",
+      "final_quality_gate": "deepseek_pro_orchestrator",
+      "schema_migration": "codex_gpt55_exact",
+      "coding_agent": "codex_gpt55_exact"
+    }
+  }
+}

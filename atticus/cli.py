@@ -13,10 +13,22 @@ from typing import Protocol, cast
 
 from atticus.commands.registry import command_by_name, list_commands
 from atticus.agents.coordinator import plan_coordinator_work
+from atticus.agents.orchestrator import (
+    ensure_matter_orchestrator,
+    orchestrator_plan_repair,
+    orchestrator_tick,
+    report_worker_failure_to_orchestrator,
+)
 from atticus.config import DEFAULT_DB_PATH
 from atticus.context.diagnostics import build_context_diagnostics
 from atticus.core.events import utc_now
 from atticus.core.matters import authorized_matter_from_env, require_matter_access
+from atticus.core.matter_profiles import (
+    apply_matter_profile_adaptation,
+    create_default_matter_profile,
+    propose_matter_profile_adaptation,
+    reset_matter_profile_to_default,
+)
 from atticus.db import repo
 from atticus.extraction.local import repair_source_extractions
 from atticus.graph.certifications import CertificationBlocked, certify_subject
@@ -29,8 +41,11 @@ from atticus.migration.report import build_migration_report
 from atticus.providers.budget import budget_status, check_budget
 from atticus.providers.live_readiness import probe_live_openrouter
 from atticus.providers.model_policy import (
+    ModelRoutingPolicy,
+    default_smart_model_policy,
     load_model_routing_policy,
     provider_policy_for_route,
+    smart_provider_policy_for_route,
 )
 from atticus.providers.policy import (
     ProviderActual,
@@ -56,6 +71,7 @@ from atticus.workflows.registry import list_workflows, load_workflow, plan_workf
 from atticus.workers.outputs import reject_candidate_output
 from atticus.workers.runtime import execute_local_work_order
 from atticus.workers.work_order import build_work_order
+from atticus.work_runs import resume_work_run, summarize_reusable_work
 
 
 JsonObject = dict[str, object]
@@ -93,6 +109,7 @@ class CliArgs(Protocol):
     provider: str
     model: str
     policy_file: str | None
+    smart_defaults: bool
     action: str
     skill_id: str
     layer: str
@@ -124,8 +141,31 @@ class CliArgs(Protocol):
     status: str | None
     name: str
     goal: str
+    expected_value: float
     source_id: list[str] | None
     artifact_id: list[str] | None
+    risk_level: str
+    legal_complexity: str
+    evidence_volume: str
+    authority_required: bool
+    hostile_review_required: bool
+    drafting_finality: str
+    contradiction_count: int
+    unresolved_uncertainty_count: int
+    source_count: int
+    extracted_char_count: int
+    capability: list[str] | None
+    operator_override: str | None
+    event_type: str | None
+    payload_json: str | None
+    work_run_id: str | None
+    step_type: str | None
+    input_fingerprint: str
+    output_fingerprint: str
+    reused_from_step_id: str | None
+    reused_by_step_id: str | None
+    profile_file: str | None
+    resume_token: str | None
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -270,17 +310,34 @@ def build_parser() -> argparse.ArgumentParser:
     _ = set_provider_policy.add_argument("--provider")
     _ = set_provider_policy.add_argument("--model")
     _ = set_provider_policy.add_argument("--policy-file")
+    _ = set_provider_policy.add_argument("--smart-defaults", action="store_true", help="apply the built-in smart model policy to queued tasks")
     _ = set_provider_policy.add_argument("--estimated-cost-usd", dest="estimated_cost_usd", type=float, default=0.0)
     _add_fallback_mode_args(set_provider_policy)
     _ = set_provider_policy.add_argument("--write", action="store_true", help="write normalized provider policy to queued tasks")
 
     model_policy = sub.add_parser("model-policy", help="validate or resolve a model routing policy file")
-    _ = model_policy.add_argument("action", choices=["validate", "resolve"])
-    _ = model_policy.add_argument("--policy-file", required=True)
+    _ = model_policy.add_argument("action", choices=["validate", "resolve", "decide"])
+    _ = model_policy.add_argument("--policy-file")
+    _ = model_policy.add_argument("--db")
     _ = model_policy.add_argument("--layer", default="")
     _ = model_policy.add_argument("--stage", default="")
     _ = model_policy.add_argument("--task-type", default="")
     _ = model_policy.add_argument("--task-id", default="")
+    _ = model_policy.add_argument("--matter", default="atticus")
+    _ = model_policy.add_argument("--risk-level", default="unknown")
+    _ = model_policy.add_argument("--legal-complexity", default="unknown")
+    _ = model_policy.add_argument("--evidence-volume", default="unknown")
+    _ = model_policy.add_argument("--authority-required", action="store_true")
+    _ = model_policy.add_argument("--hostile-review-required", action="store_true")
+    _ = model_policy.add_argument("--drafting-finality", default="")
+    _ = model_policy.add_argument("--contradiction-count", type=int, default=0)
+    _ = model_policy.add_argument("--unresolved-uncertainty-count", type=int, default=0)
+    _ = model_policy.add_argument("--source-count", type=int, default=0)
+    _ = model_policy.add_argument("--extracted-char-count", type=int, default=0)
+    _ = model_policy.add_argument("--expected-value", type=float, default=0.0)
+    _ = model_policy.add_argument("--capability", action="append", default=[])
+    _ = model_policy.add_argument("--operator-override")
+    _ = model_policy.add_argument("--json", dest="json_output", action="store_true")
 
     skill = sub.add_parser("skill", help="list or show bundled worker skills")
     _ = skill.add_argument("action", choices=["list", "show"])
@@ -316,6 +373,48 @@ def build_parser() -> argparse.ArgumentParser:
     _ = coordinator.add_argument("--source-id", action="append", default=[])
     _ = coordinator.add_argument("--artifact-id", action="append", default=[])
     _ = coordinator.add_argument("--write", action="store_true", help="write queued coordinator-created tasks")
+
+    matter_profile = sub.add_parser("matter-profile", help="show, propose, apply, or reset matter-local adaptive stage profiles")
+    _ = matter_profile.add_argument("action", choices=["show", "create", "propose", "apply", "reset"])
+    _ = matter_profile.add_argument("--db", required=True)
+    _ = matter_profile.add_argument("--matter", required=True)
+    _ = matter_profile.add_argument("--name", default="Default profile")
+    _ = matter_profile.add_argument("--reason", default="operator requested profile")
+    _ = matter_profile.add_argument("--goal", default="")
+    _ = matter_profile.add_argument("--profile-file")
+    _ = matter_profile.add_argument("--json", dest="json_output", action="store_true")
+    _ = matter_profile.add_argument("--write", action="store_true")
+
+    orchestrator = sub.add_parser("orchestrator", help="status, tick, failures, or record matter orchestrator state")
+    _ = orchestrator.add_argument("action", choices=["show", "upsert", "event", "status", "tick", "failures", "worker-failed", "repair"])
+    _ = orchestrator.add_argument("--db", required=True)
+    _ = orchestrator.add_argument("--matter", required=True)
+    _ = orchestrator.add_argument("--status", default="idle")
+    _ = orchestrator.add_argument("--goal", default="")
+    _ = orchestrator.add_argument("--event-type")
+    _ = orchestrator.add_argument("--payload-json")
+    _ = orchestrator.add_argument("--task-id")
+    _ = orchestrator.add_argument("--reason", default="")
+    _ = orchestrator.add_argument("--capacity", type=int, default=5)
+    _ = orchestrator.add_argument("--json", dest="json_output", action="store_true")
+    _ = orchestrator.add_argument("--write", action="store_true")
+
+    work_run = sub.add_parser("work-run", help="record resumable matter work runs and reusable steps")
+    _ = work_run.add_argument("action", choices=["start", "complete", "step", "reuse", "reusable", "status", "resume", "export"])
+    _ = work_run.add_argument("--db", required=True)
+    _ = work_run.add_argument("--matter", required=True)
+    _ = work_run.add_argument("--goal", default="")
+    _ = work_run.add_argument("--work-run-id")
+    _ = work_run.add_argument("--resume-token")
+    _ = work_run.add_argument("--step-type")
+    _ = work_run.add_argument("--status", default="complete")
+    _ = work_run.add_argument("--task-id")
+    _ = work_run.add_argument("--input-fingerprint", default="")
+    _ = work_run.add_argument("--output-fingerprint", default="")
+    _ = work_run.add_argument("--reused-from-step-id")
+    _ = work_run.add_argument("--reused-by-step-id")
+    _ = work_run.add_argument("--json", dest="json_output", action="store_true")
+    _ = work_run.add_argument("--write", action="store_true")
 
     memory = sub.add_parser("memory", help="list, show, extract, consolidate, or update typed legal memory")
     _ = memory.add_argument("action", choices=["list", "show", "mark-stale", "reject", "export-index", "extract-candidates", "consolidate"])
@@ -672,12 +771,29 @@ def _main(args: CliArgs) -> int:
         return 0 if decision.allowed else 2
 
     if args.command == "set-provider-policy":
-        if args.policy_file:
+        if args.smart_defaults and args.policy_file:
+            raise ValueError("set-provider-policy accepts --smart-defaults or --policy-file, not both")
+        if args.smart_defaults:
             with repo.db_connection(args.db, read_only=not args.write) as conn:
-                result = _set_model_policy_for_matter_from_file(
+                result = _set_model_policy_for_matter(
                     conn,
                     matter_scope=args.matter,
-                    policy_file=args.policy_file,
+                    policy=default_smart_model_policy(),
+                    policy_label="built-in:smart-defaults",
+                    smart=True,
+                    dry_run=not args.write,
+                )
+            print_json(result)
+            return 0
+        if args.policy_file:
+            policy_path = Path(args.policy_file)
+            with repo.db_connection(args.db, read_only=not args.write) as conn:
+                result = _set_model_policy_for_matter(
+                    conn,
+                    matter_scope=args.matter,
+                    policy=load_model_routing_policy(policy_path),
+                    policy_label=str(policy_path.resolve()),
+                    smart=False,
                     dry_run=not args.write,
                 )
             print_json(result)
@@ -698,19 +814,56 @@ def _main(args: CliArgs) -> int:
         return 0
 
     if args.command == "model-policy":
-        if args.policy_file is None:
-            raise ValueError("model-policy requires --policy-file")
-        policy = load_model_routing_policy(Path(args.policy_file))
+        task_row: Mapping[str, object] | None = None
+        if args.policy_file is None and not (args.action == "decide" and args.db and args.task_id):
+            raise ValueError("model-policy requires --policy-file, or decide requires --db and --task-id")
+        if args.policy_file is not None:
+            policy = load_model_routing_policy(Path(args.policy_file))
+        else:
+            with repo.db_connection(args.db, read_only=True) as conn:
+                task_row = cast(Mapping[str, object] | None, conn.execute("SELECT * FROM tasks WHERE task_id = ?", (args.task_id,)).fetchone())
+            if task_row is None:
+                raise ValueError(f"task not found: {args.task_id}")
+            provider_policy = _json_object_arg(str(task_row["provider_policy_json"] or "{}"))
+            routing = provider_policy.get("model_routing")
+            policy = load_model_routing_policy(cast(Mapping[str, object], routing)) if isinstance(routing, Mapping) else default_smart_model_policy()
+            args.stage = args.stage or str(task_row["stage"])
+            args.task_type = args.task_type or str(task_row["task_type"])
+            args.matter = args.matter or str(task_row["matter_scope"])
+            args.expected_value = args.expected_value or float(str(task_row["expected_value"] or 0.0))
         if args.action == "validate":
             print_json({"ok": True, "policy": policy.as_dict()})
             return 0
-        resolved = provider_policy_for_route(
-            policy,
-            layer=args.layer,
-            stage=args.stage,
-            task_type=args.task_type,
-            task_id=args.task_id,
-        )
+        if args.action == "decide":
+            resolved = smart_provider_policy_for_route(
+                policy,
+                layer=args.layer,
+                stage=args.stage,
+                task_type=args.task_type,
+                task_id=args.task_id,
+                matter_scope=args.matter,
+                risk_level=args.risk_level,
+                legal_complexity=args.legal_complexity,
+                evidence_volume=args.evidence_volume,
+                authority_required=args.authority_required,
+                hostile_review_required=args.hostile_review_required,
+                drafting_finality=args.drafting_finality,
+                contradiction_count=args.contradiction_count,
+                unresolved_uncertainty_count=args.unresolved_uncertainty_count,
+                source_count=args.source_count,
+                extracted_char_count=args.extracted_char_count,
+                expected_value=args.expected_value,
+                requested_capabilities=tuple(args.capability or ()),
+                operator_override=args.operator_override,
+            )
+        else:
+            resolved = provider_policy_for_route(
+                policy,
+                layer=args.layer,
+                stage=args.stage,
+                task_type=args.task_type,
+                task_id=args.task_id,
+            )
         print_json({"ok": True, "resolved": resolved})
         return 0
 
@@ -782,6 +935,184 @@ def _main(args: CliArgs) -> int:
         print_json(result)
         return 0
 
+    if args.command == "matter-profile":
+        if args.action == "show":
+            with repo.db_connection(args.db) as conn:
+                _ = create_default_matter_profile(conn, args.matter)
+                print_json({"matter_scope": args.matter, "active_profile": repo.get_active_matter_profile(conn, matter_scope=args.matter)})
+            return 0
+        if args.action == "propose":
+            with repo.db_connection(args.db) as conn:
+                proposal = propose_matter_profile_adaptation(conn, args.matter, args.goal or args.reason or "matter work", {})
+            print_json({"dry_run": True, "proposal": proposal.as_dict()})
+            return 0
+        if args.action == "apply":
+            if not args.profile_file:
+                raise ValueError("matter-profile apply requires --profile-file")
+            profile_payload = _json_object_arg(Path(args.profile_file).read_text(encoding="utf-8"))
+            with repo.db_connection(args.db, read_only=not args.write) as conn:
+                result = apply_matter_profile_adaptation(conn, args.matter, profile_payload, write=args.write)
+            print_json(result)
+            return 0
+        if args.action == "reset":
+            with repo.db_connection(args.db, read_only=not args.write) as conn:
+                result = reset_matter_profile_to_default(conn, args.matter, write=args.write)
+            print_json(result)
+            return 0
+        if not args.write:
+            print_json({"dry_run": True, "matter_scope": args.matter, "profile_name": args.name, "reason": args.reason})
+            return 0
+        with repo.db_connection(args.db) as conn:
+            profile_id = repo.create_matter_profile(conn, matter_scope=args.matter, profile_name=args.name, reason=args.reason)
+            active = repo.get_active_matter_profile(conn, matter_scope=args.matter)
+        print_json({"dry_run": False, "matter_profile_id": profile_id, "active_profile": active})
+        return 0
+
+    if args.command == "orchestrator":
+        if args.action in {"show", "status"}:
+            with repo.db_connection(args.db, read_only=True) as conn:
+                print_json({"matter_scope": args.matter, "orchestrator": repo.get_matter_orchestrator(conn, matter_scope=args.matter)})
+            return 0
+        if args.action == "tick":
+            with repo.db_connection(args.db, read_only=not args.write) as conn:
+                result = orchestrator_tick(conn, args.matter, args.capacity, dry_run=not args.write)
+            print_json(result)
+            return 0
+        if args.action == "failures":
+            with repo.db_connection(args.db, read_only=True) as conn:
+                rows = [
+                    _row_to_dict(row)
+                    for row in conn.execute(
+                        """
+                        SELECT *
+                        FROM orchestrator_events
+                        WHERE matter_scope = ? AND event_type = 'orchestrator.worker_failed'
+                        ORDER BY created_at DESC
+                        LIMIT 50
+                        """,
+                        (args.matter,),
+                    )
+                ]
+            print_json({"matter_scope": args.matter, "failures": rows})
+            return 0
+        if args.action == "worker-failed":
+            if not args.task_id:
+                raise ValueError("orchestrator worker-failed requires --task-id")
+            if not args.write:
+                print_json({"dry_run": True, "matter_scope": args.matter, "task_id": args.task_id, "failure_reason": args.reason})
+                return 0
+            with repo.db_connection(args.db) as conn:
+                event_id = report_worker_failure_to_orchestrator(conn, args.task_id, args.reason or "worker failed")
+            print_json({"dry_run": False, "orchestrator_event_id": event_id})
+            return 0
+        if args.action == "repair":
+            if not args.event_type:
+                raise ValueError("orchestrator repair requires --event-type containing failure event id")
+            with repo.db_connection(args.db, read_only=True) as conn:
+                result = orchestrator_plan_repair(conn, args.matter, args.event_type)
+            print_json(result)
+            return 0
+        if not args.write:
+            print_json({"dry_run": True, "matter_scope": args.matter, "action": args.action, "status": args.status, "goal": args.goal})
+            return 0
+        with repo.db_connection(args.db) as conn:
+            if args.action == "upsert":
+                orchestrator_id = repo.upsert_matter_orchestrator(conn, matter_scope=args.matter, status=args.status or "idle", current_goal=args.goal)
+                result = repo.get_matter_orchestrator(conn, matter_scope=args.matter)
+                print_json({"dry_run": False, "orchestrator_id": orchestrator_id, "orchestrator": result})
+                return 0
+            current = repo.get_matter_orchestrator(conn, matter_scope=args.matter)
+            if current is None:
+                raise ValueError("orchestrator event requires an existing orchestrator; run orchestrator upsert first")
+            if not args.event_type:
+                raise ValueError("orchestrator event requires --event-type")
+            event_id = repo.record_orchestrator_event(
+                conn,
+                orchestrator_id=str(current["orchestrator_id"]),
+                event_type=args.event_type,
+                payload=_json_object_arg(args.payload_json),
+            )
+        print_json({"dry_run": False, "orchestrator_event_id": event_id})
+        return 0
+
+    if args.command == "work-run":
+        if args.action == "status":
+            with repo.db_connection(args.db, read_only=True) as conn:
+                rows = [
+                    _row_to_dict(row)
+                    for row in conn.execute(
+                        "SELECT * FROM work_runs WHERE matter_scope = ? ORDER BY updated_at DESC LIMIT 25",
+                        (args.matter,),
+                    )
+                ]
+            print_json({"matter_scope": args.matter, "work_runs": rows})
+            return 0
+        if args.action == "resume":
+            if not args.resume_token:
+                raise ValueError("work-run resume requires --resume-token")
+            with repo.db_connection(args.db) as conn:
+                result = resume_work_run(conn, args.resume_token)
+            print_json(result)
+            return 0 if result.get("ok") is True else 2
+        if args.action == "export":
+            if not args.work_run_id:
+                raise ValueError("work-run export requires --work-run-id")
+            with repo.db_connection(args.db, read_only=True) as conn:
+                run = conn.execute("SELECT * FROM work_runs WHERE work_run_id = ? AND matter_scope = ?", (args.work_run_id, args.matter)).fetchone()
+                if run is None:
+                    raise ValueError(f"work run not found in matter {args.matter}: {args.work_run_id}")
+                steps = [_row_to_dict(row) for row in conn.execute("SELECT * FROM work_run_steps WHERE work_run_id = ? ORDER BY created_at", (args.work_run_id,))]
+            print_json({"work_run": _row_to_dict(run), "steps": steps})
+            return 0
+        if args.action == "reusable":
+            with repo.db_connection(args.db, read_only=True) as conn:
+                if args.step_type:
+                    reusable = repo.find_reusable_work_step(conn, matter_scope=args.matter, step_type=args.step_type, input_fingerprint=args.input_fingerprint)
+                    print_json({"matter_scope": args.matter, "reusable_step": reusable})
+                else:
+                    print_json(summarize_reusable_work(conn, args.matter, args.goal))
+            return 0
+        if not args.write:
+            print_json({"dry_run": True, "matter_scope": args.matter, "action": args.action, "goal": args.goal})
+            return 0
+        with repo.db_connection(args.db) as conn:
+            if args.action == "start":
+                work_run_id = repo.start_work_run(conn, matter_scope=args.matter, goal=args.goal)
+                run = conn.execute("SELECT * FROM work_runs WHERE work_run_id = ?", (work_run_id,)).fetchone()
+                print_json({"dry_run": False, "work_run": _row_to_dict(run) if run is not None else {"work_run_id": work_run_id}})
+                return 0
+            if args.action == "complete":
+                if not args.work_run_id:
+                    raise ValueError("work-run complete requires --work-run-id")
+                repo.update_work_run_status(conn, work_run_id=args.work_run_id, status="complete", matter_scope=args.matter)
+                print_json({"dry_run": False, "work_run_id": args.work_run_id, "status": "complete"})
+                return 0
+            if args.action == "step":
+                if not args.work_run_id or not args.step_type:
+                    raise ValueError("work-run step requires --work-run-id and --step-type")
+                step_id = repo.record_work_run_step(
+                    conn,
+                    work_run_id=args.work_run_id,
+                    step_type=args.step_type,
+                    status=args.status or "complete",
+                    task_id=args.task_id,
+                    input_fingerprint=args.input_fingerprint,
+                    output_fingerprint=args.output_fingerprint,
+                    expected_matter_scope=args.matter,
+                )
+                print_json({"dry_run": False, "work_run_step_id": step_id})
+                return 0
+            if not args.reused_from_step_id:
+                raise ValueError("work-run reuse requires --reused-from-step-id")
+            reuse_id = repo.record_work_reuse(
+                conn,
+                matter_scope=args.matter,
+                reused_from_step_id=args.reused_from_step_id,
+                reused_by_step_id=args.reused_by_step_id,
+            )
+        print_json({"dry_run": False, "reuse_record_id": reuse_id})
+        return 0
+
     if args.command == "memory":
         with repo.db_connection(args.db, read_only=not args.write) as conn:
             if args.action == "list":
@@ -834,18 +1165,20 @@ def _main(args: CliArgs) -> int:
                 return 0
 
     if args.command == "session":
+        authorized_matter_scope = authorized_matter_from_env()
+        matter_scope = require_matter_access(args.matter, authorized_matter_scope=authorized_matter_scope)
         with repo.db_connection(args.db, read_only=True) as conn:
             if args.action == "list":
                 print_json(
                     {
-                        "matter_scope": args.matter,
-                        "sessions": repo.list_sessions(conn, matter_scope=args.matter, status=args.status),
+                        "matter_scope": matter_scope,
+                        "sessions": repo.list_sessions(conn, matter_scope=matter_scope, status=args.status),
                     }
                 )
                 return 0
             if not args.session_id:
                 raise ValueError(f"session {args.action} requires SESSION_ID")
-            export = repo.export_session(conn, session_id=args.session_id)
+            export = repo.export_session_for_matter(conn, session_id=args.session_id, matter_scope=matter_scope)
             if args.action == "show":
                 print_json(export)
                 return 0
@@ -1036,19 +1369,20 @@ def _schedule_preview(conn: sqlite3.Connection, *, capacity: int) -> tuple[list[
     return runnable, blocked
 
 
-def _set_model_policy_for_matter_from_file(
+def _set_model_policy_for_matter(
     conn: sqlite3.Connection,
     *,
     matter_scope: str,
-    policy_file: str,
+    policy: ModelRoutingPolicy,
+    policy_label: str,
+    smart: bool,
     dry_run: bool,
 ) -> JsonObject:
-    policy = load_model_routing_policy(Path(policy_file))
     rows = [
         cast(Mapping[str, object], row)
         for row in conn.execute(
             """
-            SELECT task_id, stage, task_type, provider_policy_json
+            SELECT task_id, stage, task_type, expected_value, provider_policy_json
             FROM tasks
             WHERE matter_scope = ? AND status = 'queued'
             ORDER BY task_id
@@ -1059,13 +1393,21 @@ def _set_model_policy_for_matter_from_file(
     changed: list[str] = []
     resolved: list[JsonObject] = []
     for row in rows:
-        provider_policy = provider_policy_for_route(
-            policy,
-            layer="worker",
-            stage=str(row["stage"]),
-            task_type=str(row["task_type"]),
-            task_id=str(row["task_id"]),
-        )
+        stage = str(row["stage"])
+        task_type = str(row["task_type"])
+        task_id = str(row["task_id"])
+        if smart:
+            provider_policy = smart_provider_policy_for_route(
+                policy,
+                layer="worker",
+                stage=stage,
+                task_type=task_type,
+                task_id=task_id,
+                matter_scope=matter_scope,
+                expected_value=float(str(row["expected_value"] or 0.0)),
+            )
+        else:
+            provider_policy = provider_policy_for_route(policy, layer="worker", stage=stage, task_type=task_type, task_id=task_id)
         resolved.append({"task_id": str(row["task_id"]), "provider_policy": provider_policy})
         if str(row["provider_policy_json"] or "{}") != json.dumps(provider_policy, sort_keys=True, separators=(",", ":")):
             changed.append(str(row["task_id"]))
@@ -1079,12 +1421,13 @@ def _set_model_policy_for_matter_from_file(
             conn,
             "model_policy.set",
             matter_scope=matter_scope,
-            payload={"policy_file": str(Path(policy_file).resolve()), "task_ids": [str(row["task_id"]) for row in rows]},
+            payload={"policy_file": policy_label, "smart": smart, "task_ids": [str(row["task_id"]) for row in rows]},
         )
     return {
         "dry_run": dry_run,
         "matter_scope": matter_scope,
-        "policy_file": str(Path(policy_file).resolve()),
+        "policy_file": policy_label,
+        "smart": smart,
         "tasks_matched": len(rows),
         "tasks_updated": 0 if dry_run else len(changed),
         "task_ids": [str(row["task_id"]) for row in rows],
@@ -1119,6 +1462,15 @@ def _row_to_dict(row: sqlite3.Row) -> JsonObject:
 def _count_table(conn: sqlite3.Connection, name: str) -> int:
     row = conn.execute(f"SELECT COUNT(*) AS n FROM {name}").fetchone()
     return int(str(_row_value(row, "n", 0)))
+
+
+def _json_object_arg(value: str | None) -> JsonObject:
+    if not value:
+        return {}
+    parsed = json.loads(value)
+    if not isinstance(parsed, Mapping):
+        raise ValueError("JSON argument must be an object")
+    return {str(key): item for key, item in cast(Mapping[object, object], parsed).items()}
 
 
 def _context_markdown(diagnostics: Mapping[str, object]) -> str:

@@ -15,7 +15,6 @@ from atticus.core.policies import LegalStage, TaskStatus
 from atticus.core.tasks import TaskSpec
 from atticus.db import repo
 from atticus.migration.import_old_run import import_candidates
-from atticus.providers.deepseek import OPENROUTER_FREE_MODEL_ORDER
 from atticus.providers import live_readiness
 from atticus.providers.live_readiness import check_live_provider_policy, live_readiness_report, probe_live_openrouter
 from atticus.providers.openrouter import OpenRouterClient, OpenRouterError
@@ -135,7 +134,7 @@ def test_live_provider_policy_requires_openrouter_key_and_no_fallback():
 
 
 def test_live_provider_policy_allows_known_failover_model_list():
-    model_a, model_b = OPENROUTER_FREE_MODEL_ORDER[:2]
+    model_a, model_b = "deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-pro"
     decision = check_live_provider_policy(
         {
             "provider": "openrouter",
@@ -165,7 +164,7 @@ def test_env_enabled_failover_without_explicit_models_does_not_replace_deepseek_
 
 
 def test_live_provider_policy_allows_explicit_env_failover_pool_with_allow_fallback():
-    model_a, model_b = OPENROUTER_FREE_MODEL_ORDER[:2]
+    model_a, model_b = "deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-pro"
     decision = check_live_provider_policy(
         {"provider": "openrouter", "model": "deepseek/deepseek-v4-pro", "allow_fallback": True},
         env={
@@ -255,7 +254,7 @@ def test_live_openrouter_probe_blocks_malformed_usage_scalars_from_injected_clie
 
 
 def test_live_openrouter_probe_rotates_failover_models_with_injected_client():
-    model_a, model_b = OPENROUTER_FREE_MODEL_ORDER[:2]
+    model_a, model_b = "deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-pro"
 
     class RotatingProbeClient:
         def __init__(self) -> None:
@@ -300,7 +299,7 @@ def test_live_openrouter_probe_rotates_failover_models_with_injected_client():
 
 
 def test_live_openrouter_probe_fails_closed_on_unconfigured_requested_model():
-    unconfigured = OPENROUTER_FREE_MODEL_ORDER[0]
+    unconfigured = "deepseek/deepseek-v4-flash"
 
     class ForgedRequestedModelClient:
         def chat_json(self, *, model: str, messages: list[dict[str, str]], max_tokens: int, temperature: float) -> dict[str, object]:
@@ -656,7 +655,7 @@ def test_openrouter_paid_deepseek_allows_endpoint_provider_provenance(tmp_path: 
 
 
 def test_openrouter_runtime_records_final_failover_requested_model_in_telemetry(tmp_path: Path):
-    model_a, model_b = OPENROUTER_FREE_MODEL_ORDER[:2]
+    model_a, model_b = "deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-pro"
 
     class RuntimeFailoverClient:
         def __init__(self) -> None:
@@ -725,7 +724,7 @@ def test_openrouter_runtime_records_final_failover_requested_model_in_telemetry(
 
 
 def test_openrouter_runtime_fails_closed_on_unconfigured_requested_model(tmp_path: Path):
-    unconfigured = OPENROUTER_FREE_MODEL_ORDER[0]
+    unconfigured = "deepseek/deepseek-v4-flash"
 
     class ForgedRuntimeClient(FakeOpenRouterClient):
         @override
@@ -1603,7 +1602,7 @@ def test_live_orchestrator_accepts_openrouter_endpoint_provider_provenance(tmp_p
 
 
 def test_live_orchestrator_rejects_untrusted_free_model_provider_mismatch(tmp_path: Path):
-    model = OPENROUTER_FREE_MODEL_ORDER[0]
+    model = "deepseek/deepseek-v4-flash"
     db_path = init_db(tmp_path)
     env = {"OPENROUTER_API_KEY": "sk-test", "ATTICUS_ENABLE_LIVE_OPENROUTER": "1"}
     with repo.db_connection(db_path) as conn:
@@ -1640,7 +1639,7 @@ def test_live_orchestrator_rejects_untrusted_free_model_provider_mismatch(tmp_pa
 
 
 def test_live_orchestrator_leases_task_when_probe_matches_any_failover_model(tmp_path: Path):
-    model_a, model_b = OPENROUTER_FREE_MODEL_ORDER[:2]
+    model_a, model_b = "deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-pro"
     db_path = init_db(tmp_path)
     env = {"OPENROUTER_API_KEY": "sk-test", "ATTICUS_ENABLE_LIVE_OPENROUTER": "1"}
     with repo.db_connection(db_path) as conn:

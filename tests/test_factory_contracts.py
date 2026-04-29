@@ -386,7 +386,7 @@ def test_reducer_imports_accepted_candidate_proposed_tasks(tmp_path: Path):
                 title="Parent reduce",
                 task_type="source_inventory",
                 matter_scope="beta",
-                provider_policy={"provider": "openrouter", "model": "qwen/qwen3-coder:free", "allow_fallback": False, "estimated_cost_usd": 0.0},
+                provider_policy={"provider": "openrouter", "model": "deepseek/deepseek-v4-flash", "allow_fallback": False, "estimated_cost_usd": 0.0},
             ),
         )
         _ = repo.add_source(conn, source_id="NAP-SRC-0001", matter_scope="beta", path="/beta/one.pdf", sha256="1" * 64)
@@ -449,7 +449,7 @@ def test_reducer_imports_accepted_candidate_proposed_tasks(tmp_path: Path):
     assert followup["matter_scope"] == "beta"
     assert json.loads(str(followup["source_dependencies_json"])) == ["NAP-SRC-0001", "NAP-SRC-0002"]
     assert json.loads(str(gap_search["source_dependencies_json"])) == ["NAP-SRC-0001", "NAP-SRC-0002", "NAP-SRC-0003"]
-    assert "qwen/qwen3-coder:free" in str(followup["provider_policy_json"])
+    assert "deepseek/deepseek-v4-flash" in str(followup["provider_policy_json"])
 
 
 def test_reducer_rejects_cross_matter_proposed_tasks_and_task_id_collisions(tmp_path: Path):
@@ -463,7 +463,7 @@ def test_reducer_rejects_cross_matter_proposed_tasks_and_task_id_collisions(tmp_
                 title="Parent collision reduce",
                 task_type="source_inventory",
                 matter_scope="beta",
-                provider_policy={"provider": "openrouter", "model": "qwen/qwen3-coder:free", "allow_fallback": False, "estimated_cost_usd": 0.0},
+                provider_policy={"provider": "openrouter", "model": "deepseek/deepseek-v4-flash", "allow_fallback": False, "estimated_cost_usd": 0.0},
             ),
         )
         repo.add_task(

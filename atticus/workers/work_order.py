@@ -44,6 +44,8 @@ def build_work_order(
     instructions = WORK_ORDER_INSTRUCTIONS
     if task_instructions:
         instructions = f"{WORK_ORDER_INSTRUCTIONS}\n\nTask-specific coordinator contract:\n{task_instructions}"
+    provider_policy = _load_json_object(task, "provider_policy_json")
+    model_decision = provider_policy.get("model_decision")
     return WorkOrder(
         task_id=str(task["task_id"]),
         title=str(task["title"]),
@@ -57,7 +59,9 @@ def build_work_order(
         artifact_dependencies=_load_string_list(task, "artifact_dependencies_json"),
         required_certifications=_load_mapping_list(task, "required_certifications_json"),
         validation_gates=_load_string_list(task, "validation_gates_json"),
-        provider_policy=_load_json_object(task, "provider_policy_json"),
+        provider_policy=provider_policy,
+        model_decision=cast(dict[str, object], model_decision) if isinstance(model_decision, Mapping) else {},
+        model_decision_reason=str(provider_policy.get("model_decision_reason") or ""),
         context_pack=context_pack.as_dict(),
         skills=[
             skill.as_work_order_context()

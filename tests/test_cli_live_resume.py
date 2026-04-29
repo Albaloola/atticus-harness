@@ -10,7 +10,6 @@ from atticus.cli import main
 from atticus.core.policies import LegalStage, TaskStatus
 from atticus.core.tasks import TaskSpec
 from atticus.db import repo
-from atticus.providers.deepseek import OPENROUTER_FREE_MODEL_ORDER
 from atticus.providers import live_readiness
 
 
@@ -77,7 +76,7 @@ def test_cli_live_resume_accepts_preverified_probe_and_writes_leases(tmp_path: P
 
 
 def test_cli_live_resume_env_failover_models_match_preverified_probe(tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch):
-    model_a, model_b = OPENROUTER_FREE_MODEL_ORDER[:2]
+    model_a, model_b = "deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-pro"
     db_path = init_db(tmp_path)
     monkeypatch.setenv("ATTICUS_ENABLE_LIVE_OPENROUTER", "1")
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")

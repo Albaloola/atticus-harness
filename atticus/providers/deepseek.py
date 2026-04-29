@@ -7,6 +7,10 @@ atticus.providers.policy and remains independent from OpenClaw or any adapter.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Mapping
+import os
+
+from atticus.providers.anthropic import known_anthropic_model
 
 
 @dataclass(frozen=True)
@@ -37,7 +41,11 @@ DEEPSEEK_DIRECT_MODELS: dict[str, ModelCost] = {
     ),
 }
 
-OPENROUTER_MODELS: dict[str, ModelCost] = {
+ENV_ENABLE_HELD_OPENROUTER_MODELS = "ATTICUS_ENABLE_HELD_OPENROUTER_MODELS"
+ENV_ALLOW_HELD_MODELS_FOR_LIVE = "ATTICUS_ALLOW_HELD_MODELS_FOR_LIVE"
+
+
+OPENROUTER_ACTIVE_MODELS: dict[str, ModelCost] = {
     "deepseek/deepseek-v4-flash": DEEPSEEK_DIRECT_MODELS["deepseek-v4-flash"],
     "deepseek/deepseek-v4-pro": DEEPSEEK_DIRECT_MODELS["deepseek-v4-pro"],
 }
@@ -65,7 +73,8 @@ OPENROUTER_FREE_MODEL_ORDER = [
 ]
 
 _FREE_MODEL_COST = ModelCost(0.0, 0.0, 0.0, 0, 0)
-OPENROUTER_MODELS.update({model: _FREE_MODEL_COST for model in OPENROUTER_FREE_MODEL_ORDER})
+OPENROUTER_HELD_MODELS: dict[str, ModelCost] = {model: _FREE_MODEL_COST for model in OPENROUTER_FREE_MODEL_ORDER}
+OPENROUTER_MODELS: dict[str, ModelCost] = {**OPENROUTER_ACTIVE_MODELS, **OPENROUTER_HELD_MODELS}
 
 CODEX_MODELS: dict[str, ModelCost] = {
     "gpt-5.5": ModelCost(0.0, 0.0, 0.0, 0, 0),
@@ -93,13 +102,31 @@ PRO_USE_CASES = {
 }
 
 
-def known_model(provider: str, model: str) -> bool:
+def held_openrouter_models_enabled(*, env: Mapping[str, str] | None = None, live: bool = False) -> bool:
+    env = env if env is not None else os.environ
+    enabled = env.get(ENV_ENABLE_HELD_OPENROUTER_MODELS) == "1"
+    if not enabled:
+        return False
+    if live and env.get(ENV_ALLOW_HELD_MODELS_FOR_LIVE) != "1":
+        return False
+    return True
+
+
+def is_held_openrouter_model(model: str) -> bool:
+    return model in OPENROUTER_HELD_MODELS
+
+
+def known_model(provider: str, model: str, *, env: Mapping[str, str] | None = None, live: bool = False) -> bool:
     if provider == "openrouter":
-        return model in OPENROUTER_MODELS
+        if model in OPENROUTER_ACTIVE_MODELS:
+            return True
+        return model in OPENROUTER_HELD_MODELS and held_openrouter_models_enabled(env=env, live=live)
     if provider == "deepseek":
         return model in DEEPSEEK_DIRECT_MODELS
     if provider == "openai-codex":
         return model in CODEX_MODELS
+    if provider in {"anthropic", "anthropic-oauth"}:
+        return known_anthropic_model(model, env=env)
     return False
 
 

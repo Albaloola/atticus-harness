@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Generator, Iterable
+from collections.abc import Generator, Iterable, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 import hashlib
 import json
 import sqlite3
+from typing import cast
 from uuid import uuid4
 
 from atticus.core.events import Event, utc_now
@@ -102,6 +103,13 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
             "stage": "TEXT NOT NULL DEFAULT ''",
             "latency_ms": "INTEGER NOT NULL DEFAULT 0",
             "retries": "INTEGER NOT NULL DEFAULT 0",
+            "context_pack_id": "TEXT",
+            "context_fingerprint": "TEXT NOT NULL DEFAULT ''",
+            "provider_policy_fingerprint": "TEXT NOT NULL DEFAULT ''",
+            "configured_models_json": "TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(configured_models_json))",
+            "cache_write_tokens": "INTEGER NOT NULL DEFAULT 0",
+            "failover_events_json": "TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(failover_events_json))",
+            "cache_telemetry_source": "TEXT NOT NULL DEFAULT 'provider_reported'",
         },
         "human_attention": {
             "matter_scope": "TEXT NOT NULL DEFAULT 'unknown'",
@@ -180,6 +188,10 @@ def _matter_scope_for_target(conn: sqlite3.Connection, *, target_type: str, targ
         "memory": ("legal_memories", "memory_id"),
         "session": ("sessions", "session_id"),
         "run": ("runs", "run_id"),
+        "context_pack": ("context_packs", "context_pack_id"),
+        "matter_profile": ("matter_profiles", "matter_profile_id"),
+        "work_run": ("work_runs", "work_run_id"),
+        "work_run_step": ("work_run_steps", "work_run_step_id"),
     }.get(target_type)
     try:
         if table_column is not None:
@@ -214,10 +226,11 @@ def _matter_scope_for_target(conn: sqlite3.Connection, *, target_type: str, targ
         if target_type == "provider_run":
             row = conn.execute(
                 """
-                SELECT COALESCE(t.matter_scope, r.matter_scope) AS matter_scope
+                SELECT COALESCE(t.matter_scope, r.matter_scope, cp.matter_scope) AS matter_scope
                 FROM provider_runs pr
                 LEFT JOIN tasks t ON t.task_id = pr.task_id
                 LEFT JOIN runs r ON r.run_id = pr.run_id
+                LEFT JOIN context_packs cp ON cp.context_pack_id = pr.context_pack_id
                 WHERE pr.provider_run_id = ?
                 """,
                 (target_id,),
@@ -230,6 +243,25 @@ def _matter_scope_for_target(conn: sqlite3.Connection, *, target_type: str, targ
 
 def matter_scope_for_target(conn: sqlite3.Connection, *, target_type: str, target_id: str | None) -> str | None:
     return _matter_scope_for_target(conn, target_type=target_type, target_id=target_id)
+
+
+def _require_target_in_matter(
+    conn: sqlite3.Connection,
+    *,
+    matter_scope: str,
+    target_type: str,
+    target_id: str | None,
+    field_name: str,
+) -> None:
+    if not target_id:
+        return
+    target_matter = _matter_scope_for_target(conn, target_type=target_type, target_id=target_id)
+    if target_matter is None:
+        if matter_scope == "unknown":
+            return
+        raise ValueError(f"{field_name} not found or has no matter scope: {target_id}")
+    if target_matter != matter_scope:
+        raise ValueError(f"{field_name} {target_id} belongs to matter {target_matter}, outside matter {matter_scope}")
 
 
 def _json(value: object) -> str:
@@ -297,6 +329,119 @@ def ensure_matter(conn: sqlite3.Connection, matter_scope: str, title: str = "") 
         """,
         (matter_scope, title, now, now),
     )
+
+
+def create_matter_profile(
+    conn: sqlite3.Connection,
+    *,
+    matter_scope: str,
+    profile_name: str,
+    stages: Iterable[dict[str, object]] | None = None,
+    base_template: str = "default_s0_s9",
+    reason: str = "initial profile",
+    requested_by: str = "operator",
+    created_by: str = "atticus",
+    matter_profile_id: str | None = None,
+) -> str:
+    ensure_matter(conn, matter_scope)
+    stage_rows = _normalized_profile_stages(stages)
+    fingerprint = _hash_text(_json({"matter_scope": matter_scope, "base_template": base_template, "stages": stage_rows}))
+    old = conn.execute("SELECT matter_profile_id FROM matter_profiles WHERE matter_scope = ? AND status = 'active'", (matter_scope,)).fetchone()
+    old_profile_id = str(old["matter_profile_id"]) if old is not None else None
+    pid = matter_profile_id or f"mprof-{uuid4().hex}"
+    now = utc_now()
+    _ = conn.execute("UPDATE matter_profiles SET status = 'superseded', updated_at = ? WHERE matter_scope = ? AND status = 'active'", (now, matter_scope))
+    _ = conn.execute(
+        """
+        INSERT INTO matter_profiles(matter_profile_id, matter_scope, profile_name, status,
+          base_template, profile_version, fingerprint, created_by, created_at, updated_at)
+        VALUES (?, ?, ?, 'active', ?, COALESCE((SELECT MAX(profile_version) + 1 FROM matter_profiles WHERE matter_scope = ?), 1), ?, ?, ?, ?)
+        """,
+        (pid, matter_scope, profile_name, base_template, matter_scope, fingerprint, created_by, now, now),
+    )
+    for stage_row in stage_rows:
+        _ = conn.execute(
+            """
+            INSERT INTO matter_profile_stages(profile_stage_id, matter_profile_id, stage, enabled,
+              gate_policy_json, worker_policy_json, model_policy_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                f"mprofstage-{uuid4().hex}",
+                pid,
+                stage_row["stage"],
+                1 if stage_row["enabled"] else 0,
+                _json(stage_row["gate_policy"]),
+                _json(stage_row["worker_policy"]),
+                _json(stage_row["model_policy"]),
+                now,
+            ),
+        )
+    change_id = f"mprofchg-{uuid4().hex}"
+    _ = conn.execute(
+        """
+        INSERT INTO matter_profile_changes(matter_profile_change_id, matter_scope, old_profile_id,
+          new_profile_id, reason, requested_by, diff_json, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            change_id,
+            matter_scope,
+            old_profile_id,
+            pid,
+            reason,
+            requested_by,
+            _json({"old_profile_id": old_profile_id or "", "new_fingerprint": fingerprint, "base_template": base_template}),
+            now,
+        ),
+    )
+    _ = emit_event(conn, "matter_profile.activated", matter_scope=matter_scope, payload={"matter_profile_id": pid, "old_profile_id": old_profile_id or "", "reason": reason})
+    return pid
+
+
+def get_active_matter_profile(conn: sqlite3.Connection, *, matter_scope: str) -> dict[str, object] | None:
+    row = conn.execute("SELECT * FROM matter_profiles WHERE matter_scope = ? AND status = 'active'", (matter_scope,)).fetchone()
+    if row is None:
+        return None
+    result = _row_to_plain_dict(row)
+    stage_rows = conn.execute("SELECT * FROM matter_profile_stages WHERE matter_profile_id = ? ORDER BY stage", (row["matter_profile_id"],)).fetchall()
+    result["stages"] = [_profile_stage_row_to_dict(stage_row) for stage_row in stage_rows]
+    return result
+
+
+def _normalized_profile_stages(stages: Iterable[dict[str, object]] | None) -> list[dict[str, object]]:
+    raw_stages = list(stages) if stages is not None else [{"stage": str(stage), "enabled": True} for stage in LegalStage]
+    normalized: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for raw in raw_stages:
+        stage = str(raw.get("stage") or "").strip()
+        if not stage:
+            raise ValueError("matter profile stage is required")
+        if stage in seen:
+            raise ValueError(f"duplicate matter profile stage: {stage}")
+        seen.add(stage)
+        normalized.append(
+            {
+                "stage": stage,
+                "enabled": bool(raw.get("enabled", True)),
+                "gate_policy": dict(cast(dict[str, object], raw.get("gate_policy") or raw.get("gate_policy_json") or {})),
+                "worker_policy": dict(cast(dict[str, object], raw.get("worker_policy") or raw.get("worker_policy_json") or {})),
+                "model_policy": dict(cast(dict[str, object], raw.get("model_policy") or raw.get("model_policy_json") or {})),
+            }
+        )
+    return normalized
+
+
+def _profile_stage_row_to_dict(row: sqlite3.Row) -> dict[str, object]:
+    return {
+        "profile_stage_id": row["profile_stage_id"],
+        "stage": row["stage"],
+        "enabled": bool(row["enabled"]),
+        "gate_policy": json.loads(str(row["gate_policy_json"] or "{}")),
+        "worker_policy": json.loads(str(row["worker_policy_json"] or "{}")),
+        "model_policy": json.loads(str(row["model_policy_json"] or "{}")),
+        "created_at": row["created_at"],
+    }
 
 
 def upsert_run(
@@ -748,6 +893,13 @@ def record_provider_run(
     output_tokens: int = 0,
     cache_hit_tokens: int = 0,
     cache_miss_tokens: int = 0,
+    cache_write_tokens: int = 0,
+    context_pack_id: str | None = None,
+    context_fingerprint: str = "",
+    provider_policy_fingerprint: str = "",
+    configured_models: Iterable[str] = (),
+    failover_events: Iterable[dict[str, object]] = (),
+    cache_telemetry_source: str = "provider_reported",
     estimated_cost_usd: float = 0.0,
     actual_cost_usd: float | None = None,
     latency_ms: int = 0,
@@ -757,19 +909,39 @@ def record_provider_run(
     raw_usage: dict[str, object] | None = None,
 ) -> str:
     rid = provider_run_id or f"prun-{uuid4().hex}"
+    raw_usage_payload = raw_usage or {}
     matter_scope = None
     if task_id is not None:
         matter_scope = _matter_scope_for_target(conn, target_type="task", target_id=task_id)
     if matter_scope is None and run_id is not None:
         matter_scope = _matter_scope_for_target(conn, target_type="run", target_id=run_id)
+    elif run_id is not None:
+        _require_target_in_matter(conn, matter_scope=matter_scope, target_type="run", target_id=run_id, field_name="run_id")
+    resolved_context_pack_id = context_pack_id or _context_pack_id_for_task(conn, task_id=task_id)
+    if matter_scope is None and resolved_context_pack_id is not None:
+        matter_scope = _matter_scope_for_target(conn, target_type="context_pack", target_id=resolved_context_pack_id)
+    elif resolved_context_pack_id is not None:
+        _require_target_in_matter(
+            conn,
+            matter_scope=matter_scope,
+            target_type="context_pack",
+            target_id=resolved_context_pack_id,
+            field_name="context_pack_id",
+        )
     matter_scope = matter_scope or "unknown"
+    resolved_context_fingerprint = context_fingerprint or _context_fingerprint(conn, resolved_context_pack_id)
+    resolved_provider_policy_fingerprint = provider_policy_fingerprint or _provider_policy_fingerprint_from_usage(raw_usage_payload)
+    configured_model_values = tuple(configured_models) or _strings_from_usage(raw_usage_payload.get("configured_models"))
+    failover_event_values = tuple(failover_events) or _dicts_from_usage(raw_usage_payload.get("openrouter_failover_events"))
     _ = conn.execute(
         """
         INSERT INTO provider_runs(provider_run_id, task_id, run_id, stage, requested_provider,
           requested_model, actual_provider, actual_model, input_tokens, output_tokens,
-          cache_hit_tokens, cache_miss_tokens, estimated_cost_usd, actual_cost_usd, latency_ms,
-          retries, fallback_allowed, fallback_policy_result, raw_usage_json, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          cache_hit_tokens, cache_miss_tokens, context_pack_id, context_fingerprint,
+          provider_policy_fingerprint, configured_models_json, cache_write_tokens,
+          failover_events_json, cache_telemetry_source, estimated_cost_usd, actual_cost_usd,
+          latency_ms, retries, fallback_allowed, fallback_policy_result, raw_usage_json, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             rid,
@@ -784,16 +956,39 @@ def record_provider_run(
             output_tokens,
             cache_hit_tokens,
             cache_miss_tokens,
+            resolved_context_pack_id,
+            resolved_context_fingerprint,
+            resolved_provider_policy_fingerprint,
+            _json(list(configured_model_values)),
+            cache_write_tokens,
+            _json(list(failover_event_values)),
+            cache_telemetry_source,
             estimated_cost_usd,
             actual_cost_usd,
             latency_ms,
             retries,
             1 if fallback_allowed else 0,
             fallback_policy_result,
-            _json(raw_usage or {}),
+            _json(raw_usage_payload),
             utc_now(),
         ),
     )
+    if cache_hit_tokens or cache_write_tokens or cache_miss_tokens or resolved_context_fingerprint or resolved_provider_policy_fingerprint:
+        _ = record_prompt_cache_observation(
+            conn,
+            matter_scope=matter_scope,
+            provider_run_id=rid,
+            task_id=task_id,
+            context_pack_id=resolved_context_pack_id,
+            query_source="provider_run",
+            model=actual_model or requested_model,
+            context_fingerprint=resolved_context_fingerprint,
+            policy_fingerprint=resolved_provider_policy_fingerprint,
+            cache_hit_tokens=cache_hit_tokens,
+            cache_write_tokens=cache_write_tokens,
+            cache_miss_tokens=cache_miss_tokens,
+            reason="provider cache telemetry only; cache hits are not evidence correctness",
+        )
     _ = emit_event(
         conn,
         "provider.run_recorded",
@@ -808,6 +1003,155 @@ def record_provider_run(
         },
     )
     return rid
+
+
+def record_prompt_cache_observation(
+    conn: sqlite3.Connection,
+    *,
+    matter_scope: str,
+    provider_run_id: str | None = None,
+    task_id: str | None = None,
+    context_pack_id: str | None = None,
+    query_source: str = "",
+    model: str = "",
+    system_fingerprint: str = "",
+    tools_fingerprint: str = "",
+    context_fingerprint: str = "",
+    policy_fingerprint: str = "",
+    cache_hit_tokens: int = 0,
+    cache_write_tokens: int = 0,
+    cache_miss_tokens: int = 0,
+    possible_cache_break: bool | None = None,
+    reason: str = "",
+    prompt_cache_observation_id: str | None = None,
+) -> str:
+    oid = prompt_cache_observation_id or f"pcache-{uuid4().hex}"
+    _require_target_in_matter(conn, matter_scope=matter_scope, target_type="provider_run", target_id=provider_run_id, field_name="provider_run_id")
+    _require_target_in_matter(conn, matter_scope=matter_scope, target_type="task", target_id=task_id, field_name="task_id")
+    _require_target_in_matter(conn, matter_scope=matter_scope, target_type="context_pack", target_id=context_pack_id, field_name="context_pack_id")
+    if possible_cache_break is None:
+        possible_cache_break = _looks_like_cache_break(
+            conn,
+            matter_scope=matter_scope,
+            model=model,
+            system_fingerprint=system_fingerprint,
+            tools_fingerprint=tools_fingerprint,
+            context_fingerprint=context_fingerprint,
+            policy_fingerprint=policy_fingerprint,
+            cache_hit_tokens=cache_hit_tokens,
+            cache_write_tokens=cache_write_tokens,
+            cache_miss_tokens=cache_miss_tokens,
+        )
+    _ = conn.execute(
+        """
+        INSERT INTO prompt_cache_observations(prompt_cache_observation_id, matter_scope,
+          provider_run_id, task_id, context_pack_id, query_source, model,
+          system_fingerprint, tools_fingerprint, context_fingerprint, policy_fingerprint,
+          cache_hit_tokens, cache_write_tokens, cache_miss_tokens, possible_cache_break,
+          reason, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            oid,
+            matter_scope,
+            provider_run_id,
+            task_id,
+            context_pack_id,
+            query_source,
+            model,
+            system_fingerprint,
+            tools_fingerprint,
+            context_fingerprint,
+            policy_fingerprint,
+            cache_hit_tokens,
+            cache_write_tokens,
+            cache_miss_tokens,
+            1 if possible_cache_break else 0,
+            reason,
+            utc_now(),
+        ),
+    )
+    _ = emit_event(
+        conn,
+        "prompt_cache.observed",
+        matter_scope=matter_scope,
+        payload={
+            "prompt_cache_observation_id": oid,
+            "provider_run_id": provider_run_id or "",
+            "cache_hit_tokens": cache_hit_tokens,
+            "cache_write_tokens": cache_write_tokens,
+            "cache_miss_tokens": cache_miss_tokens,
+            "possible_cache_break": possible_cache_break,
+            "not_evidence_correctness": True,
+        },
+    )
+    return oid
+
+
+def _looks_like_cache_break(
+    conn: sqlite3.Connection,
+    *,
+    matter_scope: str,
+    model: str,
+    system_fingerprint: str,
+    tools_fingerprint: str,
+    context_fingerprint: str,
+    policy_fingerprint: str,
+    cache_hit_tokens: int,
+    cache_write_tokens: int,
+    cache_miss_tokens: int,
+) -> bool:
+    if cache_hit_tokens > 0 or cache_miss_tokens <= 0 or not (model and context_fingerprint and policy_fingerprint):
+        return False
+    row = conn.execute(
+        """
+        SELECT 1 FROM prompt_cache_observations
+        WHERE matter_scope = ? AND model = ? AND system_fingerprint = ? AND tools_fingerprint = ?
+          AND context_fingerprint = ? AND policy_fingerprint = ?
+          AND cache_hit_tokens > 0 AND possible_cache_break = 0
+        LIMIT 1
+        """,
+        (matter_scope, model, system_fingerprint, tools_fingerprint, context_fingerprint, policy_fingerprint),
+    ).fetchone()
+    return row is not None and cache_write_tokens == 0
+
+
+def _context_pack_id_for_task(conn: sqlite3.Connection, *, task_id: str | None) -> str | None:
+    if not task_id:
+        return None
+    row = conn.execute("SELECT context_pack_id FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
+    if row is None or row["context_pack_id"] is None:
+        return None
+    return str(row["context_pack_id"])
+
+
+def _context_fingerprint(conn: sqlite3.Connection, context_pack_id: str | None) -> str:
+    if not context_pack_id:
+        return ""
+    row = conn.execute("SELECT fingerprint FROM context_packs WHERE context_pack_id = ?", (context_pack_id,)).fetchone()
+    return str(row["fingerprint"]) if row is not None and row["fingerprint"] is not None else ""
+
+
+def _provider_policy_fingerprint_from_usage(raw_usage: dict[str, object]) -> str:
+    provider_policy = raw_usage.get("provider_policy")
+    if isinstance(provider_policy, Mapping):
+        provider_policy_map = cast(Mapping[object, object], provider_policy)
+        return _hash_text(_json({str(key): item for key, item in provider_policy_map.items()}))
+    return ""
+
+
+def _strings_from_usage(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list | tuple):
+        return ()
+    items = cast(Iterable[object], value)
+    return tuple(str(item) for item in items if str(item))
+
+
+def _dicts_from_usage(value: object) -> tuple[dict[str, object], ...]:
+    if not isinstance(value, list | tuple):
+        return ()
+    items = cast(Iterable[object], value)
+    return tuple({str(key): val for key, val in cast(Mapping[object, object], item).items()} for item in items if isinstance(item, Mapping))
 
 
 def record_human_attention(
@@ -858,6 +1202,206 @@ def record_external_action_block(
     )
     _ = emit_event(conn, "external_action.blocked", matter_scope=resolved_matter_scope, payload={"block_id": block_id, "action_type": action_type})
     return block_id
+
+
+def upsert_matter_orchestrator(
+    conn: sqlite3.Connection,
+    *,
+    matter_scope: str,
+    status: str = "idle",
+    current_goal: str = "",
+    model_decision: dict[str, object] | None = None,
+    failure_count: int = 0,
+    orchestrator_id: str | None = None,
+) -> str:
+    ensure_matter(conn, matter_scope)
+    oid = orchestrator_id or f"orch-{uuid4().hex}"
+    now = utc_now()
+    _ = conn.execute(
+        """
+        INSERT INTO matter_orchestrators(orchestrator_id, matter_scope, status,
+          model_decision_json, last_tick_at, current_goal, failure_count, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(matter_scope) DO UPDATE SET
+          status=excluded.status,
+          model_decision_json=excluded.model_decision_json,
+          current_goal=excluded.current_goal,
+          failure_count=excluded.failure_count,
+          updated_at=excluded.updated_at
+        """,
+        (oid, matter_scope, status, _json(model_decision or {}), None, current_goal, failure_count, now, now),
+    )
+    row = conn.execute("SELECT orchestrator_id FROM matter_orchestrators WHERE matter_scope = ?", (matter_scope,)).fetchone()
+    resolved_id = str(row["orchestrator_id"] if row is not None else oid)
+    _ = emit_event(conn, "orchestrator.upserted", matter_scope=matter_scope, payload={"orchestrator_id": resolved_id, "status": status, "current_goal": current_goal})
+    return resolved_id
+
+
+def record_orchestrator_event(
+    conn: sqlite3.Connection,
+    *,
+    orchestrator_id: str,
+    event_type: str,
+    payload: dict[str, object] | None = None,
+    orchestrator_event_id: str | None = None,
+) -> str:
+    row = conn.execute("SELECT matter_scope FROM matter_orchestrators WHERE orchestrator_id = ?", (orchestrator_id,)).fetchone()
+    if row is None:
+        raise ValueError(f"orchestrator not found: {orchestrator_id}")
+    matter_scope = str(row["matter_scope"])
+    eid = orchestrator_event_id or f"orchevt-{uuid4().hex}"
+    now = utc_now()
+    _ = conn.execute(
+        """
+        INSERT INTO orchestrator_events(orchestrator_event_id, orchestrator_id, matter_scope,
+          event_type, payload_json, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (eid, orchestrator_id, matter_scope, event_type, _json(payload or {}), now),
+    )
+    _ = conn.execute("UPDATE matter_orchestrators SET last_tick_at = ?, updated_at = ? WHERE orchestrator_id = ?", (now, now, orchestrator_id))
+    _ = emit_event(conn, "orchestrator.event_recorded", matter_scope=matter_scope, payload={"orchestrator_event_id": eid, "orchestrator_id": orchestrator_id, "event_type": event_type})
+    return eid
+
+
+def get_matter_orchestrator(conn: sqlite3.Connection, *, matter_scope: str) -> dict[str, object] | None:
+    row = conn.execute("SELECT * FROM matter_orchestrators WHERE matter_scope = ?", (matter_scope,)).fetchone()
+    if row is None:
+        return None
+    result = _row_to_plain_dict(row)
+    result["model_decision"] = json.loads(str(result.pop("model_decision_json") or "{}"))
+    return result
+
+
+def start_work_run(
+    conn: sqlite3.Connection,
+    *,
+    matter_scope: str,
+    goal: str = "",
+    active_profile_id: str | None = None,
+    metadata: dict[str, object] | None = None,
+    work_run_id: str | None = None,
+) -> str:
+    ensure_matter(conn, matter_scope)
+    _require_target_in_matter(conn, matter_scope=matter_scope, target_type="matter_profile", target_id=active_profile_id, field_name="active_profile_id")
+    wid = work_run_id or f"wrun-{uuid4().hex}"
+    now = utc_now()
+    resume_token = f"resume-{uuid4().hex}"
+    _ = conn.execute(
+        """
+        INSERT INTO work_runs(work_run_id, matter_scope, goal, status, active_profile_id,
+          started_at, updated_at, completed_at, resume_token, metadata_json)
+        VALUES (?, ?, ?, 'running', ?, ?, ?, NULL, ?, ?)
+        """,
+        (wid, matter_scope, goal, active_profile_id, now, now, resume_token, _json(metadata or {})),
+    )
+    _ = emit_event(conn, "work_run.started", matter_scope=matter_scope, payload={"work_run_id": wid, "goal": goal, "active_profile_id": active_profile_id or ""})
+    return wid
+
+
+def update_work_run_status(conn: sqlite3.Connection, *, work_run_id: str, status: str, matter_scope: str | None = None) -> None:
+    row = conn.execute("SELECT matter_scope FROM work_runs WHERE work_run_id = ?", (work_run_id,)).fetchone()
+    if row is None:
+        raise ValueError(f"work run not found: {work_run_id}")
+    run_matter_scope = str(row["matter_scope"])
+    if matter_scope is not None and run_matter_scope != matter_scope:
+        raise ValueError(f"work_run_id {work_run_id} belongs to matter {run_matter_scope}, outside matter {matter_scope}")
+    now = utc_now()
+    completed_at = now if status in {"complete", "failed", "cancelled"} else None
+    _ = conn.execute(
+        "UPDATE work_runs SET status = ?, updated_at = ?, completed_at = COALESCE(?, completed_at) WHERE work_run_id = ?",
+        (status, now, completed_at, work_run_id),
+    )
+    _ = emit_event(conn, "work_run.status_updated", matter_scope=run_matter_scope, payload={"work_run_id": work_run_id, "status": status})
+
+
+def record_work_run_step(
+    conn: sqlite3.Connection,
+    *,
+    work_run_id: str,
+    step_type: str,
+    status: str,
+    task_id: str | None = None,
+    candidate_id: str | None = None,
+    artifact_id: str | None = None,
+    context_pack_id: str | None = None,
+    provider_run_id: str | None = None,
+    input_fingerprint: str = "",
+    output_fingerprint: str = "",
+    metadata: dict[str, object] | None = None,
+    work_run_step_id: str | None = None,
+    expected_matter_scope: str | None = None,
+) -> str:
+    run = conn.execute("SELECT matter_scope FROM work_runs WHERE work_run_id = ?", (work_run_id,)).fetchone()
+    if run is None:
+        raise ValueError(f"work run not found: {work_run_id}")
+    sid = work_run_step_id or f"wstep-{uuid4().hex}"
+    matter_scope = str(run["matter_scope"])
+    if expected_matter_scope is not None and matter_scope != expected_matter_scope:
+        raise ValueError(f"work_run_id {work_run_id} belongs to matter {matter_scope}, outside matter {expected_matter_scope}")
+    _require_target_in_matter(conn, matter_scope=matter_scope, target_type="task", target_id=task_id, field_name="task_id")
+    _require_target_in_matter(conn, matter_scope=matter_scope, target_type="candidate", target_id=candidate_id, field_name="candidate_id")
+    _require_target_in_matter(conn, matter_scope=matter_scope, target_type="artifact", target_id=artifact_id, field_name="artifact_id")
+    _require_target_in_matter(conn, matter_scope=matter_scope, target_type="context_pack", target_id=context_pack_id, field_name="context_pack_id")
+    _require_target_in_matter(conn, matter_scope=matter_scope, target_type="provider_run", target_id=provider_run_id, field_name="provider_run_id")
+    now = utc_now()
+    _ = conn.execute(
+        """
+        INSERT INTO work_run_steps(work_run_step_id, work_run_id, matter_scope, step_type,
+          task_id, candidate_id, artifact_id, context_pack_id, provider_run_id, status,
+          input_fingerprint, output_fingerprint, created_at, updated_at, metadata_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (sid, work_run_id, matter_scope, step_type, task_id, candidate_id, artifact_id, context_pack_id, provider_run_id, status, input_fingerprint, output_fingerprint, now, now, _json(metadata or {})),
+    )
+    _ = conn.execute("UPDATE work_runs SET updated_at = ? WHERE work_run_id = ?", (now, work_run_id))
+    _ = emit_event(conn, "work_run.step_recorded", matter_scope=matter_scope, payload={"work_run_id": work_run_id, "work_run_step_id": sid, "step_type": step_type, "status": status})
+    return sid
+
+
+def find_reusable_work_step(conn: sqlite3.Connection, *, matter_scope: str, step_type: str, input_fingerprint: str) -> dict[str, object] | None:
+    row = conn.execute(
+        """
+        SELECT * FROM work_run_steps
+        WHERE matter_scope = ? AND step_type = ? AND input_fingerprint = ? AND status = 'complete'
+        ORDER BY updated_at DESC
+        LIMIT 1
+        """,
+        (matter_scope, step_type, input_fingerprint),
+    ).fetchone()
+    return _work_step_row_to_dict(row) if row is not None else None
+
+
+def record_work_reuse(
+    conn: sqlite3.Connection,
+    *,
+    matter_scope: str,
+    reused_from_step_id: str,
+    reused_by_step_id: str | None = None,
+    reuse_type: str = "exact_input_fingerprint",
+    valid: bool = True,
+    invalidation_reason: str = "",
+    reuse_record_id: str | None = None,
+) -> str:
+    rid = reuse_record_id or f"reuse-{uuid4().hex}"
+    _require_target_in_matter(conn, matter_scope=matter_scope, target_type="work_run_step", target_id=reused_from_step_id, field_name="reused_from_step_id")
+    _require_target_in_matter(conn, matter_scope=matter_scope, target_type="work_run_step", target_id=reused_by_step_id, field_name="reused_by_step_id")
+    _ = conn.execute(
+        """
+        INSERT INTO work_reuse_records(reuse_record_id, matter_scope, reused_from_step_id,
+          reused_by_step_id, reuse_type, valid, invalidation_reason, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (rid, matter_scope, reused_from_step_id, reused_by_step_id, reuse_type, 1 if valid else 0, invalidation_reason, utc_now()),
+    )
+    _ = emit_event(conn, "work_reuse.recorded", matter_scope=matter_scope, payload={"reuse_record_id": rid, "reused_from_step_id": reused_from_step_id, "valid": valid})
+    return rid
+
+
+def _work_step_row_to_dict(row: sqlite3.Row) -> dict[str, object]:
+    result = _row_to_plain_dict(row)
+    result["metadata"] = json.loads(str(result.pop("metadata_json") or "{}"))
+    return result
 
 
 def add_citation_span(
@@ -937,6 +1481,7 @@ def add_context_pack(
     cache_hit_tokens: int = 0,
     cache_miss_tokens: int = 0,
 ) -> str:
+    _require_target_in_matter(conn, matter_scope=matter_scope, target_type="task", target_id=task_id, field_name="task_id")
     _ = conn.execute(
         """
         INSERT OR IGNORE INTO context_packs(context_pack_id, matter_scope, task_id, pack_type,
@@ -1446,11 +1991,15 @@ def list_session_messages(conn: sqlite3.Connection, *, session_id: str) -> list[
     return [_session_message_row_to_dict(row) for row in rows]
 
 
-def export_session(conn: sqlite3.Connection, *, session_id: str) -> dict[str, object]:
-    session = get_session(conn, session_id=session_id)
+def export_session(conn: sqlite3.Connection, *, session_id: str, matter_scope: str) -> dict[str, object]:
+    session = get_session(conn, session_id=session_id, matter_scope=matter_scope)
     if session is None:
         raise ValueError(f"session not found: {session_id}")
     return {"session": session, "messages": list_session_messages(conn, session_id=session_id)}
+
+
+def export_session_for_matter(conn: sqlite3.Connection, *, session_id: str, matter_scope: str) -> dict[str, object]:
+    return export_session(conn, session_id=session_id, matter_scope=matter_scope)
 
 
 def record_hook_invocation(
@@ -1493,6 +2042,10 @@ def record_hook_invocation(
 
 
 def _session_row_to_dict(row: sqlite3.Row) -> dict[str, object]:
+    return {str(key): row[key] for key in row.keys()}
+
+
+def _row_to_plain_dict(row: sqlite3.Row) -> dict[str, object]:
     return {str(key): row[key] for key in row.keys()}
 
 

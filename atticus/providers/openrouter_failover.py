@@ -114,12 +114,14 @@ class OpenRouterModelFailover:
         self._validate_request(messages=messages)
         if max_total_attempts is not None and max_total_attempts < 1:
             raise OpenRouterFailoverHardError("OpenRouter failover max_total_attempts must be >= 1 when set")
+        if max_total_attempts is None:
+            max_total_attempts = len(self.config.models) * (self.config.max_failed_cycles + 1)
         failed_cycles = 0
         attempts_in_cycle = 0
         attempt_number = 0
 
         while True:
-            if max_total_attempts is not None and attempt_number >= max_total_attempts:
+            if attempt_number >= max_total_attempts:
                 self._emit(
                     "failover_attempt_guard_exceeded",
                     model=self.current_model,
@@ -362,6 +364,7 @@ def openrouter_failover_config_from_policy(
     provider_policy: Mapping[str, object],
     *,
     env: Mapping[str, str] | None = None,
+    live: bool = False,
 ) -> OpenRouterFailoverConfig | None:
     env = env if env is not None else os.environ
     raw = provider_policy.get(FAILOVER_POLICY_KEY)
@@ -390,7 +393,7 @@ def openrouter_failover_config_from_policy(
         jitter_seconds=_float_value(raw_config.get("jitter_seconds"), env.get(ENV_FAILOVER_JITTER_SECONDS), default=DEFAULT_JITTER_SECONDS),
         log_events=_bool_value(raw_config.get("log_events"), default=_env_bool(env.get(ENV_FAILOVER_LOG_EVENTS), default=False)),
     )
-    _validate_failover_config(config)
+    _validate_failover_config(config, env=env, live=live)
     return config
 
 
@@ -398,10 +401,11 @@ def openrouter_client_for_policy(
     provider_policy: Mapping[str, object],
     *,
     env: Mapping[str, str] | None = None,
+    live: bool = False,
     client: object | None = None,
     event_sink: Callable[[dict[str, object]], None] | None = None,
 ) -> object:
-    config = openrouter_failover_config_from_policy(provider_policy, env=env)
+    config = openrouter_failover_config_from_policy(provider_policy, env=env, live=live)
     if config is None:
         return client
     if client is not None:
@@ -424,25 +428,25 @@ def openrouter_client_for_policy(
     return failover_client
 
 
-def primary_model_for_policy(provider_policy: Mapping[str, object], *, env: Mapping[str, str] | None = None) -> str:
-    models = openrouter_models_for_policy(provider_policy, env=env)
+def primary_model_for_policy(provider_policy: Mapping[str, object], *, env: Mapping[str, str] | None = None, live: bool = False) -> str:
+    models = openrouter_models_for_policy(provider_policy, env=env, live=live)
     return models[0] if models else ""
 
 
-def openrouter_models_for_policy(provider_policy: Mapping[str, object], *, env: Mapping[str, str] | None = None) -> tuple[str, ...]:
-    config = openrouter_failover_config_from_policy(provider_policy, env=env)
+def openrouter_models_for_policy(provider_policy: Mapping[str, object], *, env: Mapping[str, str] | None = None, live: bool = False) -> tuple[str, ...]:
+    config = openrouter_failover_config_from_policy(provider_policy, env=env, live=live)
     if config is not None:
         return config.models
     model = str(provider_policy.get("model") or "").strip()
     return (model,) if model else ()
 
 
-def _validate_failover_config(config: OpenRouterFailoverConfig) -> None:
+def _validate_failover_config(config: OpenRouterFailoverConfig, *, env: Mapping[str, str] | None = None, live: bool = False) -> None:
     if config.provider != "openrouter":
         raise OpenRouterFailoverHardError(f"OpenRouter failover requires provider 'openrouter', got {config.provider!r}")
     if not config.models:
         raise OpenRouterFailoverHardError("OpenRouter failover requires at least one model")
-    unknown_models = [model for model in config.models if not known_model("openrouter", model)]
+    unknown_models = [model for model in config.models if not known_model("openrouter", model, env=env, live=live)]
     if unknown_models:
         raise OpenRouterFailoverHardError(f"OpenRouter failover models are unknown or unsupported: {', '.join(unknown_models)}")
     if config.max_failed_cycles < 1:

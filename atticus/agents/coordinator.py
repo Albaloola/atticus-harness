@@ -15,6 +15,8 @@ from typing import cast
 from atticus.core.policies import LegalStage, TaskStatus
 from atticus.core.tasks import TaskSpec
 from atticus.db import repo
+from atticus.providers.model_decision import ModelDecision
+from atticus.providers.model_policy import default_smart_model_policy, smart_provider_policy_for_route
 
 _SAFE_ID_RE = re.compile(r"[^A-Za-z0-9_.-]+")
 
@@ -32,6 +34,32 @@ class CoordinatorTaskTemplate:
     depends_on: tuple[str, ...] = ()
     verifier_required: bool = False
     risk_focus: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class AdaptivePlan:
+    matter_scope: str
+    goal: str
+    selected_stages: tuple[str, ...]
+    skipped_stages: tuple[dict[str, str], ...]
+    required_workers: tuple[str, ...]
+    required_gates: tuple[str, ...]
+    model_decisions: tuple[ModelDecision, ...]
+    tasks: tuple[TaskSpec, ...]
+    reasons: tuple[str, ...]
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "matter_scope": self.matter_scope,
+            "goal": self.goal,
+            "selected_stages": list(self.selected_stages),
+            "skipped_stages": list(self.skipped_stages),
+            "required_workers": list(self.required_workers),
+            "required_gates": list(self.required_gates),
+            "model_decisions": [decision.__dict__ for decision in self.model_decisions],
+            "tasks": [task.__dict__ for task in self.tasks],
+            "reasons": list(self.reasons),
+        }
 
 
 def plan_coordinator_work(
@@ -104,6 +132,7 @@ def plan_coordinator_work(
                         "coordinator_goal": clean_goal,
                         "stale_dependency_blocks": True,
                     },
+                    provider_policy=dict(cast(Mapping[str, object], task["provider_policy"])),
                 ),
             )
             created.append(task_id)
@@ -132,6 +161,96 @@ def plan_coordinator_work(
         "candidate_outputs_created": 0,
         "canonical_writes": 0,
     }
+
+
+def plan_adaptive_work(
+    conn: sqlite3.Connection,
+    *,
+    matter_scope: str,
+    goal: str,
+    source_ids: Iterable[str] = (),
+    artifact_ids: Iterable[str] = (),
+    prior_work_state: Mapping[str, object] | None = None,
+) -> AdaptivePlan:
+    """Return an explicit adaptive plan without writing tasks.
+
+    The existing coordinator already chooses different worker templates by
+    goal. This wrapper exposes that decision as an auditable data model and
+    records why stages are selected or skipped.
+    """
+
+    clean_goal = " ".join(goal.split()).strip()
+    if not clean_goal:
+        raise ValueError("adaptive plan goal is required")
+    sources = _dedupe(source_ids)
+    artifacts = _dedupe(artifact_ids)
+    _validate_dependencies(conn, matter_scope=matter_scope, source_ids=sources, artifact_ids=artifacts)
+    templates = _templates_for_goal(clean_goal)
+    goal_slug = _safe_component(clean_goal.lower())[:72] or "legal-work"
+    task_id_by_key = {template.key: _safe_component(f"{matter_scope}-adapt-{goal_slug}-{template.key}") for template in templates}
+    task_payloads = [
+        _task_from_template(
+            template,
+            task_id=task_id_by_key[template.key],
+            matter_scope=matter_scope,
+            goal=clean_goal,
+            source_ids=sources,
+            artifact_ids=artifacts,
+            task_dependencies=[task_id_by_key[key] for key in template.depends_on],
+        )
+        for template in templates
+    ]
+    selected = tuple(sorted({str(task["stage"]) for task in task_payloads}))
+    skipped = tuple(
+        {"stage": stage.value, "reason": _skip_reason(stage.value, selected, clean_goal, prior_work_state or {})}
+        for stage in LegalStage
+        if stage.value not in selected
+    )
+    decisions = tuple(
+        cast(ModelDecision, cast(Mapping[str, object], task["provider_policy"]).get("model_decision"))
+        for task in task_payloads
+        if isinstance(cast(Mapping[str, object], task["provider_policy"]).get("model_decision"), ModelDecision)
+    )
+    # smart_provider_policy_for_route serializes decisions to dictionaries; rebuild
+    # the dataclass shape for this plan surface.
+    rebuilt_decisions: list[ModelDecision] = []
+    for task in task_payloads:
+        raw = cast(Mapping[str, object], task["provider_policy"]).get("model_decision")
+        if isinstance(raw, Mapping):
+            rebuilt_decisions.append(ModelDecision(**{key: raw[key] for key in ModelDecision.__dataclass_fields__ if key in raw}))
+    task_specs = tuple(
+        TaskSpec(
+            task_id=str(task["task_id"]),
+            title=str(task["title"]),
+            task_type=str(task["task_type"]),
+            instructions=str(task["instructions"]),
+            matter_scope=matter_scope,
+            stage=LegalStage(str(task["stage"])),
+            status=TaskStatus.QUEUED,
+            source_dependencies=list(sources),
+            artifact_dependencies=list(artifacts),
+            task_dependencies=_string_list(task, "task_dependencies"),
+            validation_gates=_string_list(task, "validation_gates"),
+            required_certifications=[
+                {"subject_type": "matter", "subject_id": matter_scope, "certification_type": cert}
+                for cert in _string_list(task, "required_certifications")
+            ],
+            provider_policy=dict(cast(Mapping[str, object], task["provider_policy"])),
+        )
+        for task in task_payloads
+    )
+    reasons = tuple(_adaptive_reasons(clean_goal, templates, prior_work_state or {}))
+    return AdaptivePlan(
+        matter_scope=matter_scope,
+        goal=clean_goal,
+        selected_stages=selected,
+        skipped_stages=skipped,
+        required_workers=tuple(template.role for template in templates),
+        required_gates=tuple(sorted({gate for template in templates for gate in template.validation_gates})),
+        model_decisions=tuple(rebuilt_decisions) or decisions,
+        tasks=task_specs,
+        reasons=reasons,
+    )
 
 
 def _templates_for_goal(goal: str) -> tuple[CoordinatorTaskTemplate, ...]:
@@ -340,11 +459,24 @@ def _task_from_template(
     artifact_ids: tuple[str, ...],
     task_dependencies: list[str],
 ) -> dict[str, object]:
+    stage = str(template.stage)
+    provider_policy = smart_provider_policy_for_route(
+        default_smart_model_policy(),
+        layer=_model_layer_for_template(template),
+        stage=stage,
+        task_type=template.task_type,
+        task_id=task_id,
+        matter_scope=matter_scope,
+        authority_required=template.stage == LegalStage.S6_AUTHORITY_LAW_MAP or "authority_support" in template.validation_gates,
+        hostile_review_required=template.verifier_required or "hostile_review" in template.validation_gates,
+        source_count=len(source_ids),
+        requested_capabilities=tuple(template.validation_gates),
+    )
     return {
         "task_id": task_id,
         "matter_scope": matter_scope,
         "status": str(TaskStatus.QUEUED),
-        "stage": str(template.stage),
+        "stage": stage,
         "role": template.role,
         "task_type": template.task_type,
         "title": template.title,
@@ -363,7 +495,46 @@ def _task_from_template(
         "required_certifications": list(template.required_certifications),
         "verifier_required": template.verifier_required,
         "risk_focus": list(template.risk_focus),
+        "provider_policy": provider_policy,
     }
+
+
+def _model_layer_for_template(template: CoordinatorTaskTemplate) -> str:
+    if template.role == "reducer":
+        return "reducer"
+    if template.role == "hostile_reviewer" or template.task_type in {"hostile_opponent_review", "hostile_review"}:
+        return "hostile_review"
+    if template.verifier_required:
+        return "verifier"
+    return "worker"
+
+
+def _skip_reason(stage: str, selected: tuple[str, ...], goal: str, prior_work_state: Mapping[str, object]) -> str:
+    if stage in selected:
+        return ""
+    if stage in {"S6", "S7", "S8", "S9"} and not any(term in goal.lower() for term in ("authority", "draft", "complaint", "filing", "hostile", "review")):
+        return "high-risk legal/review stage not needed for this goal"
+    if bool(prior_work_state.get("reset_to_default")):
+        return "profile reset requested; use default coordinator path before adding adaptive stages"
+    return "not selected by matter-local adaptive planner"
+
+
+def _adaptive_reasons(
+    goal: str,
+    templates: tuple[CoordinatorTaskTemplate, ...],
+    prior_work_state: Mapping[str, object],
+) -> list[str]:
+    reasons = [f"selected {len(templates)} worker templates for goal"]
+    if any(template.task_type == "authority_map" for template in templates):
+        reasons.append("authority question requires S6 authority mapping and verifier review")
+    if any(template.task_type == "hostile_opponent_review" for template in templates):
+        reasons.append("drafting or high-risk review goal requires hostile review")
+    if int(prior_work_state.get("contradiction_count") or 0) > 0:
+        reasons.append("contradiction-heavy matter requires contradiction-aware Pro review")
+    if "draft" not in goal.lower() and all(template.stage not in {LegalStage.S8_DRAFT_PREPARATION, LegalStage.S9_FINAL_QUALITY_GATE} for template in templates):
+        reasons.append("no final draft intent detected, so S8/S9 are not spun up")
+    reasons.append("external actions remain blocked and canonical writes remain reducer-only")
+    return reasons
 
 
 def _instructions_for(

@@ -9,12 +9,99 @@ import math
 from pathlib import Path
 from typing import cast
 
+from atticus.providers.anthropic import (
+    ANTHROPIC_OAUTH_PROVIDER,
+    ANTHROPIC_PROVIDER,
+    ANTHROPIC_RUNTIME,
+    ENV_ANTHROPIC_API_KEY,
+    ENV_ANTHROPIC_OAUTH_TOKEN,
+    ENV_ENABLE_LIVE_ANTHROPIC,
+    resolve_anthropic_model,
+)
 from atticus.providers.deepseek import known_model
 from atticus.providers.policy import canonical_provider_policy
 
 
 class ModelPolicyError(ValueError):
     """Raised when a model routing policy is not safe to use."""
+
+
+DEFAULT_SMART_POLICY_PAYLOAD: dict[str, object] = {
+    "version": 1,
+    "profiles": {
+        "deepseek_flash_or": {
+            "provider": "openrouter",
+            "model": "deepseek/deepseek-v4-flash",
+            "runtime": "openrouter",
+            "allow_fallback": False,
+            "estimated_cost_usd": 0.01,
+            "capabilities": ["triage", "indexing", "structured_extraction"],
+        },
+        "deepseek_pro_or": {
+            "provider": "openrouter",
+            "model": "deepseek/deepseek-v4-pro",
+            "runtime": "openrouter",
+            "allow_fallback": False,
+            "estimated_cost_usd": 0.03,
+            "capabilities": ["legal_reasoning", "hostile_review", "synthesis"],
+        },
+        "gpt55_codex": {
+            "provider": "openai-codex",
+            "model": "gpt-5.5",
+            "runtime": "codex",
+            "allow_fallback": False,
+            "estimated_cost_usd": 0.0,
+            "capabilities": ["coding_agent", "schema_migration"],
+        },
+        "anthropic_opus_reserved": {
+            "provider": ANTHROPIC_PROVIDER,
+            "model": "opus",
+            "runtime": ANTHROPIC_RUNTIME,
+            "allow_fallback": False,
+            "estimated_cost_usd": 0.0,
+            "capabilities": ["reserved_high_reasoning"],
+            "reserved": True,
+            "enabled": False,
+        },
+        "anthropic_sonnet_reserved": {
+            "provider": ANTHROPIC_PROVIDER,
+            "model": "sonnet",
+            "runtime": ANTHROPIC_RUNTIME,
+            "allow_fallback": False,
+            "estimated_cost_usd": 0.0,
+            "capabilities": ["reserved_balanced_reasoning"],
+            "reserved": True,
+            "enabled": False,
+        },
+    },
+    "routes": {
+        "default": "deepseek_flash_or",
+        "layers": {
+            "worker": "deepseek_flash_or",
+            "subagent": "deepseek_flash_or",
+            "orchestrator": "deepseek_pro_or",
+            "reducer": "deepseek_pro_or",
+            "hostile_review": "deepseek_pro_or",
+            "verifier": "deepseek_pro_or",
+        },
+        "stages": {
+            "S0": "deepseek_flash_or",
+            "S1": "deepseek_flash_or",
+            "S5": "deepseek_pro_or",
+            "S6": "deepseek_pro_or",
+            "S7": "deepseek_pro_or",
+            "S8": "deepseek_pro_or",
+            "S9": "deepseek_pro_or",
+        },
+        "task_types": {
+            "source_inventory": "deepseek_flash_or",
+            "schema_migration": "gpt55_codex",
+            "coding_agent": "gpt55_codex",
+            "harness_self_improvement": "gpt55_codex",
+            "hostile_opponent_review": "deepseek_pro_or",
+        },
+    },
+}
 
 
 @dataclass(frozen=True)
@@ -29,6 +116,8 @@ class ModelProfile:
     temperature: float | None = None
     timeout_seconds: float | None = None
     capabilities: tuple[str, ...] = ()
+    reserved: bool = False
+    enabled: bool = True
 
     def as_dict(self) -> dict[str, object]:
         payload: dict[str, object] = {
@@ -39,6 +128,8 @@ class ModelProfile:
             "allow_fallback": self.allow_fallback,
             "estimated_cost_usd": self.estimated_cost_usd,
             "capabilities": list(self.capabilities),
+            "reserved": self.reserved,
+            "enabled": self.enabled,
         }
         if self.max_tokens is not None:
             payload["max_tokens"] = self.max_tokens
@@ -149,6 +240,12 @@ def load_model_routing_policy(value: Mapping[str, object] | str | Path) -> Model
     return policy
 
 
+def default_smart_model_policy() -> ModelRoutingPolicy:
+    """Return the built-in fail-closed smart routing policy."""
+
+    return load_model_routing_policy(cast(dict[str, object], json.loads(json.dumps(DEFAULT_SMART_POLICY_PAYLOAD, sort_keys=True))))
+
+
 def normalize_legacy_provider_policy(provider_policy: Mapping[str, object]) -> ModelRoutingPolicy:
     """Wrap an existing flat task provider policy as a single-profile route."""
 
@@ -185,6 +282,84 @@ def provider_policy_for_route(
     payload = _provider_policy_for_target(policy, target)
     if include_routing and not _is_normalized_legacy_policy(policy):
         payload["model_routing"] = policy.as_dict()
+    return payload
+
+
+def smart_provider_policy_for_route(
+    policy: ModelRoutingPolicy,
+    *,
+    layer: str = "",
+    stage: str = "",
+    task_type: str = "",
+    task_id: str = "",
+    matter_scope: str = "atticus",
+    risk_level: str = "unknown",
+    legal_complexity: str = "unknown",
+    evidence_volume: str = "unknown",
+    authority_required: bool = False,
+    hostile_review_required: bool = False,
+    drafting_finality: str = "",
+    contradiction_count: int = 0,
+    unresolved_uncertainty_count: int = 0,
+    source_count: int = 0,
+    extracted_char_count: int = 0,
+    expected_value: float = 0.0,
+    requested_capabilities: tuple[str, ...] = (),
+    operator_override: str | None = None,
+) -> dict[str, object]:
+    """Resolve a policy with the deterministic model decision layer attached."""
+
+    from atticus.providers.model_decision import ModelDecisionInput, ModelRoutingPolicyLike, decide_model
+
+    decision = decide_model(
+        cast(ModelRoutingPolicyLike, cast(object, policy)),
+        ModelDecisionInput(
+            matter_scope=matter_scope,
+            task_id=task_id,
+            stage=stage,
+            task_type=task_type,
+            layer=layer,
+            risk_level=risk_level,
+            legal_complexity=legal_complexity,
+            evidence_volume=evidence_volume,
+            authority_required=authority_required,
+            hostile_review_required=hostile_review_required,
+            drafting_finality=drafting_finality,
+            contradiction_count=contradiction_count,
+            unresolved_uncertainty_count=unresolved_uncertainty_count,
+            source_count=source_count,
+            extracted_char_count=extracted_char_count,
+            expected_value=expected_value,
+            requested_capabilities=requested_capabilities,
+            operator_override=operator_override,
+        ),
+    )
+    if decision.decision_tier == "blocked":
+        return {
+            "provider": decision.provider,
+            "model": decision.model,
+            "runtime": decision.runtime,
+            "allow_fallback": False,
+            "model_decision": decision.__dict__,
+            "model_decision_reason": decision.decision_reason,
+            "blocked": True,
+        }
+    if decision.profile_id not in policy.profiles:
+        return {
+            "provider": "blocked",
+            "model": "blocked",
+            "runtime": "blocked",
+            "allow_fallback": False,
+            "model_decision": decision.__dict__,
+            "model_decision_reason": decision.decision_reason,
+            "blocked": True,
+        }
+    payload = _provider_policy_for_target(policy, decision.profile_id)
+    if not _is_normalized_legacy_policy(policy):
+        payload["model_routing"] = policy.as_dict()
+    payload["model_decision"] = decision.__dict__
+    payload["model_decision_reason"] = decision.decision_reason
+    payload["allow_fallback"] = decision.fallback_allowed
     return payload
 
 
@@ -250,6 +425,17 @@ def resolve_provider_policy_from_parent(
     routing_raw = parent_provider_policy.get("model_routing")
     if isinstance(routing_raw, Mapping):
         policy = load_model_routing_policy(cast(Mapping[str, object], routing_raw))
+        if _parent_uses_smart_decision(parent_provider_policy):
+            return smart_provider_policy_for_route(
+                policy,
+                layer=layer,
+                stage=str(proposed_task.get("stage") or ""),
+                task_type=str(proposed_task.get("task_type") or ""),
+                task_id=str(proposed_task.get("task_id") or ""),
+                matter_scope=str(proposed_task.get("matter_scope") or "atticus"),
+                expected_value=_float_value(proposed_task.get("expected_value"), default=0.0),
+                requested_capabilities=_string_tuple_or_empty(proposed_task.get("validation_gates")),
+            )
         return provider_policy_for_route(
             policy,
             layer=layer,
@@ -260,6 +446,10 @@ def resolve_provider_policy_from_parent(
     if _is_legacy_flat_provider_policy(parent_provider_policy):
         return dict(parent_provider_policy)
     return {}
+
+
+def _parent_uses_smart_decision(parent_provider_policy: Mapping[str, object]) -> bool:
+    return "model_decision" in parent_provider_policy or "model_decision_reason" in parent_provider_policy
 
 
 def _provider_policy_for_target(policy: ModelRoutingPolicy, target: str) -> dict[str, object]:
@@ -311,6 +501,16 @@ def _profile_provider_policy(profile: ModelProfile, *, pool_id: str | None) -> d
             "runtime": profile.runtime,
         },
     }
+    if profile.provider in {ANTHROPIC_PROVIDER, ANTHROPIC_OAUTH_PROVIDER}:
+        payload["reserved"] = True
+        payload["enabled"] = profile.enabled
+        payload["blocked"] = True
+        payload["blocked_reason"] = f"profile {profile.profile_id} uses reserved Anthropic provider surface"
+    elif profile.reserved or not profile.enabled:
+        payload["reserved"] = profile.reserved
+        payload["enabled"] = profile.enabled
+        payload["blocked"] = True
+        payload["blocked_reason"] = f"profile {profile.profile_id} is reserved and disabled"
     if pool_id is not None:
         payload["model_pool_id"] = pool_id
     if profile.max_tokens is not None:
@@ -349,8 +549,39 @@ def _parse_profile(profile_id: str, raw: object) -> ModelProfile:
     if provider == "openai-codex" and model == "openai-codex/gpt-5.5":
         model = "gpt-5.5"
     runtime = _required_text(raw_map.get("runtime") or _runtime_for_provider(provider), f"profiles.{profile_id}.runtime")
+    reserved = bool(raw_map.get("reserved") or False)
+    enabled = bool(raw_map.get("enabled", True))
     if provider == "deepseek" or runtime == "deepseek":
         raise ModelPolicyError("direct DeepSeek runtime is not supported; use provider openrouter with deepseek/... model ids")
+    if provider in {ANTHROPIC_PROVIDER, ANTHROPIC_OAUTH_PROVIDER}:
+        if runtime != ANTHROPIC_RUNTIME:
+            raise ModelPolicyError(f"profile {profile_id} runtime {runtime!r} does not match provider {provider!r}")
+        if not known_model(provider, model):
+            raise ModelPolicyError(f"unknown or unsupported model: {provider}/{model}")
+        if not reserved and enabled:
+            concrete_model = resolve_anthropic_model(model)
+            if not concrete_model:
+                raise ModelPolicyError("enabled Anthropic profile requires a concrete configured model id")
+            import os
+
+            if os.environ.get(ENV_ENABLE_LIVE_ANTHROPIC) != "1":
+                raise ModelPolicyError(f"enabled Anthropic profile requires {ENV_ENABLE_LIVE_ANTHROPIC}=1")
+            if not (os.environ.get(ENV_ANTHROPIC_API_KEY) or os.environ.get(ENV_ANTHROPIC_OAUTH_TOKEN)):
+                raise ModelPolicyError("enabled Anthropic profile requires an API key or OAuth token")
+        return ModelProfile(
+            profile_id=profile_id,
+            provider=provider,
+            model=model,
+            runtime=runtime,
+            allow_fallback=False,
+            estimated_cost_usd=_float_value(raw_map.get("estimated_cost_usd"), default=0.0),
+            max_tokens=_optional_int(raw_map.get("max_tokens")),
+            temperature=_optional_float(raw_map.get("temperature")),
+            timeout_seconds=_optional_float(raw_map.get("timeout_seconds")),
+            capabilities=_string_tuple(raw_map.get("capabilities")),
+            reserved=reserved or not enabled,
+            enabled=enabled,
+        )
     if not known_model(provider, model):
         raise ModelPolicyError(f"unknown or unsupported model: {provider}/{model}")
     expected_runtime = _runtime_for_provider(provider)
@@ -373,6 +604,8 @@ def _parse_profile(profile_id: str, raw: object) -> ModelProfile:
         temperature=_optional_float(raw_map.get("temperature")),
         timeout_seconds=_optional_float(raw_map.get("timeout_seconds")),
         capabilities=_string_tuple(raw_map.get("capabilities")),
+        reserved=reserved,
+        enabled=enabled,
     )
 
 
@@ -442,6 +675,8 @@ def _runtime_for_provider(provider: str) -> str:
         return "openrouter"
     if provider == "openai-codex":
         return "codex"
+    if provider in {ANTHROPIC_PROVIDER, ANTHROPIC_OAUTH_PROVIDER}:
+        return ANTHROPIC_RUNTIME
     raise ModelPolicyError(f"unsupported provider for model routing: {provider or 'unset'}")
 
 
@@ -480,6 +715,15 @@ def _string_tuple(value: object) -> tuple[str, ...]:
         if text:
             values.append(text)
     return tuple(values)
+
+
+def _string_tuple_or_empty(value: object) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    try:
+        return _string_tuple(value)
+    except ModelPolicyError:
+        return ()
 
 
 def _required_text(value: object, name: str) -> str:

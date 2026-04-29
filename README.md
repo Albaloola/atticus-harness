@@ -202,11 +202,25 @@ Normal provider/model routes:
   `provider="openrouter"`, `model="deepseek/deepseek-v4-flash"`
 - OpenRouter DeepSeek Pro:
   `provider="openrouter"`, `model="deepseek/deepseek-v4-pro"`
-- Other models: `provider="openrouter"`, `model="<openrouter model id>"`
+- Reserved Anthropic aliases: `provider="anthropic"`, `model="opus"`,
+  `model="opus-4.7"`, `model="sonnet"`, or `model="sonnet-4.7"`, with
+  `reserved=true` and `enabled=false`
 
 Direct `provider="deepseek"` is legacy metadata only for this harness until a
 direct adapter is explicitly implemented and tested. It is not selected by
 normal policy surfaces.
+
+OpenRouter free models are held inventory, not routable defaults. Non-live tests
+can opt in with `ATTICUS_ENABLE_HELD_OPENROUTER_MODELS=1`; live use also
+requires `ATTICUS_ALLOW_HELD_MODELS_FOR_LIVE=1`. Without both gates, held models
+fail closed before provider work.
+
+Anthropic support is reserved policy surface only. Live Anthropic execution is
+not enabled by default and is not selected by smart routing. Concrete live
+model IDs must be supplied through `ATTICUS_ANTHROPIC_OPUS_MODEL` or
+`ATTICUS_ANTHROPIC_SONNET_MODEL`, plus `ATTICUS_ENABLE_LIVE_ANTHROPIC=1` and
+either `ATTICUS_ANTHROPIC_API_KEY` or `ATTICUS_ANTHROPIC_OAUTH_TOKEN`; tokens
+are never logged by the adapter.
 
 Validate and resolve model policies:
 
@@ -219,6 +233,17 @@ python -m atticus.cli model-policy resolve \
   --stage S7 \
   --layer hostile_review \
   --task-type citation_audit
+
+python -m atticus.cli model-policy decide \
+  --policy-file tests/fixtures/model_policies/deepseek_smart_default.json \
+  --stage S7 \
+  --layer hostile_review \
+  --task-type hostile_opponent_review
+
+python -m atticus.cli model-policy decide \
+  --db data/atticus.sqlite3 \
+  --task-id TASK_ID \
+  --json
 ```
 
 Set all queued tasks for a matter:
@@ -227,13 +252,19 @@ Set all queued tasks for a matter:
 python -m atticus.cli set-provider-policy \
   --db data/atticus.sqlite3 \
   --matter MATTER \
-  --policy-file tests/fixtures/model_policies/layered_openrouter_pool.json \
+  --smart-defaults \
   --write
 ```
 
 Flat fallback is blocked. To use fallback, configure a model-routing pool.
 There is no silent fallback to OpenRouter free models, DeepSeek, Codex, local
 stub, or any other provider/model.
+
+Smart defaults are deterministic and audit-only. They choose Flash for routine
+worker tasks, Pro for orchestration/high-risk/legal reasoning/hostile review,
+Codex for code/schema harness tasks, and blocked for reserved or unsafe routes.
+Every smart work order includes `model_decision`, fingerprints, and the decision
+reason.
 
 ## OpenRouter Failover And Cache Telemetry
 
@@ -243,7 +274,7 @@ explicit when live failover is intended:
 
 ```bash
 ATTICUS_OPENROUTER_FAILOVER_ENABLED=1 \
-ATTICUS_OPENROUTER_FAILOVER_MODELS="qwen/qwen3-coder:free,openai/gpt-oss-120b:free" \
+ATTICUS_OPENROUTER_FAILOVER_MODELS="deepseek/deepseek-v4-flash,deepseek/deepseek-v4-pro" \
 python -m atticus.cli live-resume --db data/atticus.sqlite3 --probe --write-leases
 ```
 
@@ -252,8 +283,10 @@ failover path, and records the final requested model in provider telemetry.
 
 OpenRouter DeepSeek prompt caching is provider-side and automatic when the
 selected endpoint supports it. The harness records returned cache usage into
-`provider_runs.cache_hit_tokens` and `provider_runs.cache_miss_tokens` when
-OpenRouter returns `usage.prompt_tokens_details.cached_tokens`.
+`provider_runs.cache_hit_tokens`, `provider_runs.cache_write_tokens`,
+`provider_runs.cache_miss_tokens`, and `prompt_cache_observations` when
+OpenRouter returns prompt-cache telemetry. Cache telemetry is never evidence of
+legal correctness.
 
 OpenRouter response caching is a separate request-level feature. It is not
 enabled silently because legal outputs must remain tied to explicit operator
@@ -322,6 +355,104 @@ Coordinator-created tasks persist task-specific instructions in
 `tasks.instructions`; work orders and context packs include those instructions.
 Drafting goals include evidence mapping, draft preparation, citation audit,
 hostile review, privacy/redaction audit, and final quality gate tasks.
+
+## Matter Profiles, Orchestrators, And Work Runs
+
+Matter profiles are matter-local adaptive stage profiles. New matters can start
+with the default S0-S9 structure, then propose/apply/reset adaptations without
+mutating global defaults. Adaptation cannot disable citation/evidence/reducer
+guardrails, enable external actions, route high-risk legal work to held/free
+models, or remove human review from S8/S9.
+
+```bash
+python -m atticus.cli matter-profile show \
+  --db data/atticus.sqlite3 \
+  --matter MATTER \
+  --json
+
+python -m atticus.cli matter-profile propose \
+  --db data/atticus.sqlite3 \
+  --matter MATTER \
+  --goal "Inventory priority sources" \
+  --json
+
+python -m atticus.cli matter-profile apply \
+  --db data/atticus.sqlite3 \
+  --matter MATTER \
+  --profile-file proposed-profile.json \
+  --write
+
+python -m atticus.cli matter-profile reset \
+  --db data/atticus.sqlite3 \
+  --matter MATTER \
+  --write
+```
+
+Matter orchestrators are durable state records for planning ticks. They do not
+perform provider calls or external legal actions by themselves. Worker failures
+create matter-scoped human attention and `orchestrator.worker_failed` events;
+repair planning proposes a bounded next action such as context rebuild, verifier
+task, Pro review, profile adaptation, or human intervention.
+
+```bash
+python -m atticus.cli orchestrator status \
+  --db data/atticus.sqlite3 \
+  --matter MATTER \
+  --json
+
+python -m atticus.cli orchestrator tick \
+  --db data/atticus.sqlite3 \
+  --matter MATTER \
+  --capacity 5
+
+python -m atticus.cli orchestrator tick \
+  --db data/atticus.sqlite3 \
+  --matter MATTER \
+  --capacity 5 \
+  --write
+
+python -m atticus.cli orchestrator failures \
+  --db data/atticus.sqlite3 \
+  --matter MATTER \
+  --json
+```
+
+Work runs are resumable operator-visible runs. Steps can be reused only by the
+same matter and non-stale work records; reuse is telemetry/orientation, not
+validation. Resume tokens survive interruptions and let follow-up work see what
+was attempted, what produced artifacts/candidates/context packs, and what must
+be rechecked.
+
+```bash
+python -m atticus.cli work-run start \
+  --db data/atticus.sqlite3 \
+  --matter MATTER \
+  --goal "Inventory priority sources" \
+  --write
+
+python -m atticus.cli work-run status \
+  --db data/atticus.sqlite3 \
+  --matter MATTER \
+  --json
+
+python -m atticus.cli work-run resume \
+  --db data/atticus.sqlite3 \
+  --matter MATTER \
+  --resume-token RESUME_TOKEN \
+  --json
+
+python -m atticus.cli work-run reusable \
+  --db data/atticus.sqlite3 \
+  --matter MATTER \
+  --goal "Inventory priority sources" \
+  --json
+
+python -m atticus.cli work-run export \
+  --db data/atticus.sqlite3 \
+  --matter MATTER \
+  --work-run-id WORK_RUN_ID \
+  --json
+```
 
 ## Context And Source Delivery
 

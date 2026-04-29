@@ -6,6 +6,8 @@ from typing import cast
 import json
 import sqlite3
 
+import pytest
+
 from atticus.cli import main as cli_main
 from atticus.db import repo
 from atticus.hooks import run_hooks
@@ -38,8 +40,9 @@ def test_session_records_user_message_before_provider_references(tmp_path: Path)
     assert event_count == 1
 
 
-def test_session_cli_list_show_export(tmp_path: Path, capsys):
+def test_session_cli_list_show_export(tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch):
     db_path = init_db(tmp_path)
+    monkeypatch.setenv("ATTICUS_AUTHORIZED_MATTER", "alpha")
     with repo.db_connection(db_path) as conn:
         session_id = repo.create_session(conn, matter_scope="alpha", title="Session CLI")
         _ = repo.record_session_message(conn, session_id=session_id, role="user", content={"text": "hello"})
@@ -49,24 +52,37 @@ def test_session_cli_list_show_export(tmp_path: Path, capsys):
     sessions = cast(list[Mapping[str, object]], listed["sessions"])
     assert sessions[0]["session_id"] == session_id
 
-    assert cli_main(["session", "show", session_id, "--db", str(db_path)]) == 0
+    assert cli_main(["session", "show", session_id, "--db", str(db_path), "--matter", "alpha"]) == 0
     shown = cast(Mapping[str, object], json.loads(capsys.readouterr().out))
     shown_session = cast(Mapping[str, object], shown["session"])
     assert shown_session["title"] == "Session CLI"
 
-    assert cli_main(["session", "export", session_id, "--db", str(db_path)]) == 0
+    assert cli_main(["session", "export", session_id, "--db", str(db_path), "--matter", "alpha"]) == 0
     exported = cast(Mapping[str, object], json.loads(capsys.readouterr().out))
     messages = cast(list[Mapping[str, object]], exported["messages"])
     assert messages[0]["role"] == "user"
 
-    assert cli_main(["session", "resume", session_id, "--db", str(db_path)]) == 0
+    assert cli_main(["session", "resume", session_id, "--db", str(db_path), "--matter", "alpha"]) == 0
     resumed = cast(Mapping[str, object], json.loads(capsys.readouterr().out))
     resume = cast(Mapping[str, object], resumed["resume"])
     assert resume["provider_replay"] is False
 
 
-def test_session_list_is_safe_on_older_db_without_session_tables(tmp_path: Path, capsys):
+def test_session_cli_rejects_cross_matter_export(tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch):
+    db_path = init_db(tmp_path)
+    monkeypatch.setenv("ATTICUS_AUTHORIZED_MATTER", "beta")
+    with repo.db_connection(db_path) as conn:
+        session_id = repo.create_session(conn, matter_scope="alpha", title="Alpha session")
+        _ = repo.record_session_message(conn, session_id=session_id, role="user", content={"text": "secret alpha"})
+
+    assert cli_main(["session", "export", session_id, "--db", str(db_path), "--matter", "alpha"]) == 2
+    error = cast(Mapping[str, object], json.loads(capsys.readouterr().err))
+    assert "not authorized" in str(error["error"])
+
+
+def test_session_list_is_safe_on_older_db_without_session_tables(tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch):
     db_path = tmp_path / "old.sqlite3"
+    monkeypatch.setenv("ATTICUS_AUTHORIZED_MATTER", "alpha")
     sqlite3.connect(db_path).close()
 
     assert cli_main(["session", "list", "--db", str(db_path), "--matter", "alpha"]) == 0
