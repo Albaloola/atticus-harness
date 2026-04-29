@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+import json
 import sqlite3
 
 from atticus.core.policies import LegalStage, TaskStatus
@@ -50,6 +51,10 @@ def validate_subagent_spec(conn: sqlite3.Connection, spec: SubagentSpec) -> None
     parent_matter = repo.matter_scope_for_target(conn, target_type="task", target_id=spec.parent_task_id)
     if parent_matter != spec.matter_scope:
         raise ValueError("subagent parent task must belong to the same matter")
+    parent_row = conn.execute("SELECT task_provenance_json FROM tasks WHERE task_id = ?", (spec.parent_task_id,)).fetchone()
+    parent_provenance = _json_object(str(parent_row["task_provenance_json"] or "{}")) if parent_row is not None else {}
+    if parent_provenance.get("cache_sharing_group_id") or parent_provenance.get("parent_task_id"):
+        raise ValueError("recursive subagent spawning requires explicit orchestrator approval")
     for source_id in spec.allowed_source_ids:
         source_matter = repo.matter_scope_for_target(conn, target_type="source", target_id=source_id)
         if source_matter != spec.matter_scope:
@@ -61,8 +66,16 @@ def validate_subagent_spec(conn: sqlite3.Connection, spec: SubagentSpec) -> None
     forbidden = sorted(set(spec.tools).intersection(FORBIDDEN_SUBAGENT_TOOLS))
     if forbidden:
         raise ValueError(f"subagent tools are not allowed: {', '.join(forbidden)}")
+    if spec.model_decision.fallback_allowed:
+        raise ValueError("subagent provider fallback is not allowed")
+    if spec.model_decision.decision_tier == "blocked" or spec.model_decision.provider == "blocked" or spec.model_decision.model == "blocked":
+        raise ValueError("subagent cannot use a blocked model decision")
+    if spec.model_decision.provider in {"anthropic", "anthropic-oauth"} or spec.model_decision.runtime == "anthropic":
+        raise ValueError("subagent cannot use reserved Anthropic provider policies")
     if is_held_openrouter_model(spec.model_decision.model):
         raise ValueError("subagent cannot use held/free OpenRouter models")
+    if spec.model_decision.model == "deepseek/deepseek-v4-pro" and spec.model_decision.decision_tier != "pro_orchestrator":
+        raise ValueError("subagent cannot choose Pro unless the decision layer selected Pro")
     if spec.model_decision.decision_tier == "pro_orchestrator" and spec.model_decision.profile_id == "":
         raise ValueError("subagent cannot choose Pro without a recorded model decision")
     if spec.max_turns < 1:
@@ -127,6 +140,12 @@ def create_subagent_task(
 
 
 def _json(value: object) -> str:
-    import json
-
     return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False, default=str)
+
+
+def _json_object(text: str) -> dict[str, object]:
+    try:
+        loaded = json.loads(text)
+    except json.JSONDecodeError:
+        return {}
+    return dict(loaded) if isinstance(loaded, Mapping) else {}

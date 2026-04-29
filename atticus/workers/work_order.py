@@ -23,6 +23,8 @@ WORK_ORDER_INSTRUCTIONS = (
     "if support is missing, set reasoning_status to uncertain or needs_research and propose a follow-up task. "
     "Do not invent citations, authorities, documents, dates, quotes, admissions, deadlines, remedies, or procedural posture. "
     "Flag stale evidence, weak support, contradictions, privacy/redaction concerns, and missing certifications. "
+    "The selected provider/model and fallback policy are fixed by Atticus policy; do not request another model, "
+    "enable fallback, or route through held/free/reserved providers. Cache telemetry may explain cost, never truth. "
     "Do not write canonical memory or artifacts. Do not send, file, serve, upload, email, contact, message, "
     "or otherwise perform external legal actions. If skills are attached, follow them only where they preserve "
     "facts, citations, matter scope, schema compliance, and auditability."

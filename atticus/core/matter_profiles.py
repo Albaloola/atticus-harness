@@ -71,7 +71,6 @@ def propose_matter_profile_adaptation(
 ) -> MatterProfileAdaptation:
     """Return a deterministic dry-run profile proposal for one matter."""
 
-    _ = create_default_matter_profile(conn, matter_scope)
     state = evidence_state or {}
     goal_text = " ".join(goal.split()).strip()
     lowered = goal_text.lower()
@@ -211,11 +210,16 @@ def _validate_adaptation(adaptation: Mapping[str, object]) -> None:
         if model and is_held_openrouter_model(model):
             raise ValueError("matter profile adaptation cannot route to held/free OpenRouter models")
         if stage_name in {"S8", "S9"}:
-            if gate_policy.get("human_review_required") is False:
+            stage_enabled = bool(stage.get("enabled", True))
+            if gate_policy.get("human_review_required") is False or (stage_enabled and gate_policy.get("human_review_required") is not True):
                 raise ValueError("matter profile adaptation cannot remove human review from S8/S9")
             gates = set(_string_list(gate_policy.get("validation_gates")))
+            if stage_enabled and not gates:
+                raise ValueError("S8/S9 profile validation gates must retain mandatory safety gates")
             if gates and not gates.intersection({"citation_integrity", "legal_citation_integrity"}):
                 raise ValueError("S8/S9 profile validation gates must retain citation integrity")
+            if stage_enabled and not MANDATORY_S8_S9_GATES.issubset(gates):
+                raise ValueError("S8/S9 profile validation gates must retain mandatory safety gates")
             if stage_name == "S9" and model_policy.get("decision_tier") == "flash_worker" and gate_policy.get("human_review_required") is not True:
                 raise ValueError("S9 cannot route to Flash without required human review")
 
@@ -230,7 +234,10 @@ def _json_policy(value: object) -> dict[str, object]:
     if isinstance(value, Mapping):
         return {str(key): item for key, item in cast(Mapping[object, object], value).items()}
     if isinstance(value, str) and value.strip():
-        loaded = json.loads(value)
+        try:
+            loaded = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"matter profile policy JSON is invalid: {exc}") from exc
         if isinstance(loaded, Mapping):
             return {str(key): item for key, item in cast(Mapping[object, object], loaded).items()}
     return {}

@@ -23,7 +23,10 @@ def ensure_matter_orchestrator(conn: sqlite3.Connection, matter_scope: str) -> s
 
 
 def orchestrator_tick(conn: sqlite3.Connection, matter_scope: str, capacity: int, *, dry_run: bool = True) -> dict[str, object]:
-    orchestrator_id = ensure_matter_orchestrator(conn, matter_scope)
+    current = repo.get_matter_orchestrator(conn, matter_scope=matter_scope)
+    orchestrator_id = str(current["orchestrator_id"]) if current is not None else ""
+    if not dry_run and not orchestrator_id:
+        orchestrator_id = ensure_matter_orchestrator(conn, matter_scope)
     if not dry_run:
         _ = expire_leases(conn)
     candidates = _runnable_matter_tasks(conn, matter_scope=matter_scope, capacity=max(0, capacity))
@@ -54,6 +57,7 @@ def orchestrator_tick(conn: sqlite3.Connection, matter_scope: str, capacity: int
         "dry_run": dry_run,
         "matter_scope": matter_scope,
         "orchestrator_id": orchestrator_id,
+        "would_create_orchestrator": dry_run and not orchestrator_id,
         "capacity": capacity,
         "runnable_task_ids": [str(task["task_id"]) for task in candidates],
         "leased": leased,
@@ -62,12 +66,20 @@ def orchestrator_tick(conn: sqlite3.Connection, matter_scope: str, capacity: int
     }
 
 
-def report_worker_failure_to_orchestrator(conn: sqlite3.Connection, task_id: str, failure_reason: str) -> str:
+def report_worker_failure_to_orchestrator(
+    conn: sqlite3.Connection,
+    task_id: str,
+    failure_reason: str,
+    *,
+    matter_scope: str | None = None,
+) -> str:
     task = conn.execute("SELECT matter_scope FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
     if task is None:
         raise ValueError(f"unknown task: {task_id}")
-    matter_scope = str(task["matter_scope"])
-    orchestrator_id = ensure_matter_orchestrator(conn, matter_scope)
+    task_matter_scope = str(task["matter_scope"])
+    if matter_scope is not None and task_matter_scope != matter_scope:
+        raise ValueError(f"task {task_id} belongs to matter {task_matter_scope}, not {matter_scope}")
+    orchestrator_id = ensure_matter_orchestrator(conn, task_matter_scope)
     _ = repo.record_human_attention(
         conn,
         target_type="task",

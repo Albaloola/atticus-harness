@@ -236,13 +236,50 @@ def test_cli_matter_profile_orchestrator_and_work_run_smokes(tmp_path: Path):
     assert step_count == 1
 
 
+def test_cli_dry_run_profile_and_orchestrator_commands_do_not_create_state(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(conn, TaskSpec(task_id="napier-task", title="Napier", task_type="source_inventory", matter_scope="napier"))
+
+    assert cli_main(["matter-profile", "show", "--db", str(db_path), "--matter", "napier"]) == 0
+    assert cli_main(["matter-profile", "propose", "--db", str(db_path), "--matter", "napier", "--goal", "inventory"]) == 0
+    assert cli_main(["orchestrator", "tick", "--db", str(db_path), "--matter", "napier", "--capacity", "1"]) == 0
+
+    with repo.db_connection(db_path) as conn:
+        profile_count = _scalar_int(conn.execute("SELECT COUNT(*) AS n FROM matter_profiles WHERE matter_scope = 'napier'").fetchone())
+        orchestrator_count = _scalar_int(conn.execute("SELECT COUNT(*) AS n FROM matter_orchestrators WHERE matter_scope = 'napier'").fetchone())
+        lease_count = _scalar_int(conn.execute("SELECT COUNT(*) AS n FROM leases").fetchone())
+
+    assert profile_count == 0
+    assert orchestrator_count == 0
+    assert lease_count == 0
+
+
 def test_cli_work_run_commands_reject_wrong_matter(tmp_path: Path):
     db_path = init_db(tmp_path)
     with repo.db_connection(db_path) as conn:
         repo.add_task(conn, TaskSpec(task_id="beta-task", title="Beta", task_type="source_inventory", matter_scope="beta"))
         beta_work_run_id = repo.start_work_run(conn, matter_scope="beta", goal="beta work")
+        beta_resume_token = str(conn.execute("SELECT resume_token FROM work_runs WHERE work_run_id = ?", (beta_work_run_id,)).fetchone()["resume_token"])
         beta_step_id = repo.record_work_run_step(conn, work_run_id=beta_work_run_id, step_type="source_inventory", status="complete")
 
+    assert cli_main(["work-run", "resume", "--db", str(db_path), "--matter", "alpha", "--resume-token", beta_resume_token]) == 2
     assert cli_main(["work-run", "complete", "--db", str(db_path), "--matter", "alpha", "--work-run-id", beta_work_run_id, "--write"]) == 2
     assert cli_main(["work-run", "step", "--db", str(db_path), "--matter", "alpha", "--work-run-id", beta_work_run_id, "--step-type", "source_inventory", "--write"]) == 2
     assert cli_main(["work-run", "reuse", "--db", str(db_path), "--matter", "alpha", "--reused-from-step-id", beta_step_id, "--write"]) == 2
+
+
+def test_cli_orchestrator_worker_failed_rejects_wrong_matter(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(conn, TaskSpec(task_id="beta-task", title="Beta", task_type="source_inventory", matter_scope="beta"))
+
+    assert cli_main(["orchestrator", "worker-failed", "--db", str(db_path), "--matter", "alpha", "--task-id", "beta-task", "--reason", "failed"]) == 2
+    assert cli_main(["orchestrator", "worker-failed", "--db", str(db_path), "--matter", "alpha", "--task-id", "beta-task", "--reason", "failed", "--write"]) == 2
+
+    with repo.db_connection(db_path) as conn:
+        event_count = _scalar_int(conn.execute("SELECT COUNT(*) AS n FROM orchestrator_events").fetchone())
+        attention_count = _scalar_int(conn.execute("SELECT COUNT(*) AS n FROM human_attention").fetchone())
+
+    assert event_count == 0
+    assert attention_count == 0

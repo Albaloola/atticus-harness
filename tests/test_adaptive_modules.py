@@ -24,7 +24,7 @@ from atticus.core.tasks import TaskSpec
 from atticus.db import repo
 from atticus.providers.cache_observability import detect_prompt_cache_break, fingerprint_provider_policy
 from atticus.providers.model_decision import ModelDecision
-from atticus.retrieval.work_reuse import build_followup_context
+from atticus.retrieval.work_reuse import build_followup_context, explain_reuse_decision
 from atticus.work_runs import resume_work_run, start_work_run, summarize_reusable_work
 
 
@@ -66,6 +66,11 @@ def test_matter_profile_module_proposes_applies_resets_and_rejects_unsafe_change
         stages[8]["gate_policy"] = {"human_review_required": False}
         with pytest.raises(ValueError, match="human review"):
             apply_matter_profile_adaptation(conn, "alpha", unsafe, write=False)
+        unsafe_missing_gates = proposal.as_dict()
+        missing_gate_stages = cast(list[dict[str, object]], unsafe_missing_gates["stages"])
+        missing_gate_stages[8] = {"stage": "S8", "enabled": True, "gate_policy": {"human_review_required": True}}
+        with pytest.raises(ValueError, match="mandatory safety gates"):
+            apply_matter_profile_adaptation(conn, "alpha", unsafe_missing_gates, write=False)
 
     assert applied["matter_profile_id"] != default_id
     assert beta is not None and beta["matter_profile_id"] == beta_id
@@ -126,6 +131,28 @@ def test_cache_context_subagent_and_followup_reuse_surfaces(tmp_path: Path):
         bad_spec = SubagentSpec(**{**spec.as_dict(), "allowed_source_ids": ("beta-source",), "model_decision": _decision()})
         with pytest.raises(ValueError, match="outside matter"):
             create_subagent_task(conn, bad_spec, directive="bad", write=False)
+        pro_without_decision = SubagentSpec(
+            **{
+                **spec.as_dict(),
+                "model_decision": ModelDecision(
+                    provider="openrouter",
+                    model="deepseek/deepseek-v4-pro",
+                    runtime="openrouter",
+                    profile_id="deepseek_flash_or",
+                    decision_reason="bad manual model",
+                    decision_tier="flash_worker",
+                    fallback_allowed=False,
+                    required_human_review=False,
+                    policy_fingerprint="policy",
+                    input_fingerprint="input",
+                ),
+            }
+        )
+        with pytest.raises(ValueError, match="decision layer selected Pro"):
+            create_subagent_task(conn, pro_without_decision, directive="bad pro", write=False)
+        recursive_spec = SubagentSpec(**{**spec.as_dict(), "parent_task_id": str(created["task"]["task_id"]), "model_decision": _decision()})
+        with pytest.raises(ValueError, match="recursive subagent"):
+            create_subagent_task(conn, recursive_spec, directive="recursive", write=False)
 
         run = start_work_run(conn, "alpha", "follow up on source")
         step_id = repo.record_work_run_step(
@@ -138,12 +165,20 @@ def test_cache_context_subagent_and_followup_reuse_surfaces(tmp_path: Path):
         _ = repo.record_work_reuse(conn, matter_scope="alpha", reused_from_step_id=step_id)
         reusable = summarize_reusable_work(conn, "alpha", "source")
         followup = build_followup_context(conn, "alpha", "source")
+        explanation = explain_reuse_decision(
+            conn,
+            "alpha",
+            [{"candidate_id": "candidate-only", "status": "candidate", "trusted_as_proof": False}],
+        )
         resumed = resume_work_run(conn, str(run["resume_token"]))
 
     assert context_a.stable_fingerprint == context_b.stable_fingerprint
     assert created["task"]["candidate_only"] is True
     assert reusable["reusable_steps"]
     assert followup["rules"][2].startswith("candidate output")
+    candidate_explanation = cast(list[dict[str, object]], explanation["reuse_explanations"])[0]
+    assert candidate_explanation["reuse_allowed"] is False
+    assert candidate_explanation["orientation_allowed"] is True
     assert resumed["ok"] is True
 
 

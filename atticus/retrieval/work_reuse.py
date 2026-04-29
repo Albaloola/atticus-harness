@@ -98,11 +98,14 @@ def explain_reuse_decision(conn: sqlite3.Connection, matter_scope: str, records:
     explanations = []
     for record in records:
         trust = str(record.get("trust_status") or record.get("status") or "")
+        trusted_as_proof = trust in {"validated", "certified"}
+        orientation_only = record.get("trusted_as_proof") is False
         explanations.append(
             {
                 "record_id": str(record.get("artifact_id") or record.get("candidate_id") or record.get("context_pack_id") or ""),
-                "reuse_allowed": trust in {"validated", "certified"} or bool(record.get("trusted_as_proof") is False),
-                "proof_status": "orientation_only" if record.get("trusted_as_proof") is False else trust,
+                "reuse_allowed": trusted_as_proof,
+                "orientation_allowed": orientation_only,
+                "proof_status": "orientation_only" if orientation_only else trust,
                 "reason": "same matter and non-stale; recheck citations before legal reliance",
             }
         )

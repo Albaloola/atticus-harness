@@ -14,7 +14,6 @@ from typing import Protocol, cast
 from atticus.commands.registry import command_by_name, list_commands
 from atticus.agents.coordinator import plan_coordinator_work
 from atticus.agents.orchestrator import (
-    ensure_matter_orchestrator,
     orchestrator_plan_repair,
     orchestrator_tick,
     report_worker_failure_to_orchestrator,
@@ -25,7 +24,6 @@ from atticus.core.events import utc_now
 from atticus.core.matters import authorized_matter_from_env, require_matter_access
 from atticus.core.matter_profiles import (
     apply_matter_profile_adaptation,
-    create_default_matter_profile,
     propose_matter_profile_adaptation,
     reset_matter_profile_to_default,
 )
@@ -157,6 +155,7 @@ class CliArgs(Protocol):
     capability: list[str] | None
     operator_override: str | None
     event_type: str | None
+    failure_event_id: str | None
     payload_json: str | None
     work_run_id: str | None
     step_type: str | None
@@ -392,6 +391,7 @@ def build_parser() -> argparse.ArgumentParser:
     _ = orchestrator.add_argument("--status", default="idle")
     _ = orchestrator.add_argument("--goal", default="")
     _ = orchestrator.add_argument("--event-type")
+    _ = orchestrator.add_argument("--failure-event-id")
     _ = orchestrator.add_argument("--payload-json")
     _ = orchestrator.add_argument("--task-id")
     _ = orchestrator.add_argument("--reason", default="")
@@ -937,12 +937,11 @@ def _main(args: CliArgs) -> int:
 
     if args.command == "matter-profile":
         if args.action == "show":
-            with repo.db_connection(args.db) as conn:
-                _ = create_default_matter_profile(conn, args.matter)
+            with repo.db_connection(args.db, read_only=True) as conn:
                 print_json({"matter_scope": args.matter, "active_profile": repo.get_active_matter_profile(conn, matter_scope=args.matter)})
             return 0
         if args.action == "propose":
-            with repo.db_connection(args.db) as conn:
+            with repo.db_connection(args.db, read_only=True) as conn:
                 proposal = propose_matter_profile_adaptation(conn, args.matter, args.goal or args.reason or "matter work", {})
             print_json({"dry_run": True, "proposal": proposal.as_dict()})
             return 0
@@ -950,6 +949,8 @@ def _main(args: CliArgs) -> int:
             if not args.profile_file:
                 raise ValueError("matter-profile apply requires --profile-file")
             profile_payload = _json_object_arg(Path(args.profile_file).read_text(encoding="utf-8"))
+            if isinstance(profile_payload.get("proposal"), Mapping):
+                profile_payload = dict(cast(Mapping[str, object], profile_payload["proposal"]))
             with repo.db_connection(args.db, read_only=not args.write) as conn:
                 result = apply_matter_profile_adaptation(conn, args.matter, profile_payload, write=args.write)
             print_json(result)
@@ -999,17 +1000,24 @@ def _main(args: CliArgs) -> int:
             if not args.task_id:
                 raise ValueError("orchestrator worker-failed requires --task-id")
             if not args.write:
+                with repo.db_connection(args.db, read_only=True) as conn:
+                    task_matter = repo.matter_scope_for_target(conn, target_type="task", target_id=args.task_id)
+                if task_matter is None:
+                    raise ValueError(f"unknown task: {args.task_id}")
+                if task_matter != args.matter:
+                    raise ValueError(f"task {args.task_id} belongs to matter {task_matter}, not {args.matter}")
                 print_json({"dry_run": True, "matter_scope": args.matter, "task_id": args.task_id, "failure_reason": args.reason})
                 return 0
             with repo.db_connection(args.db) as conn:
-                event_id = report_worker_failure_to_orchestrator(conn, args.task_id, args.reason or "worker failed")
+                event_id = report_worker_failure_to_orchestrator(conn, args.task_id, args.reason or "worker failed", matter_scope=args.matter)
             print_json({"dry_run": False, "orchestrator_event_id": event_id})
             return 0
         if args.action == "repair":
-            if not args.event_type:
-                raise ValueError("orchestrator repair requires --event-type containing failure event id")
+            failure_event_id = args.failure_event_id or args.event_type
+            if not failure_event_id:
+                raise ValueError("orchestrator repair requires --failure-event-id")
             with repo.db_connection(args.db, read_only=True) as conn:
-                result = orchestrator_plan_repair(conn, args.matter, args.event_type)
+                result = orchestrator_plan_repair(conn, args.matter, failure_event_id)
             print_json(result)
             return 0
         if not args.write:
@@ -1051,7 +1059,7 @@ def _main(args: CliArgs) -> int:
             if not args.resume_token:
                 raise ValueError("work-run resume requires --resume-token")
             with repo.db_connection(args.db) as conn:
-                result = resume_work_run(conn, args.resume_token)
+                result = resume_work_run(conn, args.resume_token, matter_scope=args.matter)
             print_json(result)
             return 0 if result.get("ok") is True else 2
         if args.action == "export":

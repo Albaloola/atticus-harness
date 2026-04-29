@@ -51,10 +51,18 @@ def record_work_step(
     return _step_row(row)
 
 
-def resume_work_run(conn: sqlite3.Connection, resume_token: str) -> dict[str, object]:
+def resume_work_run(conn: sqlite3.Connection, resume_token: str, *, matter_scope: str | None = None) -> dict[str, object]:
     row = conn.execute("SELECT * FROM work_runs WHERE resume_token = ?", (resume_token,)).fetchone()
     if row is None:
         return {"ok": False, "reason": "resume token not found", "work_run": None, "steps": []}
+    row_matter_scope = str(row["matter_scope"])
+    if matter_scope is not None and row_matter_scope != matter_scope:
+        return {
+            "ok": False,
+            "reason": f"resume token belongs to matter {row_matter_scope}, not {matter_scope}",
+            "work_run": None,
+            "steps": [],
+        }
     try:
         work_run = _work_run_plain(row)
         steps = [
