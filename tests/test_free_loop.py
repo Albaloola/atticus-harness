@@ -409,3 +409,123 @@ def test_run_free_loop_cli_openrouter_without_live_gate_does_not_dispatch(tmp_pa
     assert failed_leases == 1
     assert task["status"] == str(TaskStatus.BLOCKED)
     assert "ATTICUS_ENABLE_LIVE_OPENROUTER" in str(task["blocked_reasons_json"])
+
+
+def test_run_free_loop_cli_self_migrates_stale_v5_db_before_failure_logging(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="stale-v5-openrouter-no-live",
+                title="Stale v5 OpenRouter no live",
+                task_type="source_inventory",
+                stage=LegalStage.S0_SOURCE_INVENTORY,
+                provider_policy={
+                    "provider": "openrouter",
+                    "model": "deepseek/deepseek-v4-flash",
+                    "allow_fallback": False,
+                    "estimated_cost_usd": 0.0,
+                },
+            ),
+        )
+
+    raw = sqlite3.connect(db_path)
+    try:
+        _ = raw.execute("DROP TABLE error_logs")
+        _ = raw.execute("DROP TABLE maintenance_reports")
+        _ = raw.execute("DROP TABLE maintenance_runs")
+        _ = raw.execute("UPDATE schema_meta SET value = '5' WHERE key = 'schema_version'")
+        raw.commit()
+    finally:
+        raw.close()
+
+    code = cli_main(
+        [
+            "run-free-loop",
+            "--db",
+            str(db_path),
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--capacity",
+            "1",
+            "--max-ticks",
+            "1",
+            "--runtime",
+            "openrouter",
+        ]
+    )
+    stdout = capsys.readouterr().out
+    payload_raw = json.loads(stdout)
+    assert isinstance(payload_raw, Mapping)
+    payload = cast(Mapping[str, object], payload_raw)
+
+    with repo.db_connection(db_path, read_only=True) as conn:
+        schema_version = conn.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()
+        error_logs = _scalar_int(conn, "SELECT COUNT(*) FROM error_logs WHERE target_id = 'stale-v5-openrouter-no-live'")
+        maintenance_tables = _scalar_int(
+            conn,
+            """
+            SELECT COUNT(*)
+            FROM sqlite_master
+            WHERE type = 'table' AND name IN ('maintenance_runs', 'maintenance_reports')
+            """,
+        )
+
+    assert code == 2
+    assert payload["ok"] is False
+    assert schema_version is not None and schema_version["value"] == "6"
+    assert error_logs >= 1
+    assert maintenance_tables == 2
+
+
+def test_worker_failure_signal_self_migrates_already_open_stale_connection(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="stale-direct-failure",
+                title="Stale direct failure",
+                task_type="source_inventory",
+                stage=LegalStage.S0_SOURCE_INVENTORY,
+            ),
+        )
+
+    raw = sqlite3.connect(db_path)
+    try:
+        _ = raw.execute("DROP TABLE error_logs")
+        _ = raw.execute("DROP TABLE orchestrator_events")
+        _ = raw.execute("DROP TABLE matter_orchestrators")
+        _ = raw.execute("UPDATE schema_meta SET value = '5' WHERE key = 'schema_version'")
+        raw.commit()
+    finally:
+        raw.close()
+
+    conn = repo.connect(db_path)
+    try:
+        event_id = repo.record_orchestrator_worker_failure(
+            conn,
+            task_id="stale-direct-failure",
+            failure_reason="simulated stale direct connection failure",
+            matter_scope="atticus",
+        )
+        conn.commit()
+        schema_version = conn.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()
+        error_logs = _scalar_int(conn, "SELECT COUNT(*) FROM error_logs WHERE target_id = 'stale-direct-failure'")
+        orchestrator_events_row = conn.execute(
+            "SELECT COUNT(*) AS n FROM orchestrator_events WHERE orchestrator_event_id = ?",
+            (event_id,),
+        ).fetchone()
+        assert orchestrator_events_row is not None
+        orchestrator_events = int(str(orchestrator_events_row["n"]))
+    finally:
+        conn.close()
+
+    assert event_id.startswith("orchevt-")
+    assert schema_version is not None and schema_version["value"] == "6"
+    assert error_logs == 1
+    assert orchestrator_events == 1

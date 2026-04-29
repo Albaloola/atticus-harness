@@ -39,9 +39,16 @@ def connect(db_path: str | Path, *, read_only: bool = False) -> sqlite3.Connecti
 
 
 @contextmanager
-def db_connection(db_path: str | Path, *, read_only: bool = False) -> Generator[sqlite3.Connection, None, None]:
+def db_connection(
+    db_path: str | Path,
+    *,
+    read_only: bool = False,
+    apply_schema: bool = True,
+) -> Generator[sqlite3.Connection, None, None]:
     conn = connect(db_path, read_only=read_only)
     try:
+        if apply_schema and not read_only:
+            ensure_schema_current(conn)
         yield conn
         if not read_only:
             conn.commit()
@@ -50,15 +57,27 @@ def db_connection(db_path: str | Path, *, read_only: bool = False) -> Generator[
 
 
 def initialize_database(db_path: str | Path) -> None:
-    with db_connection(db_path) as conn:
-        _ = conn.executescript(DDL)
-        _ensure_columns(conn)
-        _ensure_indexes(conn)
-        _ = conn.execute(
-            "INSERT OR REPLACE INTO schema_meta(key, value) VALUES (?, ?)",
-            ("schema_version", str(SCHEMA_VERSION)),
-        )
+    with db_connection(db_path, apply_schema=False) as conn:
+        ensure_schema_current(conn)
         ensure_matter(conn, "atticus", "Default Atticus matter")
+
+
+def ensure_schema_current(conn: sqlite3.Connection) -> None:
+    """Apply the current additive schema to an existing writable connection.
+
+    Legal matter databases are long-lived, and operators may resume work after
+    the harness code has advanced. Every write entry point therefore needs the
+    same fail-closed additive guard as ``init`` so new control-plane tables do
+    not appear only in freshly created databases.
+    """
+
+    _ = conn.executescript(DDL)
+    _ensure_columns(conn)
+    _ensure_indexes(conn)
+    _ = conn.execute(
+        "INSERT OR REPLACE INTO schema_meta(key, value) VALUES (?, ?)",
+        ("schema_version", str(SCHEMA_VERSION)),
+    )
 
 
 def _ensure_columns(conn: sqlite3.Connection) -> None:
@@ -1426,6 +1445,8 @@ def record_loop_guard_failure(
     source: str = "",
     payload: dict[str, object] | None = None,
 ) -> dict[str, object]:
+    if not _table_exists(conn, "error_logs"):
+        ensure_schema_current(conn)
     clean_message = " ".join(message.strip().split()) or "unspecified failure"
     clean_error_type = error_type.strip() or "failure"
     signature = _failure_signature(
@@ -1774,6 +1795,8 @@ def request_maintenance_run(
     payload: dict[str, object] | None = None,
 ) -> str | None:
     if not _table_exists(conn, "maintenance_runs"):
+        ensure_schema_current(conn)
+    if not _table_exists(conn, "maintenance_runs"):
         return None
     if trigger_event_id:
         existing = conn.execute(
@@ -1887,6 +1910,8 @@ def get_matter_orchestrator(conn: sqlite3.Connection, *, matter_scope: str) -> d
 
 
 def _ensure_signal_orchestrator(conn: sqlite3.Connection, *, matter_scope: str) -> str | None:
+    if not _table_exists(conn, "matter_orchestrators") or not _table_exists(conn, "orchestrator_events"):
+        ensure_schema_current(conn)
     if not _table_exists(conn, "matter_orchestrators") or not _table_exists(conn, "orchestrator_events"):
         return None
     row = conn.execute("SELECT orchestrator_id FROM matter_orchestrators WHERE matter_scope = ?", (matter_scope,)).fetchone()
