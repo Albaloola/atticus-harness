@@ -38,18 +38,36 @@ def orchestrator_tick(conn: sqlite3.Connection, matter_scope: str, capacity: int
     if not dry_run:
         _ = expire_leases(conn)
     candidates = _runnable_matter_tasks(conn, matter_scope=matter_scope, capacity=capacity_effective)
-    blocked_repairs = [
-        {
-            "task_id": str(task["task_id"]),
-            "proposed_actions": _repair_actions_for_blocked_task(
-                conn,
-                matter_scope=matter_scope,
-                task_id=str(task["task_id"]),
-                reasons=_json_list(str(task["blocked_reasons_json"] or "[]")),
-            ),
-        }
-        for task in _blocked_matter_tasks(conn, matter_scope=matter_scope, capacity=capacity_effective)
-    ]
+    blocked_repairs: list[dict[str, object]] = []
+    terminal_blocks: list[dict[str, object]] = []
+    for task in _blocked_matter_tasks(conn, matter_scope=matter_scope, capacity=capacity_effective):
+        task_id = str(task["task_id"])
+        terminal_state = _terminal_repair_state(conn, task_id=task_id)
+        if terminal_state is not None:
+            terminal_blocks.append(
+                {
+                    "task_id": task_id,
+                    "status": "user_intervention_required",
+                    "reason": str(terminal_state.get("reason") or "orchestrator repair limit reached"),
+                    "repair_attempt_limit": terminal_state.get("repair_attempt_limit"),
+                    "signal_count": terminal_state.get("signal_count"),
+                    "attention_id": terminal_state.get("attention_id") or "",
+                }
+            )
+            continue
+        blocked_reasons = _json_list(str(task["blocked_reasons_json"] or "[]"))
+        blocked_repairs.append(
+            {
+                "task_id": task_id,
+                "blocked_reasons": blocked_reasons,
+                "proposed_actions": _repair_actions_for_blocked_task(
+                    conn,
+                    matter_scope=matter_scope,
+                    task_id=task_id,
+                    reasons=blocked_reasons,
+                ),
+            }
+        )
     operator_signals = _pending_operator_signals(conn, matter_scope=matter_scope, capacity=max(1, capacity_effective))
     leased: list[dict[str, object]] = []
     skipped: list[dict[str, object]] = []
@@ -81,14 +99,15 @@ def orchestrator_tick(conn: sqlite3.Connection, matter_scope: str, capacity: int
                 "leased": leased,
                 "skipped": skipped,
                 "blocked_repairs": blocked_repairs,
+                "terminal_blocks": terminal_blocks,
                 "operator_signals": operator_signals,
             },
         )
         for repair in blocked_repairs:
-            _ = repo.record_orchestrator_event(
+            _ = repo.record_orchestrator_repair_proposed(
                 conn,
                 orchestrator_id=orchestrator_id,
-                event_type="orchestrator.repair_proposed",
+                task_id=str(repair["task_id"]),
                 payload=repair,
             )
         for signal in operator_signals:
@@ -125,6 +144,7 @@ def orchestrator_tick(conn: sqlite3.Connection, matter_scope: str, capacity: int
         "capacity_limit": MAX_PARALLEL_AGENT_CAPACITY,
         "runnable_task_ids": [str(task["task_id"]) for task in candidates],
         "blocked_repairs": blocked_repairs,
+        "terminal_blocks": terminal_blocks,
         "operator_signals": operator_signals,
         "routed_operator_signals": routed_operator_signals,
         "leased": leased,
@@ -379,6 +399,23 @@ def _pending_operator_signals(conn: sqlite3.Connection, *, matter_scope: str, ca
             }
         )
     return signals
+
+
+def _terminal_repair_state(conn: sqlite3.Connection, *, task_id: str) -> dict[str, object] | None:
+    row = conn.execute(
+        """
+        SELECT payload_json
+        FROM orchestrator_events
+        WHERE event_type = 'orchestrator.repair_limit_reached'
+          AND json_extract(payload_json, '$.task_id') = ?
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        (task_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return _json_object_or_empty(str(row["payload_json"] or "{}"))
 
 
 def _repair_actions_for_blocked_task(

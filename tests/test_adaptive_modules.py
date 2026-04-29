@@ -21,7 +21,7 @@ from atticus.core.matter_profiles import (
     propose_matter_profile_adaptation,
     reset_matter_profile_to_default,
 )
-from atticus.core.policies import LegalStage
+from atticus.core.policies import LegalStage, TaskStatus
 from atticus.core.tasks import TaskSpec
 from atticus.db import repo
 from atticus.providers.cache_observability import detect_prompt_cache_break, fingerprint_provider_policy
@@ -148,6 +148,211 @@ def test_scheduler_gate_block_signals_orchestrator_and_dedupes_attention(tmp_pat
     assert attention_count is not None and int(str(attention_count["n"])) == 1
     assert orchestrator is not None and orchestrator["status"] == "repair_required"
     assert repairs and repairs[0]["proposed_actions"][0]["type"] == "context_rebuild"
+
+
+def test_repeated_worker_failures_escalate_every_five_then_require_user_intervention(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(conn, TaskSpec(task_id="loop-task", title="Loop", task_type="extract", matter_scope="alpha"))
+
+        event_ids = [
+            report_worker_failure_to_orchestrator(conn, "loop-task", "citation support missing")
+            for _ in range(15)
+        ]
+
+        worker_payloads = [
+            json.loads(
+                str(
+                    conn.execute(
+                        "SELECT payload_json FROM orchestrator_events WHERE orchestrator_event_id = ?",
+                        (event_id,),
+                    ).fetchone()["payload_json"]
+                )
+            )
+            for event_id in event_ids
+        ]
+        terminal = conn.execute(
+            """
+            SELECT payload_json
+            FROM orchestrator_events
+            WHERE event_type = 'orchestrator.repair_limit_reached'
+              AND json_extract(payload_json, '$.task_id') = 'loop-task'
+            """
+        ).fetchone()
+        master_event = conn.execute(
+            """
+            SELECT COUNT(*) AS n
+            FROM events
+            WHERE event_type = 'master_orchestrator.user_intervention_required'
+              AND matter_scope = 'alpha'
+            """
+        ).fetchone()
+        loop_escalations = conn.execute(
+            """
+            SELECT COUNT(*) AS n
+            FROM events
+            WHERE event_type = 'loop_guard.escalated'
+              AND matter_scope = 'alpha'
+            """
+        ).fetchone()
+        matter_loop_escalations = conn.execute(
+            """
+            SELECT COUNT(*) AS n
+            FROM events
+            WHERE event_type = 'matter_orchestrator.loop_guard_escalated'
+              AND matter_scope = 'alpha'
+            """
+        ).fetchone()
+        master_loop_escalations = conn.execute(
+            """
+            SELECT COUNT(*) AS n
+            FROM events
+            WHERE event_type = 'master_orchestrator.loop_guard_escalated'
+              AND matter_scope = 'alpha'
+            """
+        ).fetchone()
+        error_logs = conn.execute(
+            """
+            SELECT COUNT(*) AS n
+            FROM error_logs
+            WHERE target_id = 'loop-task'
+            """
+        ).fetchone()
+        terminal_error_log = conn.execute(
+            """
+            SELECT consecutive_count, escalation_level, terminal
+            FROM error_logs
+            WHERE target_id = 'loop-task'
+            ORDER BY created_at DESC, rowid DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        task = conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'loop-task'").fetchone()
+        attention = conn.execute(
+            """
+            SELECT severity, reason
+            FROM human_attention
+            WHERE target_id = 'loop-task' AND severity = 'blocker'
+            ORDER BY attention_id DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        orchestrator = repo.get_matter_orchestrator(conn, matter_scope="alpha")
+        runnable = select_runnable_tasks(conn, capacity=5)
+
+    terminal_payload = json.loads(str(terminal["payload_json"])) if terminal is not None else {}
+    assert worker_payloads[0]["escalation_target"] == "worker_self_repair"
+    assert worker_payloads[4]["escalation_target"] == "matter_orchestrator_repair"
+    assert worker_payloads[9]["escalation_target"] == "master_orchestrator_attention"
+    assert worker_payloads[14]["escalation_target"] == "user_intervention_required"
+    assert worker_payloads[14]["retry_allowed"] is False
+    assert worker_payloads[14]["terminal"] is True
+    assert terminal_payload["requires_user_intervention"] is True
+    assert terminal_payload["signal_count"] == 15
+    assert int(str(master_event["n"])) == 1
+    assert int(str(loop_escalations["n"])) == 3
+    assert int(str(matter_loop_escalations["n"])) == 1
+    assert int(str(master_loop_escalations["n"])) == 2
+    assert int(str(error_logs["n"])) == 15
+    assert int(str(terminal_error_log["consecutive_count"])) == 15
+    assert int(str(terminal_error_log["escalation_level"])) == 4
+    assert int(str(terminal_error_log["terminal"])) == 1
+    assert task["status"] == str(TaskStatus.BLOCKED)
+    assert "orchestrator repair limit reached" in str(task["blocked_reasons_json"])
+    assert attention is not None and attention["severity"] == "blocker"
+    assert "user intervention required" in str(attention["reason"])
+    assert orchestrator is not None and orchestrator["status"] == "user_intervention_required"
+    assert runnable == []
+
+
+def test_loop_guard_counts_consecutive_matching_failures_not_unrelated_noise(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(conn, TaskSpec(task_id="reset-loop-task", title="Reset loop", task_type="extract", matter_scope="alpha"))
+
+        for _ in range(4):
+            _ = report_worker_failure_to_orchestrator(conn, "reset-loop-task", "same provider timeout")
+        _ = report_worker_failure_to_orchestrator(conn, "reset-loop-task", "different citation failure")
+        reset_event = report_worker_failure_to_orchestrator(conn, "reset-loop-task", "same provider timeout")
+        for _ in range(4):
+            fifth_after_reset = report_worker_failure_to_orchestrator(conn, "reset-loop-task", "same provider timeout")
+
+        reset_payload = json.loads(
+            str(conn.execute("SELECT payload_json FROM orchestrator_events WHERE orchestrator_event_id = ?", (reset_event,)).fetchone()["payload_json"])
+        )
+        fifth_payload = json.loads(
+            str(conn.execute("SELECT payload_json FROM orchestrator_events WHERE orchestrator_event_id = ?", (fifth_after_reset,)).fetchone()["payload_json"])
+        )
+
+    assert reset_payload["consecutive_count"] == 1
+    assert reset_payload["occurrence_count"] == 5
+    assert reset_payload["escalation_target"] == "worker_self_repair"
+    assert fifth_payload["consecutive_count"] == 5
+    assert fifth_payload["escalation_target"] == "matter_orchestrator_repair"
+
+
+def test_orchestrator_tick_stops_reproposing_repairs_after_hard_limit(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="blocked-loop-task",
+                title="Blocked loop",
+                task_type="extract",
+                matter_scope="alpha",
+                source_dependencies=["missing-source"],
+            ),
+        )
+        assert select_runnable_tasks(conn, capacity=5) == []
+
+        ticks = [orchestrator_tick(conn, "alpha", 5, dry_run=False) for _ in range(14)]
+        terminal_tick = orchestrator_tick(conn, "alpha", 5, dry_run=True)
+        post_terminal_write_tick = orchestrator_tick(conn, "alpha", 5, dry_run=False)
+        repair_proposals = conn.execute(
+            """
+            SELECT COUNT(*) AS n
+            FROM orchestrator_events
+            WHERE event_type = 'orchestrator.repair_proposed'
+              AND json_extract(payload_json, '$.task_id') = 'blocked-loop-task'
+            """
+        ).fetchone()
+        terminal_events = conn.execute(
+            """
+            SELECT COUNT(*) AS n
+            FROM orchestrator_events
+            WHERE event_type = 'orchestrator.repair_limit_reached'
+              AND json_extract(payload_json, '$.task_id') = 'blocked-loop-task'
+            """
+        ).fetchone()
+        error_logs = conn.execute(
+            """
+            SELECT COUNT(*) AS n
+            FROM error_logs
+            WHERE target_id = 'blocked-loop-task'
+            """
+        ).fetchone()
+        loop_escalations = conn.execute(
+            """
+            SELECT COUNT(*) AS n
+            FROM events
+            WHERE event_type = 'loop_guard.escalated'
+              AND matter_scope = 'alpha'
+            """
+        ).fetchone()
+
+    assert cast(list[dict[str, object]], ticks[0]["blocked_repairs"])
+    assert cast(list[dict[str, object]], ticks[3]["blocked_repairs"])
+    assert cast(list[dict[str, object]], ticks[8]["blocked_repairs"])
+    assert int(str(repair_proposals["n"])) == 14
+    assert int(str(terminal_events["n"])) == 1
+    assert int(str(error_logs["n"])) == 15
+    assert int(str(loop_escalations["n"])) == 3
+    assert cast(list[dict[str, object]], terminal_tick["blocked_repairs"]) == []
+    assert cast(list[dict[str, object]], post_terminal_write_tick["blocked_repairs"]) == []
+    terminal_blocks = cast(list[dict[str, object]], terminal_tick["terminal_blocks"])
+    assert terminal_blocks and terminal_blocks[0]["task_id"] == "blocked-loop-task"
+    assert terminal_blocks[0]["status"] == "user_intervention_required"
 
 
 def test_operator_signal_is_routed_once_by_orchestrator_tick(tmp_path: Path):

@@ -10,6 +10,7 @@ from typing import cast
 
 from atticus.core.policies import STAGE_FOUNDATION_REQUIREMENTS
 
+
 @dataclass(frozen=True)
 class GateResult:
     allowed: bool
@@ -20,6 +21,8 @@ def evaluate_task_gates(conn: sqlite3.Connection, task_row: Mapping[str, object]
     reasons: list[str] = []
     task_id = str(task_row["task_id"])
     task_matter = str(task_row["matter_scope"])
+    if _task_repair_limit_reached(conn, task_id=task_id):
+        reasons.append("orchestrator repair limit reached: user intervention required")
     source_deps = _load_string_list(task_row, "source_dependencies_json", task_id, reasons)
     artifact_deps = _load_string_list(task_row, "artifact_dependencies_json", task_id, reasons)
     task_deps = _load_string_list(task_row, "task_dependencies_json", task_id, reasons) if "task_dependencies_json" in task_row.keys() else []
@@ -97,6 +100,23 @@ def evaluate_task_gates(conn: sqlite3.Connection, task_row: Mapping[str, object]
             reasons.append(f"missing certification: {subject_type}:{subject_id}:{cert_type}")
 
     return GateResult(allowed=not reasons, reasons=reasons)
+
+
+def _task_repair_limit_reached(conn: sqlite3.Connection, *, task_id: str) -> bool:
+    try:
+        row = conn.execute(
+            """
+            SELECT 1
+            FROM orchestrator_events
+            WHERE event_type = 'orchestrator.repair_limit_reached'
+              AND json_extract(payload_json, '$.task_id') = ?
+            LIMIT 1
+            """,
+            (task_id,),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return False
+    return row is not None
 
 
 def _load_json_field(task_row: Mapping[str, object], field: str, task_id: str, reasons: list[str]) -> object:

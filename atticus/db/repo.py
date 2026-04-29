@@ -18,6 +18,12 @@ from atticus.db.schema import DDL, SCHEMA_VERSION
 from atticus.memory.types import LEGAL_MEMORY_TYPES, SOURCE_REQUIRED_MEMORY_TYPES
 
 
+LOOP_GUARD_REPEATS_PER_ESCALATION = 5
+LOOP_GUARD_MAX_AUTO_ESCALATION_LEVEL = 3
+ORCHESTRATOR_REPAIR_ATTEMPT_LIMIT = LOOP_GUARD_REPEATS_PER_ESCALATION * LOOP_GUARD_MAX_AUTO_ESCALATION_LEVEL
+ORCHESTRATOR_TERMINAL_STATUS = "user_intervention_required"
+
+
 def connect(db_path: str | Path, *, read_only: bool = False) -> sqlite3.Connection:
     path = Path(db_path)
     if read_only:
@@ -903,6 +909,41 @@ def update_task_blocked(conn: sqlite3.Connection, task_id: str, reasons: list[st
     ).fetchone()
     matter_scope = str(task_row["matter_scope"]) if task_row is not None else _matter_scope_for_target(conn, target_type="task", target_id=task_id) or "unknown"
     existing_reasons = _json_list_or_empty(str(task_row["blocked_reasons_json"] or "[]")) if task_row is not None else []
+    if _repair_limit_event_exists(conn, task_id=task_id):
+        terminal_reason = "orchestrator repair limit reached: user intervention required"
+        terminal_reasons = [*reasons]
+        if terminal_reason not in terminal_reasons:
+            terminal_reasons.append(terminal_reason)
+        if existing_reasons != terminal_reasons:
+            _ = conn.execute(
+                """
+                UPDATE tasks
+                SET status = ?, blocked_reasons_json = ?, updated_at = ?
+                WHERE task_id = ?
+                """,
+                (TaskStatus.BLOCKED, _json(terminal_reasons), utc_now(), task_id),
+            )
+        attention = conn.execute(
+            """
+            SELECT 1
+            FROM human_attention
+            WHERE matter_scope = ? AND target_type = 'task' AND target_id = ?
+              AND severity = 'blocker' AND status = 'open'
+              AND reason LIKE 'orchestrator repair limit reached%'
+            LIMIT 1
+            """,
+            (matter_scope, task_id),
+        ).fetchone()
+        if attention is None:
+            _ = record_human_attention_once(
+                conn,
+                target_type="task",
+                target_id=task_id,
+                severity="blocker",
+                reason=terminal_reason,
+                matter_scope=matter_scope,
+            )
+        return
     if task_row is not None and str(task_row["status"]) == str(TaskStatus.BLOCKED) and existing_reasons == reasons:
         if _orchestrator_signal_count_for_task(conn, task_id=task_id) == 0:
             _ = record_orchestrator_task_blocked(conn, task_id=task_id, reasons=reasons, matter_scope=matter_scope)
@@ -1374,6 +1415,93 @@ def record_human_attention_once(
     )
 
 
+def record_loop_guard_failure(
+    conn: sqlite3.Connection,
+    *,
+    matter_scope: str,
+    target_type: str,
+    target_id: str,
+    error_type: str,
+    message: str,
+    source: str = "",
+    payload: dict[str, object] | None = None,
+) -> dict[str, object]:
+    clean_message = " ".join(message.strip().split()) or "unspecified failure"
+    clean_error_type = error_type.strip() or "failure"
+    signature = _failure_signature(
+        matter_scope=matter_scope,
+        target_type=target_type,
+        target_id=target_id,
+        error_type=clean_error_type,
+        message=clean_message,
+    )
+    occurrence_count = _error_occurrence_count(conn, error_signature=signature) + 1
+    consecutive_count = _consecutive_error_count(
+        conn,
+        target_type=target_type,
+        target_id=target_id,
+        error_type=clean_error_type,
+        error_signature=signature,
+    ) + 1
+    escalation = _escalation_payload_for_signal(consecutive_count)
+    severity = "blocker" if bool(escalation["terminal"]) else "warning" if int(escalation["escalation_level"]) >= 2 else "info"
+    error_log_id = f"err-{uuid4().hex}"
+    now = utc_now()
+    log_payload = {
+        **(payload or {}),
+        "source": source,
+        "failure_signature": signature,
+        **escalation,
+    }
+    _ = conn.execute(
+        """
+        INSERT INTO error_logs(error_log_id, matter_scope, target_type, target_id,
+          error_type, error_signature, message, severity, escalation_level,
+          occurrence_count, consecutive_count, terminal, payload_json, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            error_log_id,
+            matter_scope,
+            target_type,
+            target_id,
+            clean_error_type,
+            signature,
+            clean_message,
+            severity,
+            int(escalation["escalation_level"]),
+            occurrence_count,
+            consecutive_count,
+            1 if bool(escalation["terminal"]) else 0,
+            _json(log_payload),
+            now,
+        ),
+    )
+    result = {
+        "error_log_id": error_log_id,
+        "failure_signature": signature,
+        "occurrence_count": occurrence_count,
+        "consecutive_count": consecutive_count,
+        **escalation,
+    }
+    if _should_emit_loop_guard_escalation(consecutive_count, bool(escalation["terminal"])):
+        escalation_payload = {
+            "error_log_id": error_log_id,
+            "target_type": target_type,
+            "target_id": target_id,
+            "error_type": clean_error_type,
+            "message": clean_message,
+            **result,
+        }
+        _ = emit_event(conn, "loop_guard.escalated", matter_scope=matter_scope, payload=escalation_payload)
+        level = int(escalation["escalation_level"])
+        if level == 2:
+            _ = emit_event(conn, "matter_orchestrator.loop_guard_escalated", matter_scope=matter_scope, payload=escalation_payload)
+        elif level >= 3:
+            _ = emit_event(conn, "master_orchestrator.loop_guard_escalated", matter_scope=matter_scope, payload=escalation_payload)
+    return result
+
+
 def record_orchestrator_task_blocked(
     conn: sqlite3.Connection,
     *,
@@ -1391,14 +1519,22 @@ def record_orchestrator_task_blocked(
     orchestrator_id = _ensure_signal_orchestrator(conn, matter_scope=task_matter_scope)
     if orchestrator_id is None:
         return None
-    prior_signals = _orchestrator_signal_count_for_task(conn, task_id=task_id)
-    escalation = _escalation_payload(prior_signals)
+    guard = record_loop_guard_failure(
+        conn,
+        matter_scope=task_matter_scope,
+        target_type="task",
+        target_id=task_id,
+        error_type="task_blocked",
+        message="; ".join(reasons),
+        source=source,
+        payload={"reasons": reasons},
+    )
     now = utc_now()
     _ = conn.execute(
         "UPDATE matter_orchestrators SET status = 'repair_required', updated_at = ? WHERE orchestrator_id = ?",
         (now, orchestrator_id),
     )
-    return record_orchestrator_event(
+    event_id = record_orchestrator_event(
         conn,
         orchestrator_id=orchestrator_id,
         event_type="orchestrator.task_blocked",
@@ -1407,9 +1543,20 @@ def record_orchestrator_task_blocked(
             "reasons": reasons,
             "source": source,
             "retry_policy": "no silent infinite retry",
-            **escalation,
+            **guard,
         },
     )
+    _ = _record_repair_limit_if_needed(
+        conn,
+        orchestrator_id=orchestrator_id,
+        task_id=task_id,
+        matter_scope=task_matter_scope,
+        reason="; ".join(reasons),
+        source=source,
+        related_event_id=event_id,
+        escalation=guard,
+    )
+    return event_id
 
 
 def record_orchestrator_worker_failure(
@@ -1436,8 +1583,16 @@ def record_orchestrator_worker_failure(
         severity="warning",
         reason=f"worker failure reported to orchestrator: {failure_reason}",
     )
-    prior_signals = _orchestrator_signal_count_for_task(conn, task_id=task_id)
-    escalation = _escalation_payload(prior_signals)
+    guard = record_loop_guard_failure(
+        conn,
+        matter_scope=task_matter_scope,
+        target_type="task",
+        target_id=task_id,
+        error_type="worker_failure",
+        message=failure_reason,
+        source=source,
+        payload={"failure_reason": failure_reason},
+    )
     _ = conn.execute(
         """
         UPDATE matter_orchestrators
@@ -1446,7 +1601,7 @@ def record_orchestrator_worker_failure(
         """,
         (utc_now(), orchestrator_id),
     )
-    return record_orchestrator_event(
+    event_id = record_orchestrator_event(
         conn,
         orchestrator_id=orchestrator_id,
         event_type="orchestrator.worker_failed",
@@ -1455,9 +1610,75 @@ def record_orchestrator_worker_failure(
             "failure_reason": failure_reason,
             "source": source,
             "retry_policy": "no silent infinite retry",
-            **escalation,
+            **guard,
         },
     )
+    _ = _record_repair_limit_if_needed(
+        conn,
+        orchestrator_id=orchestrator_id,
+        task_id=task_id,
+        matter_scope=task_matter_scope,
+        reason=failure_reason,
+        source=source,
+        related_event_id=event_id,
+        escalation=guard,
+    )
+    return event_id
+
+
+def record_orchestrator_repair_proposed(
+    conn: sqlite3.Connection,
+    *,
+    orchestrator_id: str,
+    task_id: str,
+    payload: dict[str, object],
+) -> str | None:
+    if _repair_limit_event_exists(conn, task_id=task_id):
+        return None
+    task_row = conn.execute("SELECT matter_scope FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
+    if task_row is None:
+        raise ValueError(f"unknown task: {task_id}")
+    orchestrator_row = conn.execute("SELECT matter_scope FROM matter_orchestrators WHERE orchestrator_id = ?", (orchestrator_id,)).fetchone()
+    if orchestrator_row is None:
+        raise ValueError(f"orchestrator not found: {orchestrator_id}")
+    task_matter_scope = str(task_row["matter_scope"])
+    if str(orchestrator_row["matter_scope"]) != task_matter_scope:
+        raise ValueError(f"task {task_id} belongs to matter {task_matter_scope}, not orchestrator {orchestrator_id}")
+    blocked_reasons = [str(item) for item in payload.get("blocked_reasons", [])] if isinstance(payload.get("blocked_reasons"), list) else []
+    repair_message = "; ".join(blocked_reasons) if blocked_reasons else "repair proposal did not unblock task"
+    guard = record_loop_guard_failure(
+        conn,
+        matter_scope=task_matter_scope,
+        target_type="task",
+        target_id=task_id,
+        error_type="task_blocked",
+        message=repair_message,
+        source="orchestrator.repair_proposed",
+        payload={"blocked_reasons": blocked_reasons, "proposed_actions": payload.get("proposed_actions", [])},
+    )
+    event_payload = {
+        **payload,
+        "task_id": task_id,
+        "retry_policy": "hard repair signal limit",
+        **guard,
+    }
+    event_id = record_orchestrator_event(
+        conn,
+        orchestrator_id=orchestrator_id,
+        event_type="orchestrator.repair_proposed",
+        payload=event_payload,
+    )
+    _ = _record_repair_limit_if_needed(
+        conn,
+        orchestrator_id=orchestrator_id,
+        task_id=task_id,
+        matter_scope=task_matter_scope,
+        reason="repair proposal limit reached without successful unblock",
+        source="orchestrator.repair_proposed",
+        related_event_id=event_id,
+        escalation=guard,
+    )
+    return event_id
 
 
 def record_external_action_block(
@@ -1568,7 +1789,7 @@ def _orchestrator_signal_count_for_task(conn: sqlite3.Connection, *, task_id: st
         """
         SELECT COUNT(*) AS n
         FROM orchestrator_events
-        WHERE event_type IN ('orchestrator.task_blocked', 'orchestrator.worker_failed')
+        WHERE event_type IN ('orchestrator.task_blocked', 'orchestrator.worker_failed', 'orchestrator.repair_proposed')
           AND json_extract(payload_json, '$.task_id') = ?
         """,
         (task_id,),
@@ -1577,17 +1798,209 @@ def _orchestrator_signal_count_for_task(conn: sqlite3.Connection, *, task_id: st
 
 
 def _escalation_payload(prior_signals: int) -> dict[str, object]:
-    level = 1 if prior_signals <= 0 else 2 if prior_signals == 1 else 3
+    return _escalation_payload_for_signal(max(0, prior_signals) + 1)
+
+
+def _escalation_payload_for_signal(signal_count: int) -> dict[str, object]:
+    clean_count = max(1, signal_count)
+    if clean_count >= ORCHESTRATOR_REPAIR_ATTEMPT_LIMIT:
+        level = 4
+    elif clean_count >= LOOP_GUARD_REPEATS_PER_ESCALATION * 2:
+        level = 3
+    elif clean_count >= LOOP_GUARD_REPEATS_PER_ESCALATION:
+        level = 2
+    else:
+        level = 1
     target = {
         1: "worker_self_repair",
         2: "matter_orchestrator_repair",
         3: "master_orchestrator_attention",
+        4: "user_intervention_required",
     }[level]
+    terminal = clean_count >= ORCHESTRATOR_REPAIR_ATTEMPT_LIMIT
+    next_escalation_at = _next_escalation_at(clean_count)
     return {
-        "signal_count": prior_signals + 1,
+        "signal_count": clean_count,
         "escalation_level": level,
         "escalation_target": target,
+        "escalation_window": LOOP_GUARD_REPEATS_PER_ESCALATION,
+        "next_escalation_at": next_escalation_at,
+        "attempts_until_next_escalation": max(0, next_escalation_at - clean_count) if next_escalation_at else 0,
+        "repair_attempt_limit": ORCHESTRATOR_REPAIR_ATTEMPT_LIMIT,
+        "repair_attempts_remaining": max(0, ORCHESTRATOR_REPAIR_ATTEMPT_LIMIT - clean_count),
+        "retry_allowed": not terminal,
+        "terminal": terminal,
+        "requires_user_intervention": terminal,
     }
+
+
+def _next_escalation_at(signal_count: int) -> int | None:
+    for threshold in (
+        LOOP_GUARD_REPEATS_PER_ESCALATION,
+        LOOP_GUARD_REPEATS_PER_ESCALATION * 2,
+        ORCHESTRATOR_REPAIR_ATTEMPT_LIMIT,
+    ):
+        if signal_count < threshold:
+            return threshold
+    return None
+
+
+def _should_emit_loop_guard_escalation(consecutive_count: int, terminal: bool) -> bool:
+    return terminal or consecutive_count in {
+        LOOP_GUARD_REPEATS_PER_ESCALATION,
+        LOOP_GUARD_REPEATS_PER_ESCALATION * 2,
+    }
+
+
+def _failure_signature(
+    *,
+    matter_scope: str,
+    target_type: str,
+    target_id: str,
+    error_type: str,
+    message: str,
+) -> str:
+    normalized = "|".join(
+        (
+            matter_scope.strip().lower(),
+            target_type.strip().lower(),
+            target_id.strip(),
+            error_type.strip().lower(),
+            " ".join(message.lower().split()),
+        )
+    )
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def _error_occurrence_count(conn: sqlite3.Connection, *, error_signature: str) -> int:
+    if not _table_exists(conn, "error_logs"):
+        return 0
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM error_logs WHERE error_signature = ?",
+        (error_signature,),
+    ).fetchone()
+    return int(row["n"]) if row is not None else 0
+
+
+def _consecutive_error_count(
+    conn: sqlite3.Connection,
+    *,
+    target_type: str,
+    target_id: str,
+    error_type: str,
+    error_signature: str,
+) -> int:
+    if not _table_exists(conn, "error_logs"):
+        return 0
+    rows = conn.execute(
+        """
+        SELECT error_signature
+        FROM error_logs
+        WHERE target_type = ? AND target_id = ? AND error_type = ?
+        ORDER BY created_at DESC, rowid DESC
+        LIMIT ?
+        """,
+        (target_type, target_id, error_type, ORCHESTRATOR_REPAIR_ATTEMPT_LIMIT),
+    ).fetchall()
+    count = 0
+    for row in rows:
+        if str(row["error_signature"]) != error_signature:
+            break
+        count += 1
+    return count
+
+
+def _record_repair_limit_if_needed(
+    conn: sqlite3.Connection,
+    *,
+    orchestrator_id: str,
+    task_id: str,
+    matter_scope: str,
+    reason: str,
+    source: str,
+    related_event_id: str,
+    escalation: Mapping[str, object],
+) -> str | None:
+    if not bool(escalation.get("terminal")):
+        return None
+    if _repair_limit_event_exists(conn, task_id=task_id):
+        return None
+    attention_reason = (
+        f"orchestrator repair limit reached after {ORCHESTRATOR_REPAIR_ATTEMPT_LIMIT} signals; "
+        f"user intervention required: {reason}"
+    )
+    attention_id = record_human_attention_once(
+        conn,
+        target_type="task",
+        target_id=task_id,
+        severity="blocker",
+        reason=attention_reason,
+        matter_scope=matter_scope,
+    )
+    _mark_task_terminal_blocked(conn, task_id=task_id, reason=attention_reason)
+    now = utc_now()
+    _ = conn.execute(
+        "UPDATE matter_orchestrators SET status = ?, updated_at = ? WHERE orchestrator_id = ?",
+        (ORCHESTRATOR_TERMINAL_STATUS, now, orchestrator_id),
+    )
+    payload = {
+        "task_id": task_id,
+        "reason": reason,
+        "source": source,
+        "related_event_id": related_event_id,
+        "attention_id": attention_id or "",
+        **dict(escalation),
+    }
+    event_id = record_orchestrator_event(
+        conn,
+        orchestrator_id=orchestrator_id,
+        event_type="orchestrator.repair_limit_reached",
+        payload=payload,
+    )
+    _ = emit_event(
+        conn,
+        "master_orchestrator.user_intervention_required",
+        matter_scope=matter_scope,
+        payload={"orchestrator_event_id": event_id, **payload},
+    )
+    return event_id
+
+
+def _repair_limit_event_exists(conn: sqlite3.Connection, *, task_id: str) -> bool:
+    if not _table_exists(conn, "orchestrator_events"):
+        return False
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM orchestrator_events
+        WHERE event_type = 'orchestrator.repair_limit_reached'
+          AND json_extract(payload_json, '$.task_id') = ?
+        LIMIT 1
+        """,
+        (task_id,),
+    ).fetchone()
+    return row is not None
+
+
+def _mark_task_terminal_blocked(conn: sqlite3.Connection, *, task_id: str, reason: str) -> None:
+    row = conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
+    if row is None or str(row["status"]) == str(TaskStatus.COMPLETE):
+        return
+    existing = _json_list_or_empty(str(row["blocked_reasons_json"] or "[]"))
+    terminal_reason = "orchestrator repair limit reached: user intervention required"
+    reasons = [*existing]
+    if terminal_reason not in reasons:
+        reasons.append(terminal_reason)
+    if reason and reason not in reasons:
+        reasons.append(reason)
+    _ = conn.execute(
+        """
+        UPDATE tasks
+        SET status = ?, blocked_reasons_json = ?, updated_at = ?
+        WHERE task_id = ?
+        """,
+        (TaskStatus.BLOCKED, _json(reasons), utc_now(), task_id),
+    )
 
 
 def start_work_run(

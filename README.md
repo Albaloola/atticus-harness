@@ -455,6 +455,18 @@ event, and proposes bounded repair such as missing extraction, context rebuild,
 Pro review, profile adaptation, verifier task, or human intervention. It must
 not silently retry forever.
 
+Repair escalation is loop-guarded and capped. Every recurring failure is written
+to `error_logs` with a normalized signature, occurrence count, consecutive
+count, escalation level, and terminal flag. A repeated identical failure cannot
+occur five times in a row without escalation: counts 1-4 stay at worker
+self-repair, count 5 escalates to the matter orchestrator, count 10 escalates to
+master orchestrator attention, and count 15 is terminal for automatic retry. At
+the terminal limit Atticus marks the task blocked, sets the matter orchestrator
+to `user_intervention_required`, emits
+`master_orchestrator.user_intervention_required`, opens blocker-severity human
+attention, and reports the task under `terminal_blocks` on future ticks instead
+of proposing the same repair forever.
+
 The scheduler and live-resume planner can fill up to 15 independent worker
 slots in a tick. That is a hard ceiling, not a target: dependency gates, active
 leases, budget gates, provider policy, matter profiles, and human-review gates
@@ -504,6 +516,9 @@ stateDiagram-v2
     OperatorSignal --> RepairProposed: master routes to matter orchestrator
     FailureObserved --> RepairProposed: bounded repair plan
     RepairProposed --> TaskQueued: extraction/context/verifier/profile repair
+    RepairProposed --> MatterOrchestrator: same failure x5
+    MatterOrchestrator --> MasterAttention: same failure x10
+    MasterAttention --> HumanAttention: same failure x15 retry_allowed=false
     RepairProposed --> HumanAttention: needs operator
     HumanAttention --> Active: operator resolves
 ```
@@ -594,6 +609,7 @@ erDiagram
     matters ||--o{ matter_profiles : adapts
     matters ||--o{ matter_orchestrators : coordinates
     matters ||--o{ work_runs : resumes
+    matters ||--o{ error_logs : diagnoses
     sources ||--o{ source_snapshots : captures
     sources ||--o{ extraction_records : covers
     sources ||--o{ ocr_records : covers
@@ -601,6 +617,7 @@ erDiagram
     tasks ||--o{ leases : fences
     tasks ||--o{ context_packs : prepares
     tasks ||--o{ provider_runs : executes
+    tasks ||--o{ error_logs : loop_guards
     provider_runs ||--o{ prompt_cache_observations : observes
     tasks ||--o{ candidate_outputs : proposes
     candidate_outputs ||--o{ reducer_packets : reviews

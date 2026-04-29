@@ -1000,7 +1000,20 @@ def _main(args: CliArgs) -> int:
                         (args.matter,),
                     )
                 ]
-            print_json({"matter_scope": args.matter, "failures": rows})
+                error_logs = [
+                    _row_to_dict(row)
+                    for row in conn.execute(
+                        """
+                        SELECT *
+                        FROM error_logs
+                        WHERE matter_scope = ?
+                        ORDER BY created_at DESC
+                        LIMIT 50
+                        """,
+                        (args.matter,),
+                    )
+                ]
+            print_json({"matter_scope": args.matter, "failures": rows, "error_logs": error_logs})
             return 0
         if args.action == "worker-failed":
             if not args.task_id:

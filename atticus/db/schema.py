@@ -670,6 +670,23 @@ CREATE TABLE IF NOT EXISTS human_attention (
   created_at TEXT NOT NULL
 ) STRICT;
 
+CREATE TABLE IF NOT EXISTS error_logs (
+  error_log_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL,
+  target_type TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  error_type TEXT NOT NULL,
+  error_signature TEXT NOT NULL,
+  message TEXT NOT NULL,
+  severity TEXT NOT NULL,
+  escalation_level INTEGER NOT NULL,
+  occurrence_count INTEGER NOT NULL,
+  consecutive_count INTEGER NOT NULL,
+  terminal INTEGER NOT NULL CHECK(terminal IN (0, 1)),
+  payload_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(payload_json)),
+  created_at TEXT NOT NULL
+) STRICT;
+
 CREATE TABLE IF NOT EXISTS external_action_blocks (
   block_id TEXT PRIMARY KEY,
   action_type TEXT NOT NULL,
@@ -704,6 +721,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS work_runs_resume_token_uq ON work_runs(resume_
 CREATE INDEX IF NOT EXISTS work_run_steps_scope_idx ON work_run_steps(matter_scope, status, created_at);
 CREATE INDEX IF NOT EXISTS work_reuse_records_scope_idx ON work_reuse_records(matter_scope, valid, created_at);
 CREATE INDEX IF NOT EXISTS budget_entries_budget_idx ON budget_entries(budget_id, created_at);
+CREATE INDEX IF NOT EXISTS error_logs_target_idx ON error_logs(target_type, target_id, created_at);
+CREATE INDEX IF NOT EXISTS error_logs_signature_idx ON error_logs(error_signature, created_at);
 CREATE INDEX IF NOT EXISTS citation_spans_target_idx ON citation_spans(target_type, target_id);
 CREATE INDEX IF NOT EXISTS candidate_outputs_task_idx ON candidate_outputs(task_id, status);
 CREATE INDEX IF NOT EXISTS tracked_files_status_idx ON tracked_files(status, file_kind);
