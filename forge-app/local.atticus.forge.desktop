@@ -1,8 +1,0 @@
-[Desktop Entry]
-Name=Atticus Forge
-Comment=Arch-native local autonomous loop control app
-Exec=atticus-forge
-TryExec=atticus-forge
-Type=Application
-Terminal=false
-Categories=Development;Utility;

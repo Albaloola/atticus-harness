@@ -16,13 +16,9 @@ dev = ["pytest>=8"]
 
 [project.scripts]
 atticus = "atticus.cli:main"
-forge = "forge.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["atticus*", "forge*"]
-
-[tool.setuptools.package-data]
-forge = ["policies/*.yaml", "prompts/*.md"]
+include = ["atticus*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
