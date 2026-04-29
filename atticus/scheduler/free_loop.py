@@ -14,7 +14,7 @@ from typing import cast
 from uuid import uuid4
 
 from atticus.core.events import utc_now
-from atticus.core.policies import TaskStatus
+from atticus.core.policies import LegalStage, TaskStatus
 from atticus.db import repo
 from atticus.reducer.reducer import ReductionBlocked, reduce_candidate
 from atticus.scheduler.lease import LeaseError, acquire_lease
@@ -44,10 +44,22 @@ def run_free_loop_once(
     reduced_candidates: list[str] = []
     imported_tasks: list[str] = []
     reduction_errors: list[dict[str, str]] = []
+    skipped_reductions: list[dict[str, str]] = []
 
     for candidate in _pending_candidates(conn):
         candidate_id = str(candidate["candidate_id"])
         task_id = str(candidate["task_id"])
+        matter_scope = str(candidate["matter_scope"])
+        skip_reason = _auto_reduce_skip_reason(candidate)
+        if skip_reason:
+            skipped_reductions.append({"candidate_id": candidate_id, "task_id": task_id, "reason": skip_reason})
+            _record_auto_reduce_skip_attention(
+                conn,
+                candidate_id=candidate_id,
+                matter_scope=matter_scope,
+                reason=skip_reason,
+            )
+            continue
         try:
             reducer_lease_id = acquire_lease(
                 conn,
@@ -136,7 +148,14 @@ def run_free_loop_once(
     _ = repo.emit_event(
         conn,
         "free_loop.tick",
-        matter_scope=_tick_matter_scope(conn, leased_tasks=leased_tasks, executed_tasks=executed_tasks, reduction_errors=reduction_errors, worker_errors=worker_errors),
+        matter_scope=_tick_matter_scope(
+            conn,
+            leased_tasks=leased_tasks,
+            executed_tasks=executed_tasks,
+            reduction_errors=reduction_errors,
+            skipped_reductions=skipped_reductions,
+            worker_errors=worker_errors,
+        ),
         payload={
             "ok": ok,
             "reduced_candidates": reduced_candidates,
@@ -144,6 +163,7 @@ def run_free_loop_once(
             "leased_tasks": leased_tasks,
             "executed_tasks": executed_tasks,
             "reduction_errors": reduction_errors,
+            "skipped_reductions": skipped_reductions,
             "worker_errors": worker_errors,
         },
     )
@@ -154,6 +174,7 @@ def run_free_loop_once(
         "leased_tasks": leased_tasks,
         "executed_tasks": executed_tasks,
         "reduction_errors": reduction_errors,
+        "skipped_reductions": skipped_reductions,
         "worker_errors": worker_errors,
     }
 
@@ -214,7 +235,7 @@ def _pending_candidates(conn: sqlite3.Connection) -> list[Mapping[str, object]]:
         cast(Mapping[str, object], row)
         for row in conn.execute(
             """
-            SELECT co.* FROM candidate_outputs co
+            SELECT co.*, t.stage, t.task_type, t.matter_scope FROM candidate_outputs co
             JOIN tasks t ON t.task_id = co.task_id
             WHERE co.status = 'candidate' AND t.status = ?
             ORDER BY co.created_at ASC
@@ -222,6 +243,50 @@ def _pending_candidates(conn: sqlite3.Connection) -> list[Mapping[str, object]]:
             (TaskStatus.REDUCER_PENDING,),
         )
     ]
+
+
+def _auto_reduce_skip_reason(candidate: Mapping[str, object]) -> str:
+    try:
+        stage = str(candidate["stage"] or "")
+    except (KeyError, IndexError):
+        stage = ""
+    high_risk_stages = {
+        str(LegalStage.S6_AUTHORITY_LAW_MAP),
+        str(LegalStage.S7_HOSTILE_REVIEW),
+        str(LegalStage.S8_DRAFT_PREPARATION),
+        str(LegalStage.S9_FINAL_QUALITY_GATE),
+    }
+    if stage in high_risk_stages:
+        return f"free loop auto-reduction is disabled for high-risk legal stage {stage}; manual reducer review required"
+    return ""
+
+
+def _record_auto_reduce_skip_attention(
+    conn: sqlite3.Connection,
+    *,
+    candidate_id: str,
+    matter_scope: str,
+    reason: str,
+) -> None:
+    exists = conn.execute(
+        """
+        SELECT 1 FROM human_attention
+        WHERE matter_scope = ? AND target_type = 'candidate' AND target_id = ?
+          AND status = 'open' AND reason = ?
+        LIMIT 1
+        """,
+        (matter_scope, candidate_id, reason),
+    ).fetchone()
+    if exists:
+        return
+    _ = repo.record_human_attention(
+        conn,
+        matter_scope=matter_scope,
+        target_type="candidate",
+        target_id=candidate_id,
+        severity="blocker",
+        reason=reason,
+    )
 
 
 def _short_id() -> str:
@@ -234,10 +299,12 @@ def _tick_matter_scope(
     leased_tasks: list[str],
     executed_tasks: list[str],
     reduction_errors: list[dict[str, str]],
+    skipped_reductions: list[dict[str, str]],
     worker_errors: list[dict[str, str]],
 ) -> str:
     task_ids = set(leased_tasks) | set(executed_tasks)
     task_ids.update(item["task_id"] for item in reduction_errors if item.get("task_id"))
+    task_ids.update(item["task_id"] for item in skipped_reductions if item.get("task_id"))
     task_ids.update(item["task_id"] for item in worker_errors if item.get("task_id"))
     scopes = {
         scope

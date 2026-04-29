@@ -120,6 +120,50 @@ def test_free_loop_once_reduces_pending_candidates_and_imports_proposed_tasks(tm
     assert provider_runs == 0
 
 
+def test_free_loop_once_skips_high_stage_auto_reduction(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="draft-auto-reduce",
+                title="Draft auto reduce",
+                task_type="draft_preparation",
+                matter_scope="alpha",
+                stage=LegalStage.S8_DRAFT_PREPARATION,
+            ),
+        )
+        candidate_id = repo.record_candidate_output(
+            conn,
+            task_id="draft-auto-reduce",
+            lease_id=None,
+            worker_id="worker-01",
+            output_type="worker_result_packet",
+            payload=_packet("draft-auto-reduce"),
+        )
+        _ = conn.execute("UPDATE tasks SET status = ? WHERE task_id = 'draft-auto-reduce'", (TaskStatus.REDUCER_PENDING,))
+
+        result = run_free_loop_once(conn, output_dir=tmp_path / "out", capacity=0, execute_workers=False)
+
+        candidate = cast(Mapping[str, object], conn.execute("SELECT status FROM candidate_outputs WHERE candidate_id = ?", (candidate_id,)).fetchone())
+        task = cast(Mapping[str, object], conn.execute("SELECT status FROM tasks WHERE task_id = 'draft-auto-reduce'").fetchone())
+        attention = cast(Mapping[str, object], conn.execute("SELECT matter_scope, target_type, target_id, reason FROM human_attention WHERE target_id = ?", (candidate_id,)).fetchone())
+
+    assert result["reduced_candidates"] == []
+    assert result["skipped_reductions"] == [
+        {
+            "candidate_id": candidate_id,
+            "task_id": "draft-auto-reduce",
+            "reason": "free loop auto-reduction is disabled for high-risk legal stage S8; manual reducer review required",
+        }
+    ]
+    assert candidate["status"] == "candidate"
+    assert task["status"] == str(TaskStatus.REDUCER_PENDING)
+    assert attention["matter_scope"] == "alpha"
+    assert attention["target_type"] == "candidate"
+    assert "manual reducer review required" in str(attention["reason"])
+
+
 def test_free_loop_once_executes_local_capacity_and_leaves_reducer_pending_for_next_tick(tmp_path: Path):
     db_path = init_db(tmp_path)
     with repo.db_connection(db_path) as conn:
