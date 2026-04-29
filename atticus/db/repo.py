@@ -103,6 +103,9 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
             "latency_ms": "INTEGER NOT NULL DEFAULT 0",
             "retries": "INTEGER NOT NULL DEFAULT 0",
         },
+        "human_attention": {
+            "matter_scope": "TEXT NOT NULL DEFAULT 'unknown'",
+        },
     }
     for table, columns in additions.items():
         try:
@@ -113,12 +116,16 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
             if name not in existing:
                 _ = conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
     _backfill_validation_matter_scope(conn)
+    _backfill_human_attention_matter_scope(conn)
 
 
 def _ensure_indexes(conn: sqlite3.Connection) -> None:
     _ = conn.execute("DROP INDEX IF EXISTS validation_target_idx")
     _ = conn.execute(
         "CREATE INDEX IF NOT EXISTS validation_target_idx ON validation_results(matter_scope, target_type, target_id, gate_name, passed)"
+    )
+    _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS human_attention_scope_status_idx ON human_attention(matter_scope, status, severity, created_at)"
     )
 
 
@@ -139,11 +146,30 @@ def _backfill_validation_matter_scope(conn: sqlite3.Connection) -> None:
         )
 
 
+def _backfill_human_attention_matter_scope(conn: sqlite3.Connection) -> None:
+    try:
+        rows = conn.execute(
+            "SELECT attention_id, target_type, target_id FROM human_attention WHERE matter_scope = 'unknown'"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return
+    for row in rows:
+        matter_scope = _matter_scope_for_target(conn, target_type=str(row["target_type"]), target_id=str(row["target_id"]))
+        if matter_scope is None:
+            continue
+        _ = conn.execute(
+            "UPDATE human_attention SET matter_scope = ? WHERE attention_id = ? AND matter_scope = 'unknown'",
+            (matter_scope, row["attention_id"]),
+        )
+
+
 def _matter_scope_for_target(conn: sqlite3.Connection, *, target_type: str, target_id: str | None) -> str | None:
     if not target_id:
         return None
     if target_type == "matter":
         return target_id
+    if target_type == "provider_policy":
+        target_type = "task"
     table_column = {
         "task": ("tasks", "task_id"),
         "source": ("sources", "source_id"),
@@ -792,13 +818,18 @@ def record_human_attention(
     severity: str,
     reason: str,
     status: str = "open",
+    matter_scope: str | None = None,
 ) -> int:
+    target_matter_scope = _matter_scope_for_target(conn, target_type=target_type, target_id=target_id)
+    if matter_scope is not None and target_matter_scope is not None and matter_scope != target_matter_scope:
+        raise ValueError(f"human attention matter_scope {matter_scope!r} does not match target matter {target_matter_scope!r}")
+    resolved_matter_scope = matter_scope or target_matter_scope or "unknown"
     cur = conn.execute(
         """
-        INSERT INTO human_attention(target_type, target_id, severity, reason, status, created_at)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO human_attention(matter_scope, target_type, target_id, severity, reason, status, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
-        (target_type, target_id, severity, reason, status, utc_now()),
+        (resolved_matter_scope, target_type, target_id, severity, reason, status, utc_now()),
     )
     lastrowid = cur.lastrowid
     if lastrowid is None:

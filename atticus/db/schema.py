@@ -8,7 +8,7 @@ the legal operating model.
 
 from __future__ import annotations
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 DDL = """
 PRAGMA foreign_keys = ON;
@@ -531,6 +531,7 @@ CREATE TABLE IF NOT EXISTS budget_entries (
 
 CREATE TABLE IF NOT EXISTS human_attention (
   attention_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  matter_scope TEXT NOT NULL DEFAULT 'unknown',
   target_type TEXT NOT NULL,
   target_id TEXT NOT NULL,
   severity TEXT NOT NULL,

@@ -40,6 +40,7 @@ def import_proposed_tasks_from_candidate(conn: sqlite3.Connection, candidate: Ma
             _record_rejected_proposed_task(
                 conn,
                 task_id=task_id,
+                matter_scope=parent_matter_scope,
                 reason=f"proposed task matter_scope {proposed_matter_scope!r} does not match parent matter {parent_matter_scope!r}",
             )
             continue
@@ -59,13 +60,13 @@ def import_proposed_tasks_from_candidate(conn: sqlite3.Connection, candidate: Ma
             matter_dependencies=matter_dependencies,
         )
         if dependency_error:
-            _record_rejected_proposed_task(conn, task_id=task_id, reason=dependency_error)
+            _record_rejected_proposed_task(conn, task_id=task_id, matter_scope=matter_scope, reason=dependency_error)
             continue
         if _task_exists(conn, task_id):
             if _existing_task_is_same_import(conn, task_id=task_id, matter_scope=matter_scope, candidate_id=candidate_id):
                 imported.append(task_id)
             else:
-                _record_rejected_proposed_task(conn, task_id=task_id, reason="proposed task id collides with an existing task")
+                _record_rejected_proposed_task(conn, task_id=task_id, matter_scope=matter_scope, reason="proposed task id collides with an existing task")
             continue
         stage = str(task_map.get("stage") or LegalStage.S0_SOURCE_INVENTORY)
         try:
@@ -77,6 +78,7 @@ def import_proposed_tasks_from_candidate(conn: sqlite3.Connection, candidate: Ma
                 target_id=task_id,
                 severity="blocker",
                 reason=f"proposed task rejected: {exc}",
+                matter_scope=matter_scope,
             )
             continue
         repo.add_task(
@@ -161,13 +163,14 @@ def _existing_task_is_same_import(conn: sqlite3.Connection, *, task_id: str, mat
     return str(row["matter_scope"]) == matter_scope and str(row["imported_from_candidate_id"] or "") == candidate_id
 
 
-def _record_rejected_proposed_task(conn: sqlite3.Connection, *, task_id: str, reason: str) -> None:
+def _record_rejected_proposed_task(conn: sqlite3.Connection, *, task_id: str, matter_scope: str, reason: str) -> None:
     _ = repo.record_human_attention(
         conn,
         target_type="proposed_task",
         target_id=task_id,
         severity="blocker",
         reason=f"proposed task rejected: {reason}",
+        matter_scope=matter_scope,
     )
 
 
