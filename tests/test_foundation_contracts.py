@@ -8,6 +8,7 @@ import sqlite3
 
 import pytest
 
+from atticus.cli import main as cli_main
 from atticus.core.policies import TaskStatus, TrustStatus
 from atticus.core.tasks import TaskSpec
 from atticus.db import repo
@@ -502,7 +503,8 @@ def test_canonical_writer_rejects_path_escape_and_symlink_targets(tmp_path: Path
 
 def test_legacy_validation_result_schema_migrates_before_index_creation(tmp_path: Path):
     db_path = tmp_path / "legacy.sqlite3"
-    with sqlite3.connect(db_path) as conn:
+    conn = sqlite3.connect(db_path)
+    try:
         _ = conn.execute(
             """
             CREATE TABLE validation_results (
@@ -523,6 +525,9 @@ def test_legacy_validation_result_schema_migrates_before_index_creation(tmp_path
         _ = conn.execute(
             "INSERT INTO validation_results(target_type, target_id, gate_name, passed, severity, details_json, created_at) VALUES ('matter', 'beta', 'foundation', 1, 'info', '{}', 'now')"
         )
+        conn.commit()
+    finally:
+        conn.close()
 
     repo.initialize_database(db_path)
 
@@ -534,6 +539,42 @@ def test_legacy_validation_result_schema_migrates_before_index_creation(tmp_path
     assert "matter_scope" in columns
     assert index_columns[:2] == ["matter_scope", "target_type"]
     assert validation["matter_scope"] == "beta"
+
+
+def test_legacy_human_attention_schema_backfills_matter_scope(tmp_path: Path):
+    db_path = tmp_path / "legacy-attention.sqlite3"
+    conn = sqlite3.connect(db_path)
+    try:
+        _ = conn.execute(
+            """
+            CREATE TABLE human_attention (
+              attention_id INTEGER PRIMARY KEY AUTOINCREMENT,
+              target_type TEXT NOT NULL,
+              target_id TEXT NOT NULL,
+              severity TEXT NOT NULL,
+              reason TEXT NOT NULL,
+              status TEXT NOT NULL,
+              created_at TEXT NOT NULL
+            ) STRICT
+            """
+        )
+        _ = conn.execute(
+            "INSERT INTO human_attention(target_type, target_id, severity, reason, status, created_at) VALUES ('matter', 'beta', 'blocker', 'legacy issue', 'open', 'now')"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    repo.initialize_database(db_path)
+
+    with repo.db_connection(db_path) as conn:
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(human_attention)")}
+        index_columns = [row["name"] for row in conn.execute("PRAGMA index_info(human_attention_scope_status_idx)")]
+        attention = cast(Mapping[str, object], conn.execute("SELECT matter_scope FROM human_attention").fetchone())
+
+    assert "matter_scope" in columns
+    assert index_columns[:2] == ["matter_scope", "status"]
+    assert attention["matter_scope"] == "beta"
 
 
 def test_lease_events_use_task_matter_scope(tmp_path: Path):
@@ -550,6 +591,199 @@ def test_lease_events_use_task_matter_scope(tmp_path: Path):
         ]
 
     assert scopes == ["beta", "beta"]
+
+
+def test_human_attention_is_matter_scoped_and_status_can_filter(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(conn, TaskSpec(task_id="alpha-attention", title="Alpha attention", task_type="extract", matter_scope="alpha"))
+        repo.add_task(conn, TaskSpec(task_id="beta-attention", title="Beta attention", task_type="extract", matter_scope="beta"))
+        _ = repo.record_human_attention(
+            conn,
+            target_type="task",
+            target_id="alpha-attention",
+            severity="blocker",
+            reason="alpha needs review",
+        )
+        _ = repo.record_human_attention(
+            conn,
+            target_type="task",
+            target_id="beta-attention",
+            severity="warning",
+            reason="beta needs review",
+        )
+
+    alpha_status = generate_status(str(db_path), matter_scope="alpha")
+    global_status = generate_status(str(db_path))
+
+    assert alpha_status.counts["open_human_attention"] == 1
+    assert alpha_status.human_attention[0]["matter_scope"] == "alpha"
+    assert alpha_status.human_attention[0]["target_id"] == "alpha-attention"
+    assert global_status.counts["open_human_attention"] == 2
+
+
+def test_human_attention_rejects_explicit_matter_scope_mismatch(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(conn, TaskSpec(task_id="alpha-attention", title="Alpha attention", task_type="extract", matter_scope="alpha"))
+
+        with pytest.raises(ValueError, match="does not match target matter"):
+            _ = repo.record_human_attention(
+                conn,
+                target_type="task",
+                target_id="alpha-attention",
+                severity="blocker",
+                reason="wrong explicit matter",
+                matter_scope="beta",
+            )
+
+        attention_count = _count(conn, "SELECT COUNT(*) AS n FROM human_attention")
+
+    assert attention_count == 0
+
+
+def test_candidate_human_attention_resolves_parent_matter_scope(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(conn, TaskSpec(task_id="alpha-candidate-task", title="Alpha candidate", task_type="extract", matter_scope="alpha"))
+        candidate_id = repo.record_candidate_output(
+            conn,
+            task_id="alpha-candidate-task",
+            lease_id=None,
+            worker_id="worker",
+            output_type="packet",
+            payload={"ok": True},
+        )
+        _ = repo.record_human_attention(
+            conn,
+            target_type="candidate",
+            target_id=candidate_id,
+            severity="warning",
+            reason="candidate needs review",
+        )
+        _ = repo.record_validation(
+            conn,
+            target_type="candidate",
+            target_id=candidate_id,
+            gate_name="candidate_gate",
+            passed=False,
+            severity="error",
+        )
+        scopes = [
+            str(row["matter_scope"])
+            for row in conn.execute(
+                "SELECT matter_scope FROM human_attention WHERE target_type = 'candidate' ORDER BY attention_id"
+            ).fetchall()
+        ]
+
+    assert scopes == ["alpha", "alpha"]
+    assert generate_status(str(db_path), matter_scope="alpha").counts["open_human_attention"] == 2
+
+
+def test_manual_human_attention_requires_matter_when_target_scope_is_unknown(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    command = ["human-attention", "--db", str(db_path)]
+    attention_args = [
+        "--add",
+        "--target-type",
+        "manual",
+        "--target-id",
+        "manual",
+        "--severity",
+        "blocker",
+        "--reason",
+        "needs operator",
+    ]
+
+    code = cli_main([*command, *attention_args])
+    with repo.db_connection(db_path) as conn:
+        attention_count = _count(conn, "SELECT COUNT(*) AS n FROM human_attention")
+
+    assert code == 2
+    assert attention_count == 0
+
+    code = cli_main([*command, "--matter", "alpha", *attention_args])
+    with repo.db_connection(db_path) as conn:
+        attention = cast(Mapping[str, object], conn.execute("SELECT matter_scope FROM human_attention").fetchone())
+
+    assert code == 0
+    assert attention["matter_scope"] == "alpha"
+
+
+def test_status_matter_filter_scopes_counts_and_sections(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.upsert_run(conn, "alpha-run", "alpha-paused", matter_scope="alpha")
+        repo.upsert_run(conn, "beta-run", "beta-running", matter_scope="beta")
+        _ = repo.add_source(conn, source_id="alpha-src", matter_scope="alpha", path="alpha.txt", sha256="alpha")
+        _ = repo.add_source(conn, source_id="beta-src", matter_scope="beta", path="beta.txt", sha256="beta")
+        _ = repo.add_artifact(conn, artifact_id="alpha-art", matter_scope="alpha", path="alpha.md", artifact_type="memo", stale=True)
+        _ = repo.add_artifact(conn, artifact_id="beta-art", matter_scope="beta", path="beta.md", artifact_type="memo", stale=True)
+        repo.add_task(conn, TaskSpec(task_id="alpha-active", title="Alpha active", task_type="extract", matter_scope="alpha"))
+        repo.add_task(conn, TaskSpec(task_id="beta-active", title="Beta active", task_type="extract", matter_scope="beta"))
+        repo.add_task(conn, TaskSpec(task_id="alpha-blocked", title="Alpha blocked", task_type="extract", matter_scope="alpha", status=TaskStatus.BLOCKED))
+        repo.add_task(conn, TaskSpec(task_id="beta-blocked", title="Beta blocked", task_type="extract", matter_scope="beta", status=TaskStatus.BLOCKED))
+        _ = repo.record_candidate_output(conn, task_id="alpha-active", lease_id=None, worker_id="worker", output_type="packet", payload={"ok": True})
+        _ = repo.record_candidate_output(conn, task_id="beta-active", lease_id=None, worker_id="worker", output_type="packet", payload={"ok": True})
+        _ = acquire_lease(conn, task_id="alpha-active", worker_id="alpha-worker")
+        _ = acquire_lease(conn, task_id="beta-active", worker_id="beta-worker")
+        _ = conn.execute(
+            """
+            INSERT INTO tracked_files(tracked_file_id, matter_scope, absolute_path, relative_path, sha256,
+              size_bytes, file_kind, status, provenance, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("alpha-track", "alpha", "/workspace/alpha.txt", "alpha.txt", "alpha", 5, "text", "ready", "test", "now", "now"),
+        )
+        _ = conn.execute(
+            """
+            INSERT INTO tracked_files(tracked_file_id, matter_scope, absolute_path, relative_path, sha256,
+              size_bytes, file_kind, status, provenance, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("beta-track", "beta", "/workspace/beta.txt", "beta.txt", "beta", 4, "text", "ready", "test", "now", "now"),
+        )
+        _ = repo.record_provider_run(
+            conn,
+            task_id="alpha-active",
+            requested_provider="openai-codex",
+            requested_model="gpt-5.5",
+            actual_provider="openai-codex",
+            actual_model="gpt-5.5",
+            output_tokens=11,
+            estimated_cost_usd=1.25,
+        )
+        _ = repo.record_provider_run(
+            conn,
+            task_id="beta-active",
+            requested_provider="openai-codex",
+            requested_model="gpt-5.5",
+            actual_provider="openai-codex",
+            actual_model="gpt-5.5",
+            output_tokens=19,
+            estimated_cost_usd=2.5,
+        )
+        _ = repo.add_budget(conn, scope_type="matter", scope_id="alpha", limit_usd=10)
+        _ = repo.add_budget(conn, scope_type="matter", scope_id="beta", limit_usd=20)
+
+    report = generate_status(str(db_path), matter_scope="alpha")
+
+    assert report.run_state == "alpha-paused"
+    assert report.counts == {
+        "sources": 1,
+        "artifacts": 1,
+        "tasks": 2,
+        "blocked_tasks": 1,
+        "candidate_outputs": 1,
+        "tracked_files": 1,
+        "open_human_attention": 0,
+    }
+    assert [item["task_id"] for item in report.blocked_tasks] == ["alpha-blocked"]
+    assert [item["artifact_id"] for item in report.stale_artifacts] == ["alpha-art"]
+    assert [item["task_id"] for item in report.active_leases] == ["alpha-active"]
+    assert report.provider_usage["estimated_cost_usd"] == 1.25
+    assert report.provider_usage["output_tokens"] == 11
+    assert list(report.budget) == ["matter:alpha"]
 
 
 def test_scheduler_under_fills_capacity_when_only_fewer_tasks_are_safe(tmp_path: Path):

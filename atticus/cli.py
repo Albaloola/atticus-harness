@@ -146,6 +146,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     status = sub.add_parser("status", help="read-only run status")
     _ = status.add_argument("--db", required=True)
+    _ = status.add_argument("--matter")
 
     inspect = sub.add_parser("inspect", help="read-only record inspection")
     _ = inspect.add_argument("--db", required=True)
@@ -368,6 +369,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     attention = sub.add_parser("human-attention", help="list or add human attention items")
     _ = attention.add_argument("--db", required=True)
+    _ = attention.add_argument("--matter")
     _ = attention.add_argument("--add", action="store_true")
     _ = attention.add_argument("--target-type", default="manual")
     _ = attention.add_argument("--target-id", default="manual")
@@ -429,7 +431,7 @@ def _main(args: CliArgs) -> int:
         return 0
 
     if args.command == "status":
-        report = generate_status(args.db)
+        report = generate_status(args.db, matter_scope=args.matter)
         print_json(report.__dict__)
         return 0
 
@@ -937,19 +939,29 @@ def _main(args: CliArgs) -> int:
     if args.command == "human-attention":
         with repo.db_connection(args.db) as conn:
             if args.add:
+                matter_scope = cast(str | None, args.matter)
+                if matter_scope is None and repo.matter_scope_for_target(conn, target_type=args.target_type, target_id=args.target_id) is None:
+                    raise ValueError("human-attention --add requires --matter when target matter cannot be inferred")
                 attention_id = repo.record_human_attention(
                     conn,
                     target_type=args.target_type,
                     target_id=args.target_id,
                     severity=args.severity,
                     reason=args.reason,
+                    matter_scope=matter_scope,
                 )
                 print_json({"attention_id": attention_id})
             else:
+                matter_filter = ""
+                params: tuple[object, ...] = ()
+                if args.matter:
+                    matter_filter = "AND matter_scope = ?"
+                    params = (args.matter,)
                 rows = [
                     _row_to_dict(row)
                     for row in conn.execute(
-                        "SELECT * FROM human_attention WHERE status = 'open' ORDER BY attention_id DESC LIMIT 50"
+                        f"SELECT * FROM human_attention WHERE status = 'open' {matter_filter} ORDER BY attention_id DESC LIMIT 50",
+                        params,
                     )
                 ]
                 print_json({"items": rows})
