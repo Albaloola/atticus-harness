@@ -1,252 +1,336 @@
+<div align="center">
+
 # Atticus Harness
 
-Atticus Harness is a standalone, evidence-first legal AI control plane. It owns
-durable legal memory, matter-scoped evidence, source snapshots, task state,
-context packs, validation, provider policy, budgets, leases, reducer review,
-audit events, and status reporting.
+### Evidence-first legal AI control plane for matter-scoped work, safe model routing, resumable case operations, and reducer-gated legal outputs.
 
-OpenClaw, Codex, Claude Code, OpenRouter, and other agents are execution
-adapters at the edge. They are not the source of truth.
+[![Python](https://img.shields.io/badge/Python-3.11%2B-111827?style=for-the-badge&labelColor=0b1020)](#development-and-verification)
+[![SQLite](https://img.shields.io/badge/SQLite-durable%20ledger-1f6feb?style=for-the-badge&labelColor=0b1020)](#durable-data-model)
+[![Model Policy](https://img.shields.io/badge/Model%20Routing-fail%20closed-b91c1c?style=for-the-badge&labelColor=0b1020)](#smart-model-routing)
+[![Legal Safety](https://img.shields.io/badge/Legal%20Safety-reducer%20gated-047857?style=for-the-badge&labelColor=0b1020)](#safety-doctrine)
+[![Cache](https://img.shields.io/badge/Cache-audited%20not%20proof-7c3aed?style=for-the-badge&labelColor=0b1020)](#cache-and-context-observability)
 
-## Core Doctrine
+<sub>
+Atticus is not a solicitor, does not perform external legal actions, and treats model output as candidate material until validation plus reducer acceptance.
+</sub>
 
-- Evidence before argument.
+</div>
+
+---
+
+## Table Of Contents
+
+- [What Atticus Is](#what-atticus-is)
+- [What It Does](#what-it-does)
+- [Safety Doctrine](#safety-doctrine)
+- [Architecture At A Glance](#architecture-at-a-glance)
+- [Lifecycle: From Source To Canonical Work](#lifecycle-from-source-to-canonical-work)
+- [Legal Control Structure](#legal-control-structure)
+- [Smart Model Routing](#smart-model-routing)
+- [Provider Surfaces](#provider-surfaces)
+- [Adaptive Matters And Orchestrators](#adaptive-matters-and-orchestrators)
+- [Work Runs And Reuse](#work-runs-and-reuse)
+- [Cache And Context Observability](#cache-and-context-observability)
+- [Durable Data Model](#durable-data-model)
+- [Command Playbook](#command-playbook)
+- [Development And Verification](#development-and-verification)
+
+---
+
+## What Atticus Is
+
+Atticus Harness is a standalone legal operations harness. It is the durable
+control plane that owns matter state, source snapshots, task orchestration,
+context packs, model policy, budgets, leases, candidate packets, reducer review,
+legal memory, provider telemetry, and audit events.
+
+OpenClaw, Codex, OpenRouter, Anthropic, Claude Code, and other agents are
+adapters at the edge. They can help execute bounded work, but they are not the
+source of truth. The harness decides what context is visible, what model is
+allowed, whether a task can run, and whether any output may become canonical.
+
+<table>
+  <tr>
+    <th align="left">Atticus Owns</th>
+    <th align="left">Atticus Refuses</th>
+  </tr>
+  <tr>
+    <td>
+      Matter-scoped evidence, durable task state, model decisions, context
+      fingerprints, candidate packets, reducer records, and legal memory.
+    </td>
+    <td>
+      Silent model fallback, cross-matter context, memory-as-proof, cache-as-proof,
+      autonomous external legal action, and worker writes to canonical state.
+    </td>
+  </tr>
+  <tr>
+    <td>
+      Dry-run-first planning, adaptive matter profiles, per-matter orchestrators,
+      resumable work runs, and auditable provider/cache provenance.
+    </td>
+    <td>
+      Hidden retries, unbounded autonomous loops, uncited legal conclusions,
+      free-model routing by default, and live Anthropic use by default.
+    </td>
+  </tr>
+</table>
+
+## What It Does
+
+Atticus coordinates legal case-preparation work without letting model output
+become trusted merely because it sounds confident.
+
+Core capabilities:
+
+- Imports and snapshots matter-local sources with chain-of-custody metadata.
+- Extracts local text and OCR coverage without provider calls.
+- Builds deterministic context packs with evidence manifests, source excerpts,
+  artifact bundles, memory orientation, validation gates, skills, tools, and
+  required output schema.
+- Schedules S0-S9 legal stages with dependency, budget, matter, citation,
+  stale-input, provider, human-gate, and certification checks.
+- Routes models through deterministic policy and smart model decisions.
+- Produces strict `worker_result_packet.v2` candidate packets.
+- Runs verifier checks such as citation audit and hostile review.
+- Reduces accepted candidate material through the reducer-only canonical writer.
+- Maintains typed legal memory as orientation, not proof.
+- Tracks durable work runs so interrupted work can be resumed and prior work can
+  be reused only when it remains matter-local and non-stale.
+- Records provider, context, model-policy, cache, and failover provenance.
+
+## Safety Doctrine
+
+The harness is built around a simple rule: a legal AI worker may help discover,
+organize, and propose, but it must not quietly become the authority.
+
+Non-negotiable invariants:
+
+- Evidence comes before argument.
 - Context must be matter-scoped and inspectable.
 - Model output is candidate material until validation and reducer acceptance.
-- Workers may create candidate packets only.
+- Workers create candidate packets only.
 - Reducers are the only canonical writers.
-- Provider/model routing is explicit and fail-closed.
-- External legal actions are blocked unless a future safe design explicitly
-  supports them and the operator approves the exact action.
-- Memory is an operational projection, not proof.
+- Provider/model routing is explicit, deterministic, and fail-closed.
+- External legal actions are blocked unless a future safe design and exact
+  operator approval explicitly authorize the action.
+- Memory is operational orientation, not evidence.
+- Cache hits save cost, not legal verification.
+- Human gates remain in place for high-risk and final-stage work.
 
-## Implemented Architecture
+```mermaid
+flowchart LR
+    A["Source material"] --> B["Matter-scoped extraction"]
+    B --> C["Context pack"]
+    C --> D["Worker candidate packet"]
+    D --> E["Verifier checks"]
+    E --> F["Reducer review"]
+    F -->|accepted| G["Canonical artifact or task"]
+    F -->|rejected| H["Quarantine or human attention"]
+    G --> I["Legal memory candidate"]
+    I --> J["Reducer-gated memory review"]
 
-- SQLite durable ledger with append-only event chain, mutable projections, and
-  rebuildable legal-memory search indexes.
-- Legal evidence graph for sources, source snapshots, artifact versions,
-  dependencies, extraction/OCR/transcription records, production mappings,
-  chronology events, issues, claims, authorities, citation spans, validations,
-  and certifications.
-- Read-only query path: `ask`, `status`, `inspect`, `context`, `commands`,
-  `tools`, `workflow list`, and `session` inspection.
-- Active factory path: `schedule`, `lease`, `work-order`, `reduce`, `validate`,
-  `certify`, budgets, provider policy, and human-attention queue.
-- Strict `worker_result_packet.v2` validation with findings, citations,
-  proposed artifacts, proposed tasks, uncertainties, contradictions, risk
-  flags, redaction flags, and blocked external action requests.
-- Dependency-aware S0-S9 scheduler with source, artifact, task, matter,
-  certification, stale-input, provider, and budget gates.
-- Deterministic context pack v2 section registry with fingerprints, token
-  estimates, prompt-cache telemetry fields, evidence manifests, bounded
-  extracted/OCR source-material excerpts, artifacts, authorities, memory index,
-  validation gates, skills, tools, and required output schema.
-- First-class model routing for OpenRouter-hosted models, explicit OpenRouter
-  fallback pools, and exact Codex GPT-5.5 policy with requested/actual
-  provider/model accounting.
-- Bounded Codex CLI adapter with strict live gates and JSON candidate-packet
-  output.
-- Typed legal tool kernel with read-only and guarded mutating tools.
-- Read-before-write draft artifact editing with content hashes and artifact
-  versions.
-- Markdown legal workflows for repeatable task graphs.
-- Legal coordinator mode for self-contained, verifier-aware task planning.
-- Typed legal memory taxonomy, reducer-gated memory extraction, and dry-run
-  case memory consolidation.
-- Session transcript persistence and internal lifecycle hooks.
-- Candidate-only legacy migration with dry-run reports and validation tasks.
-
-## Safety Defaults
-
-- `ask` is read-only and never launches workers or mutates canonical state.
-- Matter-scoped query/rebuild commands authorize against
-  `ATTICUS_AUTHORIZED_MATTER` before accepting `--matter`.
-- Commands that can mutate state default to dry-run or require explicit
-  `--write`, `--write-context`, or equivalent.
-- OpenClaw adapter launch is blocked in this package.
-- External legal actions are policy-blocked: no emails, filings, uploads,
-  service, court contact, party contact, counsel contact, or third-party
-  messages.
-- Legacy outputs import as `candidate`, `rough_note`, or rejected/noise. They
-  are never certified automatically.
-- Provider fallback fails closed unless configured through an explicit model
-  pool.
-- Prompt-bearing surfaces tell workers that output is candidate, not canonical,
-  and require facts, law, procedure, inference, contradiction, risk, drafting
-  notes, and uncertainty to remain distinct and citation-bound.
-- Session resume is transcript-only and must not replay provider calls.
-- Lifecycle hooks are internal Python checks. They block external legal action
-  and cross-matter context, warn on stale evidence, and block final drafting
-  where required hostile-review certification is missing.
-
-## Repository And Workspaces
-
-- Harness repo: `/home/alba/atticus-harness`
-- Atticus OpenClaw workspace:
-  `/home/alba/.openclaw/workspace-atticus-legal`
-- Atticus workspace harness skill:
-  `/home/alba/.openclaw/workspace-atticus-legal/.agents/skills/atticus-harness-mastery/SKILL.md`
-- Scots legal humanizer skill:
-  `/home/alba/.openclaw/workspace-atticus-legal/.agents/skills/scots-legal-humanizer/SKILL.md`
-
-Do not modify the general OpenClaw workspace when updating Atticus-specific
-agent memory or skills.
-
-## Quick Start
-
-Initialize a new database:
-
-```bash
-python -m atticus.cli init --db data/atticus.sqlite3
+    D -. "never canonical" .-> H
+    I -. "orientation only" .-> C
 ```
 
-Inspect a database without live work:
+## Architecture At A Glance
 
-```bash
-python -m atticus.cli doctor --db data/atticus.sqlite3
-python -m atticus.cli status --db data/atticus.sqlite3
-python -m atticus.cli schedule --db data/atticus.sqlite3 --capacity 5 --dry-run
+Atticus is intentionally split into local control modules. The database and
+event stream sit at the center; provider runtimes and agent adapters sit at the
+outside.
+
+```mermaid
+flowchart TB
+    subgraph Operator["Operator Surface"]
+        CLI["atticus.cli"]
+        Docs["README / ADRs / workflows"]
+    end
+
+    subgraph Control["Legal Control Plane"]
+        Scheduler["scheduler<br/>leases, gates, budgets"]
+        Coordinator["agents.coordinator<br/>adaptive plans"]
+        Orchestrator["agents.orchestrator<br/>matter repair loop"]
+        Profiles["core.matter_profiles<br/>matter-local structure"]
+        WorkRuns["work_runs<br/>resume and reuse"]
+    end
+
+    subgraph Evidence["Evidence And Context"]
+        Graph["graph<br/>sources, artifacts, claims, authorities"]
+        Extraction["extraction.local<br/>text and OCR coverage"]
+        Context["context.packs<br/>deterministic prompt packs"]
+        Retrieval["retrieval<br/>ask, search, reuse"]
+        Memory["memory<br/>typed orientation"]
+    end
+
+    subgraph Models["Provider Layer"]
+        Decision["providers.model_decision<br/>Flash / Pro / Codex / reserved"]
+        Policy["providers.model_policy<br/>profiles, routes, pools"]
+        Runtime["providers.runtime_base<br/>validation and probes"]
+        OpenRouter["OpenRouter DeepSeek"]
+        Codex["Codex GPT-5.5 exact"]
+        Anthropic["Anthropic reserved"]
+    end
+
+    subgraph Canon["Canonical Boundary"]
+        Packet["worker_result_packet.v2"]
+        Verify["verifier"]
+        Reducer["reducer<br/>canonical writer"]
+    end
+
+    subgraph Store["SQLite Durable Ledger"]
+        DB["schema v5<br/>STRICT tables + event chain"]
+        Cache["provider_runs<br/>prompt_cache_observations"]
+    end
+
+    CLI --> Scheduler
+    CLI --> Coordinator
+    CLI --> Orchestrator
+    Scheduler --> Context
+    Coordinator --> Profiles
+    Orchestrator --> WorkRuns
+    Graph --> Context
+    Extraction --> Graph
+    Retrieval --> Context
+    Memory --> Context
+    Context --> Decision
+    Decision --> Policy
+    Policy --> Runtime
+    Runtime --> OpenRouter
+    Runtime --> Codex
+    Runtime --> Anthropic
+    Runtime --> Packet
+    Packet --> Verify
+    Verify --> Reducer
+    Reducer --> DB
+    Scheduler --> DB
+    WorkRuns --> DB
+    Cache --> DB
 ```
 
-Build a dry-run work order:
+### Module Map
 
-```bash
-python -m atticus.cli work-order --db data/atticus.sqlite3 --task-id TASK_ID --dry-run
-python -m atticus.cli context --db data/atticus.sqlite3 --task-id TASK_ID --json
+| Area | Modules | Purpose |
+| --- | --- | --- |
+| CLI and command registry | `atticus/cli.py`, `atticus/commands/` | Operator entry points, command metadata, read/write/live/dry-run visibility. |
+| Durable store | `atticus/db/`, `atticus/core/` | SQLite schema, matters, runs, tasks, policies, event stream, matter profiles. |
+| Evidence graph | `atticus/graph/` | Sources, snapshots, artifacts, dependencies, issues, claims, authorities, staleness. |
+| Extraction | `atticus/extraction/local.py` | Local text/OCR coverage without live provider calls. |
+| Context | `atticus/context/` | Deterministic context pack sections, diagnostics, compression, cache-safe prefixes. |
+| Scheduling | `atticus/scheduler/` | Dependency-aware task selection, leases, gates, capacity, supervisor loop. |
+| Providers | `atticus/providers/`, `atticus/adapters/` | Policy validation, smart decisioning, OpenRouter, Codex, Anthropic reserved surface. |
+| Agents | `atticus/agents/` | Coordinator, orchestrator, subagents, cache-safe context sharing. |
+| Reducer | `atticus/reducer/` | Reducer packet review, dissent/council support, canonical writer. |
+| Retrieval and memory | `atticus/retrieval/`, `atticus/memory/` | Read-only ask/search, work reuse, typed legal memory extraction and consolidation. |
+| Work persistence | `atticus/work_runs.py` | Resume tokens, work step ledger, reuse records, stale invalidation. |
+
+## Lifecycle: From Source To Canonical Work
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant O as Operator
+    participant H as Harness CLI
+    participant DB as SQLite Ledger
+    participant C as Context Builder
+    participant M as Model Decision
+    participant R as Runtime Adapter
+    participant V as Verifier
+    participant Red as Reducer
+
+    O->>H: seed, schedule, or create plan
+    H->>DB: read matter, sources, tasks, gates
+    H->>C: build deterministic context pack
+    C->>DB: persist context fingerprint
+    H->>M: decide Flash / Pro / Codex / blocked
+    M->>DB: persist auditable decision
+    H->>R: execute only if lease, policy, budget, and live gates pass
+    R->>DB: record provider run and cache telemetry
+    R-->>H: worker_result_packet.v2 candidate
+    H->>V: validate citations, risks, contradictions, schema
+    V->>DB: record verifier findings
+    H->>Red: reducer reviews accepted candidate
+    Red->>DB: canonical write in savepoint-protected transaction
 ```
 
-Discover available commands and tools:
+## Legal Control Structure
 
-```bash
-python -m atticus.cli commands list --json
-python -m atticus.cli command show run-free-loop --json
-python -m atticus.cli tools list --db data/atticus.sqlite3 --json
+Atticus keeps a fixed baseline legal workflow and lets each matter adapt safely
+from that baseline.
+
+| Stage | Name | Typical Work | Normal Model Tier |
+| --- | --- | --- | --- |
+| S0 | Source inventory | File intake, inventory, source triage, extraction gaps | Flash worker |
+| S1 | Extraction QA | OCR/text coverage, direct citation checks | Flash worker |
+| S2 | Classification | Source classification, duplicate detection, production mapping | Flash worker |
+| S3 | Chronology | Direct event extraction where citations are straightforward | Flash worker |
+| S4 | Issue mapping | Factual issue grouping and routine scaffolding | Flash worker |
+| S5 | Strategy planning | Matter orchestration and synthesis | Pro orchestrator |
+| S6 | Authority mapping | Law and authority analysis | Pro orchestrator |
+| S7 | Hostile review | Opponent review, contradiction analysis, risk attack | Pro orchestrator |
+| S8 | Draft preparation | Draft-influencing analysis and filing-pack preparation | Pro or Codex only where policy explicitly says code |
+| S9 | Final quality gate | Final review, citation/risk gate, human review | Pro orchestrator |
+
+Foundation gates prevent downstream work from running before the evidence base is
+ready. S6-S9 tasks are blocked unless prerequisites are met or the task is
+explicitly a gap-finding or repair task.
+
+## Smart Model Routing
+
+Atticus model selection is deterministic and auditable. The smart decision layer
+uses explicit task metadata, risk, stage, contradictions, uncertainty, authority
+needs, drafting finality, evidence volume, requested capabilities, and operator
+override fields.
+
+```mermaid
+flowchart LR
+    Input["ModelDecisionInput"] --> NeedCode{"code / schema / harness?"}
+    NeedCode -->|yes| Codex["codex_exact<br/>openai-codex / gpt-5.5"]
+    NeedCode -->|no| HighRisk{"S5-S9, authority,<br/>hostile review,<br/>contradictions,<br/>material uncertainty?"}
+    HighRisk -->|yes| Pro["pro_orchestrator<br/>DeepSeek V4 Pro via OpenRouter"]
+    HighRisk -->|no| Routine{"routine worker task?"}
+    Routine -->|yes| Flash["flash_worker<br/>DeepSeek V4 Flash via OpenRouter"]
+    Routine -->|unknown risk| Review["flash_worker + human review<br/>or blocked"]
+    Input --> Reserved{"Anthropic or held/free route?"}
+    Reserved -->|reserved or unsafe| Blocked["blocked"]
 ```
 
-## Matter Seeding
+Decision tiers:
 
-Seed or repair a matter from a local workspace and inventory. This is dry-run
-unless `--write` is supplied:
+| Tier | Provider / Model | Used For | Fallback |
+| --- | --- | --- | --- |
+| `flash_worker` | OpenRouter `deepseek/deepseek-v4-flash` | Source inventory, extraction QA, classification, dedupe, retrieval, routine redaction scan, chronology extraction, candidate formatting. | Disabled unless explicit pool policy says otherwise. |
+| `pro_orchestrator` | OpenRouter `deepseek/deepseek-v4-pro` | Orchestration, authority mapping, contradiction analysis, hostile review, high-risk synthesis, final gates, reducer decision support. | Disabled unless explicit pool policy says otherwise. |
+| `codex_exact` | `openai-codex` `gpt-5.5` | Code, schema migrations, tests, harness self-improvement, coding agents, exact Codex routes. | Never. |
+| `anthropic_reserved` | Anthropic Opus/Sonnet aliases | Future reserved option only. | Never. |
+| `blocked` | None | Missing data, disabled profile, held/free model, unsafe route, unknown provider. | Never. |
 
-```bash
-python -m atticus.cli seed-matter \
-  --db data/napier-accommodation-arrears.sqlite \
-  --matter napier-accommodation-arrears \
-  --workspace matters/napier-accommodation-arrears \
-  --inventory matters/napier-accommodation-arrears/02-registers/file_inventory.csv \
-  --provider openai-codex \
-  --model gpt-5.5 \
-  --no-fallback
-```
-
-Write after reviewing the JSON summary:
-
-```bash
-python -m atticus.cli seed-matter \
-  --db data/napier-accommodation-arrears.sqlite \
-  --matter napier-accommodation-arrears \
-  --workspace matters/napier-accommodation-arrears \
-  --inventory matters/napier-accommodation-arrears/02-registers/file_inventory.csv \
-  --provider openai-codex \
-  --model gpt-5.5 \
-  --no-fallback \
-  --write
-```
-
-The seeder does not read credentials, call providers, create leases, create
-provider runs, or perform external actions.
-
-## Local Extraction And OCR
-
-Source extraction is a local, no-provider harness path. It repairs the durable
-coverage tables from matter-local files and writes candidate extracted-text
-artifacts under the matter workspace. It is dry-run unless `--write` is
-supplied:
-
-```bash
-python -m atticus.cli extract-sources \
-  --db data/napier-accommodation-arrears.sqlite \
-  --matter napier-accommodation-arrears \
-  --workspace matters/napier-accommodation-arrears
-```
-
-Target specific sources:
-
-```bash
-python -m atticus.cli extract-sources \
-  --db data/napier-accommodation-arrears.sqlite \
-  --matter napier-accommodation-arrears \
-  --workspace matters/napier-accommodation-arrears \
-  --source-id NAP-SRC-0051 \
-  --source-id NAP-SRC-0052 \
-  --write
-```
-
-The extractor supports local text extraction for DOCX, legacy DOC through
-local conversion tools, PDFs through `pdftotext`, text/HTML files, and images
-through existing OCR text or local `tesseract`. Missing files or unsupported
-formats are reported as skipped/human-attention items instead of crashing. It
-does not create leases, candidate worker outputs, provider runs, canonical
-legal memory, or external actions.
-
-## Model Routing
-
-Model routing is first-class harness policy. It can be flat per task or richer
-through model-policy files with profiles, pools, and route precedence.
-
-Normal provider/model routes:
-
-- Codex GPT-5.5: `provider="openai-codex"`, `model="gpt-5.5"` or alias
-  `openai-codex/gpt-5.5`
-- OpenRouter DeepSeek Flash:
-  `provider="openrouter"`, `model="deepseek/deepseek-v4-flash"`
-- OpenRouter DeepSeek Pro:
-  `provider="openrouter"`, `model="deepseek/deepseek-v4-pro"`
-- Reserved Anthropic aliases: `provider="anthropic"`, `model="opus"`,
-  `model="opus-4.7"`, `model="sonnet"`, or `model="sonnet-4.7"`, with
-  `reserved=true` and `enabled=false`
-
-Direct `provider="deepseek"` is legacy metadata only for this harness until a
-direct adapter is explicitly implemented and tested. It is not selected by
-normal policy surfaces.
-
-OpenRouter free models are held inventory, not routable defaults. Non-live tests
-can opt in with `ATTICUS_ENABLE_HELD_OPENROUTER_MODELS=1`; live use also
-requires `ATTICUS_ALLOW_HELD_MODELS_FOR_LIVE=1`. Without both gates, held models
-fail closed before provider work.
-
-Anthropic support is reserved policy surface only. Live Anthropic execution is
-not enabled by default and is not selected by smart routing. Concrete live
-model IDs must be supplied through `ATTICUS_ANTHROPIC_OPUS_MODEL` or
-`ATTICUS_ANTHROPIC_SONNET_MODEL`, plus `ATTICUS_ENABLE_LIVE_ANTHROPIC=1` and
-either `ATTICUS_ANTHROPIC_API_KEY` or `ATTICUS_ANTHROPIC_OAUTH_TOKEN`; tokens
-are never logged by the adapter.
-
-Validate and resolve model policies:
+Validate and smoke-test the current smart default:
 
 ```bash
 python -m atticus.cli model-policy validate \
-  --policy-file tests/fixtures/model_policies/all_codex_gpt55.json
+  --policy-file tests/fixtures/model_policies/deepseek_smart_default.json
 
 python -m atticus.cli model-policy resolve \
-  --policy-file tests/fixtures/model_policies/layered_openrouter_pool.json \
-  --stage S7 \
-  --layer hostile_review \
-  --task-type citation_audit
+  --policy-file tests/fixtures/model_policies/deepseek_smart_default.json \
+  --stage S0 \
+  --layer worker \
+  --task-type source_inventory
 
-python -m atticus.cli model-policy decide \
+python -m atticus.cli model-policy resolve \
   --policy-file tests/fixtures/model_policies/deepseek_smart_default.json \
   --stage S7 \
   --layer hostile_review \
   --task-type hostile_opponent_review
 
 python -m atticus.cli model-policy decide \
-  --db data/atticus.sqlite3 \
-  --task-id TASK_ID \
-  --json
+  --policy-file tests/fixtures/model_policies/deepseek_smart_default.json \
+  --stage S7 \
+  --layer hostile_review \
+  --task-type hostile_opponent_review
 ```
 
-Set all queued tasks for a matter:
+Set smart defaults on queued tasks for one matter:
 
 ```bash
 python -m atticus.cli set-provider-policy \
@@ -256,21 +340,13 @@ python -m atticus.cli set-provider-policy \
   --write
 ```
 
-Flat fallback is blocked. To use fallback, configure a model-routing pool.
-There is no silent fallback to OpenRouter free models, DeepSeek, Codex, local
-stub, or any other provider/model.
+## Provider Surfaces
 
-Smart defaults are deterministic and audit-only. They choose Flash for routine
-worker tasks, Pro for orchestration/high-risk/legal reasoning/hostile review,
-Codex for code/schema harness tasks, and blocked for reserved or unsafe routes.
-Every smart work order includes `model_decision`, fingerprints, and the decision
-reason.
+### OpenRouter DeepSeek
 
-## OpenRouter Failover And Cache Telemetry
-
-OpenRouter failover can be enabled per task through an explicit
-`openrouter_failover` policy or via environment. The usable model list must be
-explicit when live failover is intended:
+DeepSeek V4 Flash and Pro are active OpenRouter models. OpenRouter failover can
+be enabled only through explicit policy or environment configuration. There is
+no hidden fallback to free models, local stubs, Codex, or Anthropic.
 
 ```bash
 ATTICUS_OPENROUTER_FAILOVER_ENABLED=1 \
@@ -278,36 +354,32 @@ ATTICUS_OPENROUTER_FAILOVER_MODELS="deepseek/deepseek-v4-flash,deepseek/deepseek
 python -m atticus.cli live-resume --db data/atticus.sqlite3 --probe --write-leases
 ```
 
-The live gate validates every configured model, probes through the same
-failover path, and records the final requested model in provider telemetry.
+### Held OpenRouter Free Bundle
 
-OpenRouter DeepSeek prompt caching is provider-side and automatic when the
-selected endpoint supports it. The harness records returned cache usage into
-`provider_runs.cache_hit_tokens`, `provider_runs.cache_write_tokens`,
-`provider_runs.cache_miss_tokens`, and `prompt_cache_observations` when
-OpenRouter returns prompt-cache telemetry. Cache telemetry is never evidence of
-legal correctness.
+OpenRouter free models are held inventory. They are not normal routes.
 
-OpenRouter response caching is a separate request-level feature. It is not
-enabled silently because legal outputs must remain tied to explicit operator
-and provider policy.
+- Non-live development parsing requires `ATTICUS_ENABLE_HELD_OPENROUTER_MODELS=1`.
+- Live legal work also requires `ATTICUS_ALLOW_HELD_MODELS_FOR_LIVE=1`.
+- Without the required flags, held/free models are unknown and fail closed.
 
-## Codex GPT-5.5 Runtime
+### Codex GPT-5.5
 
-Codex GPT-5.5 is exact and fail-closed. Live Codex execution requires all of:
+Codex is exact. The harness accepts Codex only through the exact
+`openai-codex/gpt-5.5` route and does not allow fallback.
 
-- exact `openai-codex/gpt-5.5` policy
+Live Codex execution requires all of:
+
+- exact Codex GPT-5.5 policy
 - fallback disabled
 - active lease and matching worker ID
 - `--allow-live`
 - `ATTICUS_ENABLE_LIVE_CODEX=1`
 - bounded timeout
-- explicit Codex reasoning effort
+- explicit reasoning effort
 - strict JSON candidate packet output
-- no canonical writes from the worker
-- explicit current operator approval for live spend
+- current operator approval for live spend
 
-Bounded one-tick command after approval:
+Bounded one-tick pattern after approval:
 
 ```bash
 ATTICUS_ENABLE_LIVE_CODEX=1 python -m atticus.cli run-free-loop \
@@ -321,48 +393,31 @@ ATTICUS_ENABLE_LIVE_CODEX=1 python -m atticus.cli run-free-loop \
   --codex-reasoning-effort low
 ```
 
-Codex diagnostics are written under the task output directory. Treat them as
-local sensitive material.
+### Anthropic Reserved Surface
 
-## Coordinator Mode
+Anthropic profiles may exist as reserved policy entries, but smart defaults do
+not select them. Live Anthropic execution is disabled by default and requires:
 
-Coordinator mode creates self-contained legal task graphs from an operator goal.
-It is local planning, not a provider call.
+- `ATTICUS_ENABLE_LIVE_ANTHROPIC=1`
+- a concrete model ID via `ATTICUS_ANTHROPIC_OPUS_MODEL` or
+  `ATTICUS_ANTHROPIC_SONNET_MODEL`
+- either `ATTICUS_ANTHROPIC_API_KEY` or `ATTICUS_ANTHROPIC_OAUTH_TOKEN`
 
-Dry-run plan:
+OAuth tokens are never logged. Raw provider errors are redacted.
 
-```bash
-python -m atticus.cli coordinator plan \
-  --db data/atticus.sqlite3 \
-  --matter MATTER \
-  --goal "Draft a cited complaint about accommodation arrears handling"
-```
+## Adaptive Matters And Orchestrators
 
-Write queued tasks after review:
+Matter profiles let Atticus adapt the baseline S0-S9 structure per case without
+changing global defaults. Adaptations are versioned, fingerprinted, matter-local,
+and reversible.
 
-```bash
-python -m atticus.cli coordinator create-tasks \
-  --db data/atticus.sqlite3 \
-  --matter MATTER \
-  --goal "Draft a cited complaint about accommodation arrears handling" \
-  --write
-```
+Guardrails:
 
-Coordinator write mode creates queued tasks only. It creates no leases, provider
-runs, candidate outputs, canonical artifacts, or external actions.
-
-Coordinator-created tasks persist task-specific instructions in
-`tasks.instructions`; work orders and context packs include those instructions.
-Drafting goals include evidence mapping, draft preparation, citation audit,
-hostile review, privacy/redaction audit, and final quality gate tasks.
-
-## Matter Profiles, Orchestrators, And Work Runs
-
-Matter profiles are matter-local adaptive stage profiles. New matters can start
-with the default S0-S9 structure, then propose/apply/reset adaptations without
-mutating global defaults. Adaptation cannot disable citation/evidence/reducer
-guardrails, enable external actions, route high-risk legal work to held/free
-models, or remove human review from S8/S9.
+- Adaptation cannot disable evidence, citation, reducer, or canonical-write gates.
+- Adaptation cannot enable external actions.
+- Adaptation cannot route high-risk legal work to held/free models.
+- Adaptation cannot remove human review from S8/S9.
+- Reset affects only the selected matter.
 
 ```bash
 python -m atticus.cli matter-profile show \
@@ -388,11 +443,11 @@ python -m atticus.cli matter-profile reset \
   --write
 ```
 
-Matter orchestrators are durable state records for planning ticks. They do not
-perform provider calls or external legal actions by themselves. Worker failures
-create matter-scoped human attention and `orchestrator.worker_failed` events;
-repair planning proposes a bounded next action such as context rebuild, verifier
-task, Pro review, profile adaptation, or human intervention.
+Per-matter orchestrators keep case work independent and repair-focused. When a
+worker fails, the orchestrator records matter-scoped human attention, emits an
+event, and proposes bounded repair such as missing extraction, context rebuild,
+Pro review, profile adaptation, verifier task, or human intervention. It must
+not silently retry forever.
 
 ```bash
 python -m atticus.cli orchestrator status \
@@ -405,23 +460,40 @@ python -m atticus.cli orchestrator tick \
   --matter MATTER \
   --capacity 5
 
-python -m atticus.cli orchestrator tick \
-  --db data/atticus.sqlite3 \
-  --matter MATTER \
-  --capacity 5 \
-  --write
-
 python -m atticus.cli orchestrator failures \
   --db data/atticus.sqlite3 \
   --matter MATTER \
   --json
 ```
 
-Work runs are resumable operator-visible runs. Steps can be reused only by the
-same matter and non-stale work records; reuse is telemetry/orientation, not
-validation. Resume tokens survive interruptions and let follow-up work see what
-was attempted, what produced artifacts/candidates/context packs, and what must
-be rechecked.
+```mermaid
+stateDiagram-v2
+    [*] --> Active
+    Active --> PlanningTick: capacity available
+    PlanningTick --> TaskQueued: safe work found
+    PlanningTick --> HumanAttention: unsafe or ambiguous
+    TaskQueued --> Active
+    Active --> FailureObserved: worker failure
+    FailureObserved --> RepairProposed: bounded repair plan
+    RepairProposed --> TaskQueued: extraction/context/verifier/profile repair
+    RepairProposed --> HumanAttention: needs operator
+    HumanAttention --> Active: operator resolves
+```
+
+## Work Runs And Reuse
+
+Work runs make Atticus resumable. A work run records the goal, active profile,
+steps, context packs, provider runs, candidates, artifacts, reuse decisions, and
+stale invalidation.
+
+Reusable work must be:
+
+- from the same matter
+- non-stale
+- tied to current source snapshots
+- accepted/reduced where trust is required
+- rebuildable from source chunks or context fingerprints
+- treated as orientation unless it is canonical evidence or reducer-accepted
 
 ```bash
 python -m atticus.cli work-run start \
@@ -444,65 +516,186 @@ python -m atticus.cli work-run resume \
 python -m atticus.cli work-run reusable \
   --db data/atticus.sqlite3 \
   --matter MATTER \
-  --goal "Inventory priority sources" \
-  --json
-
-python -m atticus.cli work-run export \
-  --db data/atticus.sqlite3 \
-  --matter MATTER \
-  --work-run-id WORK_RUN_ID \
+  --goal "Follow up on the accommodation arrears evidence" \
   --json
 ```
 
-## Context And Source Delivery
+## Cache And Context Observability
 
-`work-order --dry-run` includes the full context pack, not only its ID. The
-pack contains an `evidence_manifest` section for source metadata and a
-`source_materials` section for extracted/OCR text linked to each source
-dependency. Source material is bounded and deterministic so broad tasks fit the
-default 32k token budget while still exposing which source text was provided
-and whether each excerpt was truncated.
+Atticus fingerprints the material facts of provider work:
 
-Inspect what a worker will receive:
+- context pack ID and context fingerprint
+- provider policy fingerprint
+- configured model list
+- failover events
+- prompt cache hit/write/miss tokens
+- cache telemetry source
+- prompt-cache observations with system, tools, context, and policy fingerprints
 
-```bash
-python -m atticus.cli work-order --db data/atticus.sqlite3 --task-id TASK_ID --dry-run
-python -m atticus.cli context --db data/atticus.sqlite3 --task-id TASK_ID --json
+Cache diagnostics are cost and performance telemetry. They are not evidence of
+legal correctness.
+
+```mermaid
+flowchart LR
+    Context["messages + source sections"] --> CF["context fingerprint"]
+    Policy["provider policy"] --> PF["policy fingerprint"]
+    Tools["tools + schema"] --> TF["tools fingerprint"]
+    Runtime["provider run"] --> Usage["token and cache usage"]
+    CF --> Obs["prompt_cache_observations"]
+    PF --> Obs
+    TF --> Obs
+    Usage --> Obs
+    Obs --> Diagnosis{"cache hit drop?"}
+    Diagnosis -->|no fingerprint change| TTL["likely provider / TTL behavior"]
+    Diagnosis -->|context changed| ContextBreak["context changed"]
+    Diagnosis -->|policy changed| PolicyBreak["policy changed"]
 ```
 
-If `source_materials` is empty for a source-dependent task, run
-`extract-sources` first and re-check `extraction_coverage`.
+## Durable Data Model
 
-## Worker Packets And Reduction
+The current schema is version 5. SQLite is the current durable store, with STRICT
+tables, foreign keys, WAL mode, append-only events, mutable projections, and
+fingerprinted records that can later be migrated to a larger store without
+changing the legal operating model.
 
-Workers must return strict `worker_result_packet.v2` candidate packets.
-Findings must reference defined citation IDs, and citations must target records
-visible in the work-order context or matter-scoped legal graph.
-
-Inspect candidate output:
-
-```bash
-python -m atticus.cli inspect --db data/atticus.sqlite3 --type candidate --id CANDIDATE_ID
+```mermaid
+erDiagram
+    matters ||--o{ sources : owns
+    matters ||--o{ artifacts : owns
+    matters ||--o{ tasks : schedules
+    matters ||--o{ matter_profiles : adapts
+    matters ||--o{ matter_orchestrators : coordinates
+    matters ||--o{ work_runs : resumes
+    sources ||--o{ source_snapshots : captures
+    sources ||--o{ extraction_records : covers
+    sources ||--o{ ocr_records : covers
+    artifacts ||--o{ artifact_versions : versions
+    tasks ||--o{ leases : fences
+    tasks ||--o{ context_packs : prepares
+    tasks ||--o{ provider_runs : executes
+    provider_runs ||--o{ prompt_cache_observations : observes
+    tasks ||--o{ candidate_outputs : proposes
+    candidate_outputs ||--o{ reducer_packets : reviews
+    reducer_packets ||--o{ artifacts : canonicalizes
+    work_runs ||--o{ work_run_steps : records
 ```
 
-Quarantine a valid but unsuitable candidate:
+Important table families:
+
+| Family | Tables |
+| --- | --- |
+| Matters and profiles | `matters`, `matter_profiles`, `matter_profile_stages`, `matter_profile_changes` |
+| Evidence graph | `sources`, `source_snapshots`, `artifacts`, `artifact_versions`, `artifact_sources`, `artifact_dependencies` |
+| Legal structure | `issues`, `claims`, `chronology_events`, `legal_authorities`, `citation_spans`, `validations`, `certifications` |
+| Execution | `tasks`, `leases`, `context_packs`, `provider_runs`, `candidate_outputs`, `reducer_packets` |
+| Orchestration | `matter_orchestrators`, `orchestrator_events`, `work_runs`, `work_run_steps`, `work_reuse_records` |
+| Memory and retrieval | `legal_memory`, search index/projection tables, work reuse records |
+| Observability | `events`, `human_attention`, `prompt_cache_observations`, provider telemetry columns |
+
+## Command Playbook
+
+### Initialize And Inspect
 
 ```bash
-python -m atticus.cli reject-candidate \
-  --db data/atticus.sqlite3 \
-  --candidate-id CANDIDATE_ID \
-  --reason "operator reviewed and rejected unsupported conclusions"
+python -m atticus.cli init --db data/atticus.sqlite3
+python -m atticus.cli doctor --db data/atticus.sqlite3
+python -m atticus.cli status --db data/atticus.sqlite3
+python -m atticus.cli commands list --json
+python -m atticus.cli command show run-free-loop --json
+```
 
-python -m atticus.cli reject-candidate \
-  --db data/atticus.sqlite3 \
-  --candidate-id CANDIDATE_ID \
-  --reason "operator reviewed and rejected unsupported conclusions" \
+### Seed A Matter
+
+```bash
+python -m atticus.cli seed-matter \
+  --db data/napier-accommodation-arrears.sqlite \
+  --matter napier-accommodation-arrears \
+  --workspace matters/napier-accommodation-arrears \
+  --inventory matters/napier-accommodation-arrears/02-registers/file_inventory.csv \
+  --provider openrouter \
+  --model deepseek/deepseek-v4-flash \
+  --no-fallback
+```
+
+Add `--write` only after reviewing the dry-run JSON. The seeder does not read
+credentials, call providers, create leases, create provider runs, or perform
+external actions.
+
+### Extract Local Text And OCR
+
+```bash
+python -m atticus.cli extract-sources \
+  --db data/napier-accommodation-arrears.sqlite \
+  --matter napier-accommodation-arrears \
+  --workspace matters/napier-accommodation-arrears
+
+python -m atticus.cli extract-sources \
+  --db data/napier-accommodation-arrears.sqlite \
+  --matter napier-accommodation-arrears \
+  --workspace matters/napier-accommodation-arrears \
+  --source-id NAP-SRC-0051 \
+  --source-id NAP-SRC-0052 \
   --write
 ```
 
-Reduce through the reducer-only canonical path:
+Supported local paths include DOCX, legacy DOC through local conversion tools,
+PDF through `pdftotext`, text/HTML files, and images through existing OCR text
+or local `tesseract`.
+
+### Schedule And Build Context
 
 ```bash
+python -m atticus.cli schedule \
+  --db data/atticus.sqlite3 \
+  --capacity 5 \
+  --dry-run
+
+python -m atticus.cli work-order \
+  --db data/atticus.sqlite3 \
+  --task-id TASK_ID \
+  --dry-run
+
+python -m atticus.cli context \
+  --db data/atticus.sqlite3 \
+  --task-id TASK_ID \
+  --json
+```
+
+If `source_materials` is empty for a source-dependent task, run local extraction
+first and re-check extraction coverage.
+
+### Plan Legal Work
+
+```bash
+python -m atticus.cli coordinator plan \
+  --db data/atticus.sqlite3 \
+  --matter MATTER \
+  --goal "Draft a cited complaint about accommodation arrears handling"
+
+python -m atticus.cli coordinator create-tasks \
+  --db data/atticus.sqlite3 \
+  --matter MATTER \
+  --goal "Draft a cited complaint about accommodation arrears handling" \
+  --write
+```
+
+Coordinator write mode creates queued tasks only. It creates no leases, provider
+runs, candidate outputs, canonical artifacts, or external actions.
+
+### Validate, Verify, Reduce
+
+```bash
+python -m atticus.cli inspect \
+  --db data/atticus.sqlite3 \
+  --type candidate \
+  --id CANDIDATE_ID
+
+python -m atticus.cli verifier run \
+  --db data/atticus.sqlite3 \
+  --candidate-id CANDIDATE_ID \
+  --type citation_audit \
+  --json
+
 python -m atticus.cli lease \
   --db data/atticus.sqlite3 \
   --task-id TASK_ID \
@@ -514,109 +707,33 @@ python -m atticus.cli reduce \
   --candidate-id CANDIDATE_ID \
   --lease-id LEASE_ID \
   --dry-run
-
-python -m atticus.cli reduce \
-  --db data/atticus.sqlite3 \
-  --candidate-id CANDIDATE_ID \
-  --lease-id LEASE_ID \
-  --write
 ```
 
-Reducer acceptance is savepoint-protected around canonical artifact writing,
-reducer packet recording, candidate status changes, lease completion, and
-proposed-task import.
+Use `--write` on reduction only after reviewing the dry-run. Reducer acceptance
+is savepoint-protected around canonical artifact writing, reducer packet
+recording, candidate status changes, lease completion, and proposed-task import.
 
-## Verification And Workflows
-
-Run independent verifier checks against candidates:
-
-```bash
-python -m atticus.cli verifier run \
-  --db data/atticus.sqlite3 \
-  --candidate-id CANDIDATE_ID \
-  --type citation_audit \
-  --json
-
-python -m atticus.cli verifier run \
-  --db data/atticus.sqlite3 \
-  --candidate-id CANDIDATE_ID \
-  --type hostile_opponent_review \
-  --write \
-  --json
-```
-
-Markdown workflows create task graphs and are dry-run by default:
-
-```bash
-python -m atticus.cli workflow list
-python -m atticus.cli workflow show complaint-draft
-python -m atticus.cli workflow run chronology-build --db data/atticus.sqlite3 --matter MATTER
-python -m atticus.cli workflow run hostile-review --db data/atticus.sqlite3 --matter MATTER --write
-```
-
-Built-in workflows include chronology, complaint drafting, witness statement
-preparation, bundle preparation, authority mapping, SAR/disclosure review,
-contradiction detection, hostile review, pleading review, and court
-correspondence drafting.
-
-## Legal Memory
-
-Typed legal memory is matter-scoped operational memory, not evidence.
-Evidence, law, procedure, contradiction, authority, and risk memories require
-source or validated-record references.
-
-Inspect memory:
+### Legal Memory
 
 ```bash
 python -m atticus.cli memory list --db data/atticus.sqlite3 --matter MATTER
 python -m atticus.cli memory show MEMORY_ID --db data/atticus.sqlite3 --matter MATTER
 python -m atticus.cli memory export-index --db data/atticus.sqlite3 --matter MATTER
-```
 
-Mark memory stale:
-
-```bash
-python -m atticus.cli memory mark-stale \
-  --db data/atticus.sqlite3 \
-  --matter MATTER \
-  --memory-id MEMORY_ID \
-  --reason "newer evidence received" \
-  --write
-```
-
-Reducer-gated memory extraction:
-
-```bash
 python -m atticus.cli memory extract-candidates \
   --db data/atticus.sqlite3 \
   --matter MATTER \
   --candidate-id REDUCED_ACCEPTED_CANDIDATE_ID
 
-python -m atticus.cli memory extract-candidates \
+python -m atticus.cli memory consolidate \
   --db data/atticus.sqlite3 \
-  --matter MATTER \
-  --candidate-id REDUCED_ACCEPTED_CANDIDATE_ID \
-  --write
+  --matter MATTER
 ```
 
-Extraction only works from a `reduced` candidate with an accepted reducer
+Memory extraction only works from a `reduced` candidate with an accepted reducer
 packet. Write mode creates `status='candidate'` memories only.
 
-Dry-run case memory consolidation:
-
-```bash
-python -m atticus.cli memory consolidate --db data/atticus.sqlite3 --matter MATTER
-python -m atticus.cli memory consolidate --db data/atticus.sqlite3 --matter MATTER --write
-```
-
-Consolidation reviews active, candidate, stale, duplicate, and contradictory
-memories. Write mode creates review tasks; it does not silently activate,
-delete, merge, certify, or overwrite memory.
-
-## Sessions
-
-Sessions persist sensitive matter-scoped transcripts without replaying provider
-calls:
+### Sessions
 
 ```bash
 python -m atticus.cli session list --db data/atticus.sqlite3 --matter MATTER
@@ -624,6 +741,9 @@ python -m atticus.cli session show SESSION_ID --db data/atticus.sqlite3
 python -m atticus.cli session resume SESSION_ID --db data/atticus.sqlite3
 python -m atticus.cli session export SESSION_ID --db data/atticus.sqlite3
 ```
+
+Sessions persist sensitive matter-scoped transcripts without replaying provider
+calls.
 
 ## Development And Verification
 
@@ -636,22 +756,60 @@ git diff --check
 git diff --cached --check
 ```
 
-If available, run basedpyright:
+Model-policy smoke checks:
+
+```bash
+python -m atticus.cli model-policy validate \
+  --policy-file tests/fixtures/model_policies/deepseek_smart_default.json
+
+python -m atticus.cli model-policy resolve \
+  --policy-file tests/fixtures/model_policies/deepseek_smart_default.json \
+  --stage S0 \
+  --layer worker \
+  --task-type source_inventory
+
+python -m atticus.cli model-policy resolve \
+  --policy-file tests/fixtures/model_policies/deepseek_smart_default.json \
+  --stage S7 \
+  --layer hostile_review \
+  --task-type hostile_opponent_review
+```
+
+Optional static check when `basedpyright` is available:
 
 ```bash
 basedpyright atticus tests --outputjson > /tmp/atticus-basedpyright.json
 python - <<'PY'
 import json
-data = json.load(open('/tmp/atticus-basedpyright.json'))
-print(data.get('summary', {}))
-raise SystemExit(0 if data.get('summary', {}).get('errorCount', 0) == 0 else 1)
+
+data = json.load(open("/tmp/atticus-basedpyright.json"))
+summary = data.get("summary", {})
+print(summary)
+raise SystemExit(0 if summary.get("errorCount", 0) == 0 else 1)
 PY
 ```
 
-Check no live provider or OpenClaw work is running:
+Check that no live provider or OpenClaw work is running:
 
 ```bash
 ps -eo pid,ppid,stat,etime,cmd | grep -Ei '[c]odex exec|[a]tticus|[o]penclaw.*atticus' || true
 ```
 
 Tests do not hit live provider APIs and do not start OpenClaw.
+
+## Project Design Notes
+
+Architecture decision records live in [`docs/architecture`](docs/architecture):
+
+- ADR 001: standalone harness
+- ADR 002: OpenClaw as adapter
+- ADR 003: legal evidence graph
+- ADR 004: read-only query versus active work
+- ADR 005: provider policy and budgeting
+- ADR 006: worker-reducer councils
+- ADR 007: context pack memory
+- ADR 008: legal control plane v2
+
+The short version: Atticus is a harness first and an AI wrapper second. Its job
+is to make legal AI work inspectable, resumable, reversible, citation-bound,
+matter-local, and boringly safe where it matters.
