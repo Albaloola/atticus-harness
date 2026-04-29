@@ -373,7 +373,7 @@ def test_set_provider_policy_updates_only_queued_tasks_for_matter(tmp_path: Path
                 task_type="source_inventory",
                 matter_scope=MATTER,
                 status=TaskStatus.COMPLETE,
-                provider_policy={"provider": "openrouter", "model": "qwen/qwen3-coder:free", "allow_fallback": False},
+                provider_policy={"provider": "openrouter", "model": "deepseek/deepseek-v4-flash", "allow_fallback": False},
             ),
         )
         repo.add_task(
@@ -480,7 +480,7 @@ def test_codex_provider_policy_rejects_fallback_unknowns_and_drift_before_live(t
     )
     drift = check_provider_policy(
         ProviderRequest("openai-codex", "gpt-5.5", allow_fallback=False),
-        actual=ProviderActual("openrouter", "qwen/qwen3-coder:free"),
+        actual=ProviderActual("openrouter", "deepseek/deepseek-v4-flash"),
     )
     fallback_request = check_provider_policy(ProviderRequest("openai-codex", "gpt-5.5", allow_fallback=True))
 

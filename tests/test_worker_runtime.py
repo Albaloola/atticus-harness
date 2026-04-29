@@ -178,6 +178,86 @@ def test_execute_local_work_order_rejects_non_local_adapter(tmp_path: Path):
     assert "safe local execution" in str(task["blocked_reasons_json"])
 
 
+@pytest.mark.parametrize(
+    ("task_id", "provider_policy", "match_text"),
+    [
+        (
+            "local-blocked-anthropic",
+            {
+                "provider": "blocked",
+                "model": "blocked",
+                "blocked": True,
+                "model_decision_reason": "explicit route anthropic_opus_reserved uses reserved Anthropic provider surface",
+                "estimated_cost_usd": 0.0,
+            },
+            "reserved Anthropic",
+        ),
+        (
+            "local-reserved-anthropic",
+            {
+                "provider": "anthropic",
+                "model": "opus",
+                "reserved": True,
+                "allow_fallback": False,
+                "estimated_cost_usd": 0.0,
+            },
+            "reserved",
+        ),
+        (
+            "local-held-openrouter",
+            {
+                "provider": "openrouter",
+                "model": "qwen/qwen3-coder:free",
+                "allow_fallback": False,
+                "estimated_cost_usd": 0.0,
+            },
+            "held OpenRouter model",
+        ),
+    ],
+)
+def test_execute_local_work_order_rejects_blocked_reserved_or_held_provider_policy_before_stub(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    task_id: str,
+    provider_policy: dict[str, object],
+    match_text: str,
+):
+    monkeypatch.delenv("ATTICUS_ENABLE_HELD_OPENROUTER_MODELS", raising=False)
+    monkeypatch.delenv("ATTICUS_ALLOW_HELD_MODELS_FOR_LIVE", raising=False)
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id=task_id,
+                title="Blocked provider policy",
+                task_type="extract",
+                provider_policy=provider_policy,
+            ),
+        )
+        lease_id = acquire_lease(conn, task_id=task_id, worker_id="worker-local")
+        with pytest.raises(WorkerExecutionBlocked, match=match_text):
+            _ = execute_local_work_order(
+                conn,
+                task_id=task_id,
+                lease_id=lease_id,
+                worker_id="worker-local",
+                output_dir=tmp_path / "out",
+            )
+        task = cast(Mapping[str, object], conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = ?", (task_id,)).fetchone())
+        lease = cast(Mapping[str, object], conn.execute("SELECT status FROM leases WHERE lease_id = ?", (lease_id,)).fetchone())
+        attempts = _count(conn, "SELECT COUNT(*) AS n FROM worker_attempts WHERE task_id = '%s'" % task_id)
+        provider_runs = _count(conn, "SELECT COUNT(*) AS n FROM provider_runs WHERE task_id = '%s'" % task_id)
+        candidate_count = _count(conn, "SELECT COUNT(*) AS n FROM candidate_outputs WHERE task_id = '%s'" % task_id)
+
+    assert task["status"] == TaskStatus.BLOCKED
+    assert match_text in str(task["blocked_reasons_json"])
+    assert lease["status"] == "failed"
+    assert attempts == 0
+    assert provider_runs == 0
+    assert candidate_count == 0
+
+
 def test_execute_codex_work_order_requires_live_gate_before_dispatch(tmp_path: Path):
     db_path = init_db(tmp_path)
     adapter = FakeCodexAdapter(valid_packet("codex-policy-only"))

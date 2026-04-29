@@ -7,7 +7,7 @@ import math
 import sqlite3
 
 from atticus.db import repo
-from atticus.providers.deepseek import known_model
+from atticus.providers.deepseek import is_held_openrouter_model, known_model
 
 
 @dataclass(frozen=True)
@@ -38,6 +38,10 @@ def check_provider_policy(requested: ProviderRequest, actual: ProviderActual | N
             "failed_closed",
             "direct DeepSeek provider is not executable in this harness; use provider openrouter with deepseek/... model ids",
         )
+    if requested_provider in {"anthropic", "anthropic-oauth"}:
+        return ProviderDecision(False, "reserved", "Anthropic provider profiles are reserved and disabled by default")
+    if requested_provider == "openrouter" and is_held_openrouter_model(requested_model) and not known_model(requested_provider, requested_model):
+        return ProviderDecision(False, "blocked", f"held OpenRouter model is not routable by default: {requested_model}")
     if not known_model(requested_provider, requested_model):
         return ProviderDecision(False, "blocked", f"unknown or unsupported model: {requested_provider}/{requested_model}")
     if requested.allow_fallback:

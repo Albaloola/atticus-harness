@@ -36,6 +36,8 @@ class WorkOrder:
     required_certifications: list[dict[str, object]] = field(default_factory=list)
     validation_gates: list[str] = field(default_factory=list)
     provider_policy: dict[str, object] = field(default_factory=dict)
+    model_decision: dict[str, object] = field(default_factory=dict)
+    model_decision_reason: str = ""
     skills: list[dict[str, object]] = field(default_factory=list)
     context_pack: dict[str, object] = field(default_factory=dict)
 
@@ -54,6 +56,8 @@ class WorkOrder:
             "required_certifications": self.required_certifications,
             "validation_gates": self.validation_gates,
             "provider_policy": self.provider_policy,
+            "model_decision": self.model_decision,
+            "model_decision_reason": self.model_decision_reason,
             "skills": self.skills,
             "context_pack": self.context_pack,
         }

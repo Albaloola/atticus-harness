@@ -8,7 +8,7 @@ the legal operating model.
 
 from __future__ import annotations
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 DDL = """
 PRAGMA foreign_keys = ON;
@@ -25,6 +25,45 @@ CREATE TABLE IF NOT EXISTS matters (
   status TEXT NOT NULL DEFAULT 'active',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS matter_profiles (
+  matter_profile_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL REFERENCES matters(matter_scope) ON DELETE CASCADE,
+  profile_name TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active',
+  base_template TEXT NOT NULL DEFAULT 'default_s0_s9',
+  profile_version INTEGER NOT NULL DEFAULT 1,
+  fingerprint TEXT NOT NULL,
+  created_by TEXT NOT NULL DEFAULT 'atticus',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS matter_profiles_one_active_per_matter
+ON matter_profiles(matter_scope)
+WHERE status = 'active';
+
+CREATE TABLE IF NOT EXISTS matter_profile_stages (
+  profile_stage_id TEXT PRIMARY KEY,
+  matter_profile_id TEXT NOT NULL REFERENCES matter_profiles(matter_profile_id) ON DELETE CASCADE,
+  stage TEXT NOT NULL,
+  enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
+  gate_policy_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(gate_policy_json)),
+  worker_policy_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(worker_policy_json)),
+  model_policy_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(model_policy_json)),
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS matter_profile_changes (
+  matter_profile_change_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL,
+  old_profile_id TEXT,
+  new_profile_id TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  requested_by TEXT NOT NULL DEFAULT 'operator',
+  diff_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(diff_json)),
+  created_at TEXT NOT NULL
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS runs (
@@ -311,6 +350,28 @@ CREATE TABLE IF NOT EXISTS worker_attempts (
   error_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(error_json))
 ) STRICT;
 
+CREATE TABLE IF NOT EXISTS matter_orchestrators (
+  orchestrator_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL REFERENCES matters(matter_scope) ON DELETE CASCADE,
+  status TEXT NOT NULL,
+  model_decision_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(model_decision_json)),
+  last_tick_at TEXT,
+  current_goal TEXT NOT NULL DEFAULT '',
+  failure_count INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(matter_scope)
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS orchestrator_events (
+  orchestrator_event_id TEXT PRIMARY KEY,
+  orchestrator_id TEXT NOT NULL REFERENCES matter_orchestrators(orchestrator_id) ON DELETE CASCADE,
+  matter_scope TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  payload_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(payload_json)),
+  created_at TEXT NOT NULL
+) STRICT;
+
 CREATE TABLE IF NOT EXISTS leases (
   lease_id TEXT PRIMARY KEY,
   task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
@@ -499,6 +560,13 @@ CREATE TABLE IF NOT EXISTS provider_runs (
   output_tokens INTEGER NOT NULL DEFAULT 0,
   cache_hit_tokens INTEGER NOT NULL DEFAULT 0,
   cache_miss_tokens INTEGER NOT NULL DEFAULT 0,
+  context_pack_id TEXT,
+  context_fingerprint TEXT NOT NULL DEFAULT '',
+  provider_policy_fingerprint TEXT NOT NULL DEFAULT '',
+  configured_models_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(configured_models_json)),
+  cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+  failover_events_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(failover_events_json)),
+  cache_telemetry_source TEXT NOT NULL DEFAULT 'provider_reported',
   estimated_cost_usd REAL NOT NULL DEFAULT 0,
   actual_cost_usd REAL,
   latency_ms INTEGER NOT NULL DEFAULT 0,
@@ -506,6 +574,68 @@ CREATE TABLE IF NOT EXISTS provider_runs (
   fallback_allowed INTEGER NOT NULL CHECK(fallback_allowed IN (0, 1)),
   fallback_policy_result TEXT NOT NULL,
   raw_usage_json TEXT NOT NULL CHECK(json_valid(raw_usage_json)),
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS prompt_cache_observations (
+  prompt_cache_observation_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL,
+  provider_run_id TEXT REFERENCES provider_runs(provider_run_id) ON DELETE SET NULL,
+  task_id TEXT,
+  context_pack_id TEXT,
+  query_source TEXT NOT NULL DEFAULT '',
+  model TEXT NOT NULL DEFAULT '',
+  system_fingerprint TEXT NOT NULL DEFAULT '',
+  tools_fingerprint TEXT NOT NULL DEFAULT '',
+  context_fingerprint TEXT NOT NULL DEFAULT '',
+  policy_fingerprint TEXT NOT NULL DEFAULT '',
+  cache_hit_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_miss_tokens INTEGER NOT NULL DEFAULT 0,
+  possible_cache_break INTEGER NOT NULL DEFAULT 0 CHECK(possible_cache_break IN (0,1)),
+  reason TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS work_runs (
+  work_run_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL,
+  goal TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL,
+  active_profile_id TEXT,
+  started_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  completed_at TEXT,
+  resume_token TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(metadata_json))
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS work_run_steps (
+  work_run_step_id TEXT PRIMARY KEY,
+  work_run_id TEXT NOT NULL REFERENCES work_runs(work_run_id) ON DELETE CASCADE,
+  matter_scope TEXT NOT NULL,
+  step_type TEXT NOT NULL,
+  task_id TEXT,
+  candidate_id TEXT,
+  artifact_id TEXT,
+  context_pack_id TEXT,
+  provider_run_id TEXT,
+  status TEXT NOT NULL,
+  input_fingerprint TEXT NOT NULL DEFAULT '',
+  output_fingerprint TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(metadata_json))
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS work_reuse_records (
+  reuse_record_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL,
+  reused_from_step_id TEXT NOT NULL,
+  reused_by_step_id TEXT,
+  reuse_type TEXT NOT NULL,
+  valid INTEGER NOT NULL CHECK(valid IN (0,1)),
+  invalidation_reason TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL
 ) STRICT;
 
@@ -566,6 +696,13 @@ CREATE INDEX IF NOT EXISTS sources_hash_idx ON sources(sha256);
 CREATE INDEX IF NOT EXISTS certifications_subject_idx
 ON certifications(subject_type, subject_id, certification_type, status);
 CREATE INDEX IF NOT EXISTS provider_runs_task_idx ON provider_runs(task_id, created_at);
+CREATE INDEX IF NOT EXISTS prompt_cache_observations_scope_idx ON prompt_cache_observations(matter_scope, created_at);
+CREATE INDEX IF NOT EXISTS matter_orchestrators_scope_idx ON matter_orchestrators(matter_scope, status);
+CREATE INDEX IF NOT EXISTS orchestrator_events_scope_idx ON orchestrator_events(matter_scope, event_type, created_at);
+CREATE INDEX IF NOT EXISTS work_runs_scope_idx ON work_runs(matter_scope, status, updated_at);
+CREATE UNIQUE INDEX IF NOT EXISTS work_runs_resume_token_uq ON work_runs(resume_token);
+CREATE INDEX IF NOT EXISTS work_run_steps_scope_idx ON work_run_steps(matter_scope, status, created_at);
+CREATE INDEX IF NOT EXISTS work_reuse_records_scope_idx ON work_reuse_records(matter_scope, valid, created_at);
 CREATE INDEX IF NOT EXISTS budget_entries_budget_idx ON budget_entries(budget_id, created_at);
 CREATE INDEX IF NOT EXISTS citation_spans_target_idx ON citation_spans(target_type, target_id);
 CREATE INDEX IF NOT EXISTS candidate_outputs_task_idx ON candidate_outputs(task_id, status);

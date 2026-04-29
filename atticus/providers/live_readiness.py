@@ -57,14 +57,14 @@ def check_live_provider_policy(provider_policy: Mapping[str, object], *, env: Ma
         reasons.append(f"provider must be openrouter for live Atticus work, got {provider or 'unset'}")
     elif provider == "openrouter":
         try:
-            models = openrouter_models_for_policy(provider_policy, env=env)
+            models = openrouter_models_for_policy(provider_policy, env=env, live=True)
             explicit_failover = _has_explicit_openrouter_failover(provider_policy) or _has_explicit_env_openrouter_failover(env)
         except (OpenRouterError, TypeError, ValueError) as exc:
             reasons.append(str(exc))
         if not models:
             reasons.append("unknown or unsupported OpenRouter model: unset")
         for model in models:
-            if not known_model(provider, model):
+            if not known_model(provider, model, env=env, live=True):
                 reasons.append(f"unknown or unsupported OpenRouter model: {model or 'unset'}")
     if allow_fallback and not explicit_failover:
         reasons.append("fallback must be disabled unless an explicit OpenRouter model pool is configured")
@@ -113,8 +113,8 @@ def probe_live_openrouter(
         }
     policy = check_live_provider_policy(provider_policy, env=env)
     try:
-        model = primary_model_for_policy(provider_policy, env=env)
-        configured_models = openrouter_models_for_policy(provider_policy, env=env)
+        model = primary_model_for_policy(provider_policy, env=env, live=True)
+        configured_models = openrouter_models_for_policy(provider_policy, env=env, live=True)
     except (OpenRouterError, TypeError, ValueError) as exc:
         model = str(provider_policy.get("model") or "")
         configured_models = (model,) if model else ()
@@ -131,7 +131,7 @@ def probe_live_openrouter(
 
     probe_client = cast(
         ChatJsonClient,
-        openrouter_client_for_policy(provider_policy, env=env, client=client) or OpenRouterClient(api_key=env.get(OPENROUTER_KEY_ENV, "")),
+        openrouter_client_for_policy(provider_policy, env=env, live=True, client=client) or OpenRouterClient(api_key=env.get(OPENROUTER_KEY_ENV, "")),
     )
     try:
         response = probe_client.chat_json(
@@ -271,7 +271,7 @@ def live_readiness_report(conn: sqlite3.Connection, *, capacity: int = 15, env: 
             continue
         reasons: list[str] = []
         try:
-            policy_models = openrouter_models_for_policy(policy, env=env)
+            policy_models = openrouter_models_for_policy(policy, env=env, live=True)
         except (OpenRouterError, TypeError, ValueError):
             policy_models = (str(policy.get("model") or ""),) if policy.get("model") else ()
         try:

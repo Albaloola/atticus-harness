@@ -24,24 +24,6 @@
       "allow_fallback": false,
       "estimated_cost_usd": 0.03,
       "capabilities": ["legal_reasoning", "hostile_review", "synthesis"]
-    },
-    "qwen_free": {
-      "provider": "openrouter",
-      "model": "qwen/qwen3-coder:free",
-      "runtime": "openrouter",
-      "allow_fallback": false,
-      "estimated_cost_usd": 0.0
-    }
-  },
-  "pools": {
-    "free_loop": {
-      "strategy": "fallback_loop",
-      "profiles": ["qwen_free"],
-      "max_failed_cycles": 5,
-      "cooldown_seconds": 300.0,
-      "per_model_timeout_seconds": 120.0,
-      "backoff_seconds": 0.25,
-      "jitter_seconds": 0.25
     }
   },
   "routes": {
@@ -61,7 +43,7 @@
       "S8": "gpt55_codex"
     },
     "task_types": {
-      "source_inventory": "free_loop"
+      "source_inventory": "deepseek_flash_or"
     }
   }
 }

@@ -68,7 +68,7 @@ def _packet(task_id: str) -> dict[str, object]:
                 "instructions": "Follow up the source inventory shard.",
                 "provider_policy": {
                     "provider": "openrouter",
-                    "model": "inclusionai/ling-2.6-1t:free",
+                    "model": "deepseek/deepseek-v4-flash",
                     "allow_fallback": False,
                     "estimated_cost_usd": 0.0,
                 },

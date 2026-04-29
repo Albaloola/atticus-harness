@@ -109,6 +109,42 @@ def test_coordinator_write_is_idempotent_and_preserves_task_instructions(tmp_pat
     assert provider_runs == 0
 
 
+def test_coordinator_write_assigns_smart_model_decisions(tmp_path: Path, capsys):
+    db_path = init_db(tmp_path)
+
+    assert (
+        cli_main(
+            [
+                "coordinator",
+                "create-tasks",
+                "--db",
+                str(db_path),
+                "--matter",
+                "alpha",
+                "--goal",
+                "Draft a formal complaint and run hostile review",
+                "--write",
+            ]
+        )
+        == 0
+    )
+    _ = capsys.readouterr()
+
+    with repo.db_connection(db_path) as conn:
+        rows = conn.execute(
+            "SELECT task_type, provider_policy_json FROM tasks WHERE matter_scope = 'alpha' ORDER BY task_id"
+        ).fetchall()
+
+    policies = {str(row["task_type"]): cast(Mapping[str, object], json.loads(str(row["provider_policy_json"]))) for row in rows}
+    evidence_decision = cast(Mapping[str, object], policies["evidence_issue_map"]["model_decision"])
+    hostile_decision = cast(Mapping[str, object], policies["hostile_opponent_review"]["model_decision"])
+
+    assert policies["evidence_issue_map"]["model"] == "deepseek/deepseek-v4-flash"
+    assert evidence_decision["decision_tier"] == "flash_worker"
+    assert policies["hostile_opponent_review"]["model"] == "deepseek/deepseek-v4-pro"
+    assert hostile_decision["decision_tier"] == "pro_orchestrator"
+
+
 def test_coordinator_rejects_cross_matter_dependencies(tmp_path: Path):
     db_path = init_db(tmp_path)
     with repo.db_connection(db_path) as conn:

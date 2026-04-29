@@ -96,6 +96,7 @@ def execute_local_work_order(
         raise WorkerExecutionBlocked(reason)
 
     provider_policy = _load_provider_policy_after_lease(conn, task=task, lease_id=lease_id, task_id=task_id)
+    _block_unsafe_local_stub_provider_policy(conn, lease_id=lease_id, task_id=task_id, provider_policy=provider_policy)
     require_cost_estimate = _requires_local_cost_estimate(conn, task=task)
     try:
         estimated_cost = parse_estimated_cost_usd(provider_policy, task_id=task_id, require_present=require_cost_estimate)
@@ -175,6 +176,52 @@ def execute_local_work_order(
         raise
 
 
+def _block_unsafe_local_stub_provider_policy(
+    conn: sqlite3.Connection,
+    *,
+    lease_id: str,
+    task_id: str,
+    provider_policy: Mapping[str, object],
+) -> None:
+    provider = str(provider_policy.get("provider") or "").strip()
+    model = str(provider_policy.get("model") or "").strip()
+    if bool(provider_policy.get("blocked")) or provider == "blocked" or model == "blocked":
+        reason = str(provider_policy.get("model_decision_reason") or provider_policy.get("reason") or "provider policy is blocked")
+        _block_preflight_after_lease(conn, lease_id=lease_id, task_id=task_id, reason=reason)
+        raise WorkerExecutionBlocked(reason)
+    if bool(provider_policy.get("reserved")):
+        reason = "reserved provider policy cannot execute through local_stub"
+        _block_preflight_after_lease(conn, lease_id=lease_id, task_id=task_id, reason=reason)
+        raise WorkerExecutionBlocked(reason)
+    if provider in {"anthropic", "anthropic-oauth"}:
+        reason = "Anthropic provider policies are reserved and disabled by default"
+        _block_preflight_after_lease(conn, lease_id=lease_id, task_id=task_id, reason=reason)
+        raise WorkerExecutionBlocked(reason)
+    if provider == "local":
+        if model not in {"", "stub", "local_stub"}:
+            reason = f"local_stub cannot execute local model {model!r}"
+            _block_preflight_after_lease(conn, lease_id=lease_id, task_id=task_id, reason=reason)
+            raise WorkerExecutionBlocked(reason)
+        return
+    if not provider and not model:
+        return
+    if not provider or not model:
+        reason = "provider policy must include both provider and model before local_stub execution"
+        _block_preflight_after_lease(conn, lease_id=lease_id, task_id=task_id, reason=reason)
+        raise WorkerExecutionBlocked(reason)
+    decision = check_provider_policy(
+        ProviderRequest(
+            provider,
+            model,
+            allow_fallback=bool(provider_policy.get("allow_fallback") or False),
+        )
+    )
+    if not decision.allowed:
+        reason = decision.reason
+        _block_preflight_after_lease(conn, lease_id=lease_id, task_id=task_id, reason=reason)
+        raise WorkerExecutionBlocked(reason)
+
+
 def execute_openrouter_work_order(
     conn: sqlite3.Connection,
     *,
@@ -244,12 +291,12 @@ def execute_openrouter_work_order(
     provider_run_id: str | None = None
     try:
         order = build_work_order(conn, task_id=task_id, lease_id=lease_id, persist_context=True)
-        failover_config = openrouter_failover_config_from_policy(provider_policy, env=env)
+        failover_config = openrouter_failover_config_from_policy(provider_policy, env=env, live=True)
         openrouter_pool_enabled = failover_config is not None
         openrouter_failover_events: list[dict[str, object]] = []
-        configured_models = failover_config.models if failover_config is not None else openrouter_models_for_policy(provider_policy, env=env)
-        requested = ProviderRequest("openrouter", primary_model_for_policy(provider_policy, env=env), allow_fallback=False)
-        provider_client = openrouter_client_for_policy(provider_policy, env=env, client=client, event_sink=openrouter_failover_events.append)
+        configured_models = failover_config.models if failover_config is not None else openrouter_models_for_policy(provider_policy, env=env, live=True)
+        requested = ProviderRequest("openrouter", primary_model_for_policy(provider_policy, env=env, live=True), allow_fallback=False)
+        provider_client = openrouter_client_for_policy(provider_policy, env=env, live=True, client=client, event_sink=openrouter_failover_events.append)
         try:
             response = cast(
                 object,
@@ -491,6 +538,7 @@ def execute_openrouter_work_order(
             output_tokens=token_usage["completion_tokens"],
             cache_hit_tokens=cache_usage["cached_tokens"],
             cache_miss_tokens=max(0, token_usage["prompt_tokens"] - cache_usage["cached_tokens"]),
+            cache_write_tokens=cache_usage["cache_write_tokens"],
             estimated_cost_usd=estimated_cost,
             actual_cost_usd=None,
             latency_ms=latency_ms,

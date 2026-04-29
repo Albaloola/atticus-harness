@@ -4,6 +4,7 @@ from collections.abc import Callable
 
 import pytest
 
+from atticus.providers.deepseek import ENV_ALLOW_HELD_MODELS_FOR_LIVE, ENV_ENABLE_HELD_OPENROUTER_MODELS
 from atticus.providers.openrouter import OpenRouterError
 from atticus.providers.openrouter_failover import (
     OpenRouterFailoverConfig,
@@ -18,8 +19,8 @@ from atticus.providers.openrouter_failover import (
 )
 
 JsonObject = dict[str, object]
-MODEL_A = "qwen/qwen3-coder:free"
-MODEL_B = "openai/gpt-oss-120b:free"
+MODEL_A = "deepseek/deepseek-v4-flash"
+MODEL_B = "deepseek/deepseek-v4-pro"
 
 
 class SequencedOpenRouterClient:
@@ -154,6 +155,15 @@ def test_openrouter_failover_bounded_attempt_guard_is_explicit():
     assert client.calls == [MODEL_A, MODEL_B, MODEL_A]
 
 
+def test_openrouter_failover_is_bounded_by_default():
+    client = SequencedOpenRouterClient([OpenRouterError("rate limit", status_code=429) for _ in range(4)])
+
+    with pytest.raises(OpenRouterError, match="max_total_attempts exceeded after 4 attempts"):
+        _ = _failover(client, max_failed_cycles=1).chat_json(model="ignored", messages=[{"role": "user", "content": "{}"}])
+
+    assert client.calls == [MODEL_A, MODEL_B, MODEL_A, MODEL_B]
+
+
 def test_openrouter_failover_retains_successful_model_for_next_request():
     client = SequencedOpenRouterClient([
         OpenRouterError("rate limit", status_code=429),
@@ -196,6 +206,29 @@ def test_openrouter_failover_rejects_unknown_models_in_policy_and_env() -> None:
             {"provider": "openrouter", "openrouter_failover": {"enabled": True, "models": ["unknown/model"]}},
             env={},
         )
+
+
+def test_openrouter_failover_held_models_require_live_opt_in() -> None:
+    held_model = "qwen/qwen3-coder:free"
+    policy = {"provider": "openrouter", "openrouter_failover": {"enabled": True, "models": [held_model]}}
+
+    with pytest.raises(OpenRouterFailoverHardError, match="unknown or unsupported"):
+        _ = openrouter_models_for_policy(policy, env={}, live=True)
+
+    non_live_models = openrouter_models_for_policy(policy, env={ENV_ENABLE_HELD_OPENROUTER_MODELS: "1"}, live=False)
+
+    assert non_live_models == (held_model,)
+
+    with pytest.raises(OpenRouterFailoverHardError, match="unknown or unsupported"):
+        _ = openrouter_models_for_policy(policy, env={ENV_ENABLE_HELD_OPENROUTER_MODELS: "1"}, live=True)
+
+    live_models = openrouter_models_for_policy(
+        policy,
+        env={ENV_ENABLE_HELD_OPENROUTER_MODELS: "1", ENV_ALLOW_HELD_MODELS_FOR_LIVE: "1"},
+        live=True,
+    )
+
+    assert live_models == (held_model,)
     with pytest.raises(OpenRouterFailoverHardError, match="unknown or unsupported"):
         _ = openrouter_models_for_policy(
             {"provider": "openrouter", "model": MODEL_A},

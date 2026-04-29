@@ -40,8 +40,10 @@ def _commands() -> tuple[CommandDef, ...]:
         CommandDef("lease", "Acquire a fenced task lease.", supports_dry_run=True, requires_write=True),
         CommandDef("live-resume", "Prepare safe live OpenRouter leases.", supports_dry_run=True),
         CommandDef("memory", "List, show, extract, consolidate, reject, or mark stale typed legal memory.", supports_dry_run=True),
+        CommandDef("matter-profile", "Show, propose, apply, or reset matter-local adaptive stage profiles.", supports_dry_run=True),
         CommandDef("migrate-report", "Build migration report for legacy workspace.", supports_dry_run=True),
         CommandDef("model-policy", "Validate or resolve a model routing policy file.", read_only_safe=True),
+        CommandDef("orchestrator", "Status, tick, failures, and repair proposals for matter orchestrators.", supports_dry_run=True),
         CommandDef("policy-check", "Check provider/model fallback policy.", read_only_safe=True, aliases=("provider-policy",)),
         CommandDef("provider-probe", "Make a tiny OpenRouter probe before live resume.", requires_live=True),
         CommandDef("provider-policy", "Check provider/model fallback policy.", read_only_safe=True, aliases=("policy-check",)),
@@ -62,4 +64,5 @@ def _commands() -> tuple[CommandDef, ...]:
         CommandDef("verifier", "Run independent verifier checks against candidate packets.", supports_dry_run=True),
         CommandDef("workflow", "List, show, or run markdown legal workflows.", command_type="workflow", supports_dry_run=True),
         CommandDef("work-order", "Build a bounded worker work order.", supports_dry_run=True),
+        CommandDef("work-run", "Start, resume, export, and reuse durable matter work runs.", supports_dry_run=True),
     )

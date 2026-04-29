@@ -14,10 +14,13 @@ from atticus.core.tasks import TaskSpec
 from atticus.db import repo
 from atticus.providers.model_policy import (
     ModelPolicyError,
+    default_smart_model_policy,
     load_model_routing_policy,
     normalize_legacy_provider_policy,
     provider_policy_for_route,
+    smart_provider_policy_for_route,
 )
+from atticus.providers.policy import ProviderRequest, check_provider_policy
 from atticus.providers.live_readiness import check_live_provider_policy
 from atticus.reducer import reducer as reducer_module
 from atticus.reducer.reducer import reduce_candidate
@@ -121,24 +124,8 @@ def _rich_policy_payload() -> dict[str, object]:
                 "estimated_cost_usd": 0.03,
                 "capabilities": ["legal_reasoning", "hostile_review", "synthesis"],
             },
-            "qwen_free": {
-                "provider": "openrouter",
-                "model": "qwen/qwen3-coder:free",
-                "runtime": "openrouter",
-                "allow_fallback": False,
-                "estimated_cost_usd": 0.0,
-            },
         },
         "pools": {
-            "free_loop": {
-                "strategy": "fallback_loop",
-                "profiles": ["qwen_free"],
-                "max_failed_cycles": 7,
-                "cooldown_seconds": 11.0,
-                "per_model_timeout_seconds": 22.0,
-                "backoff_seconds": 0.5,
-                "jitter_seconds": 0.0,
-            },
             "pro_then_flash": {
                 "strategy": "fallback_loop",
                 "profiles": ["deepseek_pro_or", "deepseek_flash_or"],
@@ -162,7 +149,7 @@ def _rich_policy_payload() -> dict[str, object]:
                 "S8": "gpt55_codex",
             },
             "task_types": {
-                "source_inventory": "free_loop",
+                "source_inventory": "deepseek_flash_or",
             },
             "task_ids": {
                 "exact-task": "gpt55_codex",
@@ -211,7 +198,7 @@ def test_model_policy_rejects_non_finite_numeric_fields():
         "routes": {"default": "bad"},
     }
     bad_pool = _rich_policy_payload()
-    cast(dict[str, object], cast(dict[str, object], bad_pool["pools"])["free_loop"])["cooldown_seconds"] = "Infinity"
+    cast(dict[str, object], cast(dict[str, object], bad_pool["pools"])["pro_then_flash"])["cooldown_seconds"] = "Infinity"
 
     with pytest.raises(ModelPolicyError, match="finite"):
         _ = load_model_routing_policy(bad_profile)
@@ -256,10 +243,8 @@ def test_model_policy_precedence_and_openrouter_deepseek_syntax():
     assert worker["model"] == "deepseek/deepseek-v4-flash"
     assert reducer["model"] == "deepseek/deepseek-v4-pro"
     assert stage_s7["model"] == "deepseek/deepseek-v4-pro"
-    assert task_type["model_pool_id"] == "free_loop"
-    failover = _mapping_value(task_type["openrouter_failover"])
-    assert failover["models"] == ["qwen/qwen3-coder:free"]
-    assert failover["max_failed_cycles"] == 7
+    assert task_type["model"] == "deepseek/deepseek-v4-flash"
+    assert "openrouter_failover" not in task_type
     assert exact["provider"] == "openai-codex"
     assert exact["model"] == "gpt-5.5"
 
@@ -306,10 +291,9 @@ def test_set_provider_policy_policy_file_dry_run_write_and_work_order_audit(tmp_
         order = build_work_order(conn, task_id="source-task", persist_context=False)
         provider_runs = _scalar_int(conn, "SELECT COUNT(*) FROM provider_runs")
 
-    assert task_policy["model_pool_id"] == "free_loop"
-    assert _mapping_value(task_policy["openrouter_failover"])["max_failed_cycles"] == 7
+    assert task_policy["model_profile_id"] == "deepseek_flash_or"
     work_order_policy = _mapping_value(order.as_dict()["provider_policy"])
-    assert _mapping_value(work_order_policy["resolved_model"])["pool_id"] == "free_loop"
+    assert _mapping_value(work_order_policy["resolved_model"])["profile_id"] == "deepseek_flash_or"
     assert provider_runs == 0
 
 
@@ -333,6 +317,174 @@ def test_model_policy_cli_validate_and_resolve_smokes(tmp_path: Path):
             "type-task",
         ]
     ) == 0
+    assert cli_main(
+        [
+            "model-policy",
+            "decide",
+            "--policy-file",
+            str(policy_file),
+            "--stage",
+            "S7",
+            "--layer",
+            "hostile_review",
+            "--task-type",
+            "hostile_opponent_review",
+            "--task-id",
+            "hostile-task",
+        ]
+    ) == 0
+
+
+def test_smart_model_policy_routes_flash_pro_and_codex_with_audit_fingerprints():
+    policy = default_smart_model_policy()
+
+    flash = smart_provider_policy_for_route(policy, layer="worker", stage="S0", task_type="source_inventory", task_id="source-task")
+    pro = smart_provider_policy_for_route(policy, layer="hostile_review", stage="S7", task_type="hostile_opponent_review", task_id="hostile-task")
+    codex = smart_provider_policy_for_route(policy, layer="worker", stage="S0", task_type="schema_migration", task_id="code-task")
+
+    assert flash["model"] == "deepseek/deepseek-v4-flash"
+    assert pro["model"] == "deepseek/deepseek-v4-pro"
+    assert codex["provider"] == "openai-codex"
+    assert codex["model"] == "gpt-5.5"
+    for resolved in (flash, pro, codex):
+        decision = _mapping_value(resolved["model_decision"])
+        assert decision["policy_fingerprint"]
+        assert decision["input_fingerprint"]
+        assert resolved["model"] == decision["model"]
+
+
+def test_smart_model_policy_keeps_codex_exact_route_only():
+    policy = default_smart_model_policy()
+
+    test_generation = smart_provider_policy_for_route(policy, layer="worker", stage="S0", task_type="test_generation", task_id="test-generation-task")
+    repository_refactor = smart_provider_policy_for_route(policy, layer="worker", stage="S0", task_type="repository_refactor", task_id="repository-refactor-task")
+
+    raw = policy.as_dict()
+    routes = cast(dict[str, object], raw["routes"])
+    routes["task_ids"] = {"repository-refactor-exact": "gpt55_codex"}
+    exact_policy = load_model_routing_policy(raw)
+    exact = smart_provider_policy_for_route(
+        exact_policy,
+        layer="worker",
+        stage="S0",
+        task_type="repository_refactor",
+        task_id="repository-refactor-exact",
+    )
+
+    assert test_generation["provider"] == "openrouter"
+    assert test_generation["model"] == "deepseek/deepseek-v4-flash"
+    assert _mapping_value(test_generation["model_decision"])["decision_tier"] == "flash_worker"
+    assert repository_refactor["provider"] == "openrouter"
+    assert repository_refactor["model"] == "deepseek/deepseek-v4-flash"
+    assert _mapping_value(repository_refactor["model_decision"])["decision_tier"] == "flash_worker"
+    assert exact["provider"] == "openai-codex"
+    assert exact["model"] == "gpt-5.5"
+    assert _mapping_value(exact["model_decision"])["decision_tier"] == "codex_exact"
+
+
+def test_smart_model_policy_does_not_override_explicit_reserved_anthropic_route():
+    raw = default_smart_model_policy().as_dict()
+    routes = cast(dict[str, object], raw["routes"])
+    routes["task_ids"] = {"reserved-task": "anthropic_opus_reserved"}
+    policy = load_model_routing_policy(raw)
+
+    resolved = smart_provider_policy_for_route(policy, layer="worker", stage="S0", task_type="source_inventory", task_id="reserved-task")
+
+    assert resolved["blocked"] is True
+    assert resolved["provider"] == "blocked"
+    assert "reserved Anthropic" in str(resolved["model_decision_reason"])
+
+
+def test_held_openrouter_free_models_are_not_routable_by_default(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("ATTICUS_ENABLE_HELD_OPENROUTER_MODELS", raising=False)
+    monkeypatch.delenv("ATTICUS_ALLOW_HELD_MODELS_FOR_LIVE", raising=False)
+
+    decision = check_provider_policy(ProviderRequest("openrouter", "qwen/qwen3-coder:free", allow_fallback=False))
+    live_decision = check_live_provider_policy(
+        {"provider": "openrouter", "model": "qwen/qwen3-coder:free", "allow_fallback": False},
+        env={"OPENROUTER_API_KEY": "test-key"},
+    )
+
+    assert not decision.allowed
+    assert "held OpenRouter model" in decision.reason
+    assert not live_decision.allowed
+    assert any("unknown or unsupported OpenRouter model" in reason for reason in live_decision.reasons)
+
+
+def test_held_openrouter_models_require_separate_live_opt_in(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("ATTICUS_ENABLE_HELD_OPENROUTER_MODELS", "1")
+    monkeypatch.delenv("ATTICUS_ALLOW_HELD_MODELS_FOR_LIVE", raising=False)
+
+    policy = load_model_routing_policy(
+        {
+            "version": 1,
+            "profiles": {
+                "held": {
+                    "provider": "openrouter",
+                    "model": "qwen/qwen3-coder:free",
+                    "runtime": "openrouter",
+                    "allow_fallback": False,
+                    "estimated_cost_usd": 0.0,
+                }
+            },
+            "routes": {"default": "held"},
+        }
+    )
+    resolved = provider_policy_for_route(policy)
+    live_decision = check_live_provider_policy(resolved, env={"OPENROUTER_API_KEY": "test-key", "ATTICUS_ENABLE_HELD_OPENROUTER_MODELS": "1"})
+
+    assert resolved["model"] == "qwen/qwen3-coder:free"
+    assert not live_decision.allowed
+    assert any("unknown or unsupported OpenRouter model" in reason for reason in live_decision.reasons)
+
+
+def test_set_provider_policy_smart_defaults_writes_decision_metadata(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="hostile-smart-task",
+                title="Hostile smart task",
+                task_type="hostile_opponent_review",
+                matter_scope="napier",
+                stage=LegalStage.S7_HOSTILE_REVIEW,
+                status=TaskStatus.QUEUED,
+            ),
+        )
+
+    assert cli_main(["set-provider-policy", "--db", str(db_path), "--matter", "napier", "--smart-defaults", "--write"]) == 0
+    with repo.db_connection(db_path) as conn:
+        task_policy = _json_mapping(_text_value(conn, "SELECT provider_policy_json FROM tasks WHERE task_id = 'hostile-smart-task'"))
+
+    assert task_policy["model"] == "deepseek/deepseek-v4-pro"
+    assert _mapping_value(task_policy["model_decision"])["decision_tier"] == "pro_orchestrator"
+
+
+def test_model_policy_decide_reads_task_policy_from_db(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="hostile-db-decide",
+                title="Hostile DB decide",
+                task_type="hostile_opponent_review",
+                matter_scope="napier",
+                stage=LegalStage.S7_HOSTILE_REVIEW,
+                status=TaskStatus.QUEUED,
+            ),
+        )
+
+    assert cli_main(["set-provider-policy", "--db", str(db_path), "--matter", "napier", "--smart-defaults", "--write"]) == 0
+    _ = capsys.readouterr()
+
+    assert cli_main(["model-policy", "decide", "--db", str(db_path), "--task-id", "hostile-db-decide", "--json"]) == 0
+    output = json.loads(capsys.readouterr().out)
+
+    resolved = _mapping_value(output["resolved"])
+    assert resolved["model"] == "deepseek/deepseek-v4-pro"
+    assert _mapping_value(resolved["model_decision"])["decision_tier"] == "pro_orchestrator"
 
 
 def test_proposed_tasks_inherit_or_normalize_against_parent_model_routing_policy(tmp_path: Path):
@@ -401,6 +553,114 @@ def test_proposed_tasks_inherit_or_normalize_against_parent_model_routing_policy
     assert normalized["model"] == "deepseek/deepseek-v4-flash"
     assert str(_mapping_value(normalized["model_policy_audit"])["reason"]).startswith("proposed task provider policy")
     assert attention == 0
+
+
+def test_proposed_tasks_from_smart_parent_recompute_model_decision(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    parent_policy = smart_provider_policy_for_route(
+        default_smart_model_policy(),
+        layer="worker",
+        stage="S0",
+        task_type="source_inventory",
+        task_id="smart-parent",
+    )
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="smart-parent",
+                title="Smart parent",
+                task_type="source_inventory",
+                stage=LegalStage.S0_SOURCE_INVENTORY,
+                provider_policy=parent_policy,
+            ),
+        )
+        lease_id = acquire_lease(conn, task_id="smart-parent", worker_id="worker-01", dry_run=False)
+        candidate_id = record_worker_result(
+            conn,
+            task_id="smart-parent",
+            lease_id=lease_id,
+            worker_id="worker-01",
+            payload=_v2_packet(
+                "smart-parent",
+                proposed_tasks=[
+                    {
+                        "task_id": "smart-hostile-followup",
+                        "title": "Smart hostile followup",
+                        "task_type": "hostile_opponent_review",
+                        "stage": "S7",
+                        "matter_scope": "atticus",
+                        "instructions": "Run a hostile follow-up review.",
+                    },
+                ],
+            ),
+        )
+
+        result = run_free_loop_once(conn, output_dir=tmp_path / "out", capacity=0, execute_workers=False)
+        followup_policy = _json_mapping(_text_value(conn, "SELECT provider_policy_json FROM tasks WHERE task_id = 'smart-hostile-followup'"))
+
+    decision = _mapping_value(followup_policy["model_decision"])
+    assert result["reduced_candidates"] == [candidate_id]
+    assert followup_policy["model"] == "deepseek/deepseek-v4-pro"
+    assert followup_policy["model_profile_id"] == "deepseek_pro_or"
+    assert decision["decision_tier"] == "pro_orchestrator"
+    assert decision["model"] == followup_policy["model"]
+
+
+def test_proposed_tasks_from_smart_parent_preserve_blocked_explicit_routes(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    raw_policy = default_smart_model_policy().as_dict()
+    routes = cast(dict[str, object], raw_policy["routes"])
+    routes["task_ids"] = {"blocked-followup": "anthropic_opus_reserved"}
+    smart_policy = load_model_routing_policy(raw_policy)
+    parent_policy = smart_provider_policy_for_route(
+        smart_policy,
+        layer="worker",
+        stage="S0",
+        task_type="source_inventory",
+        task_id="smart-parent",
+    )
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="smart-parent",
+                title="Smart parent",
+                task_type="source_inventory",
+                stage=LegalStage.S0_SOURCE_INVENTORY,
+                provider_policy=parent_policy,
+            ),
+        )
+        lease_id = acquire_lease(conn, task_id="smart-parent", worker_id="worker-01", dry_run=False)
+        candidate_id = record_worker_result(
+            conn,
+            task_id="smart-parent",
+            lease_id=lease_id,
+            worker_id="worker-01",
+            payload=_v2_packet(
+                "smart-parent",
+                proposed_tasks=[
+                    {
+                        "task_id": "blocked-followup",
+                        "title": "Blocked followup",
+                        "task_type": "followup",
+                        "stage": "S0",
+                        "matter_scope": "atticus",
+                        "instructions": "This explicit reserved route must remain blocked.",
+                    },
+                ],
+            ),
+        )
+
+        result = run_free_loop_once(conn, output_dir=tmp_path / "out", capacity=0, execute_workers=False)
+        followup_policy = _json_mapping(_text_value(conn, "SELECT provider_policy_json FROM tasks WHERE task_id = 'blocked-followup'"))
+
+    decision = _mapping_value(followup_policy["model_decision"])
+    assert result["reduced_candidates"] == [candidate_id]
+    assert followup_policy["blocked"] is True
+    assert followup_policy["provider"] == "blocked"
+    assert decision["decision_tier"] == "blocked"
+    assert "reserved Anthropic" in str(followup_policy["model_decision_reason"])
 
 
 def test_run_free_loop_capacity_zero_does_not_make_provider_calls(tmp_path: Path):
@@ -504,7 +764,9 @@ def test_reducer_acceptance_rolls_back_if_proposed_task_import_crashes(tmp_path:
 
 
 def test_live_policy_allows_explicit_openrouter_pool_but_not_silent_fallback():
-    policy = provider_policy_for_route(load_model_routing_policy(_rich_policy_payload()), task_type="source_inventory")
+    payload = _rich_policy_payload()
+    cast(dict[str, object], cast(dict[str, object], payload["routes"])["task_types"])["source_inventory"] = "pro_then_flash"
+    policy = provider_policy_for_route(load_model_routing_policy(payload), task_type="source_inventory")
 
     allowed = check_live_provider_policy(policy, env={"OPENROUTER_API_KEY": "test-key"})
     silent = check_live_provider_policy(
