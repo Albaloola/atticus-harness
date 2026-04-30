@@ -17,6 +17,7 @@ REQUIRED_TABLES = frozenset(_TABLE_RE.findall(DDL))
 REQUIRED_INDEXES = frozenset(_INDEX_RE.findall(DDL)) | {
     "validation_target_idx",
     "human_attention_scope_status_idx",
+    "human_attention_signature_idx",
 }
 
 REQUIRED_COLUMNS: dict[str, frozenset[str]] = {
@@ -80,7 +81,19 @@ REQUIRED_COLUMNS: dict[str, frozenset[str]] = {
         }
     ),
     "human_attention": frozenset(
-        {"attention_id", "matter_scope", "target_type", "target_id", "severity", "reason", "status", "created_at"}
+        {
+            "attention_id",
+            "matter_scope",
+            "target_type",
+            "target_id",
+            "severity",
+            "reason",
+            "status",
+            "owner",
+            "signature",
+            "superseded_by",
+            "created_at",
+        }
     ),
     "error_logs": frozenset(
         {

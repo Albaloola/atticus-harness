@@ -192,6 +192,9 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
         },
         "human_attention": {
             "matter_scope": "TEXT NOT NULL DEFAULT 'unknown'",
+            "owner": "TEXT NOT NULL DEFAULT 'operator'",
+            "signature": "TEXT NOT NULL DEFAULT ''",
+            "superseded_by": "TEXT",
         },
     }
     for table, columns in additions.items():
@@ -204,6 +207,7 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
                 _ = conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
     _backfill_validation_matter_scope(conn)
     _backfill_human_attention_matter_scope(conn)
+    _backfill_human_attention_lifecycle(conn)
 
 
 def _ensure_indexes(conn: sqlite3.Connection) -> None:
@@ -213,6 +217,9 @@ def _ensure_indexes(conn: sqlite3.Connection) -> None:
     )
     _ = conn.execute(
         "CREATE INDEX IF NOT EXISTS human_attention_scope_status_idx ON human_attention(matter_scope, status, severity, created_at)"
+    )
+    _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS human_attention_signature_idx ON human_attention(matter_scope, signature, status)"
     )
 
 
@@ -247,6 +254,36 @@ def _backfill_human_attention_matter_scope(conn: sqlite3.Connection) -> None:
         _ = conn.execute(
             "UPDATE human_attention SET matter_scope = ? WHERE attention_id = ? AND matter_scope = 'unknown'",
             (matter_scope, row["attention_id"]),
+        )
+
+
+def _backfill_human_attention_lifecycle(conn: sqlite3.Connection) -> None:
+    try:
+        rows = conn.execute(
+            """
+            SELECT attention_id, matter_scope, target_type, target_id, severity, reason
+            FROM human_attention
+            WHERE signature = '' OR owner = ''
+            """
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return
+    for row in rows:
+        signature = _human_attention_signature(
+            matter_scope=str(row["matter_scope"]),
+            target_type=str(row["target_type"]),
+            target_id=str(row["target_id"]),
+            severity=str(row["severity"]),
+            reason=str(row["reason"]),
+        )
+        _ = conn.execute(
+            """
+            UPDATE human_attention
+            SET owner = CASE WHEN owner = '' THEN 'operator' ELSE owner END,
+                signature = CASE WHEN signature = '' THEN ? ELSE signature END
+            WHERE attention_id = ?
+            """,
+            (signature, row["attention_id"]),
         )
 
 
@@ -1485,17 +1522,41 @@ def record_human_attention(
     reason: str,
     status: str = "open",
     matter_scope: str | None = None,
+    owner: str = "operator",
+    signature: str | None = None,
+    superseded_by: str | None = None,
 ) -> int:
     target_matter_scope = _matter_scope_for_target(conn, target_type=target_type, target_id=target_id)
     if matter_scope is not None and target_matter_scope is not None and matter_scope != target_matter_scope:
         raise ValueError(f"human attention matter_scope {matter_scope!r} does not match target matter {target_matter_scope!r}")
     resolved_matter_scope = matter_scope or target_matter_scope or "unknown"
+    resolved_signature = signature or _human_attention_signature(
+        matter_scope=resolved_matter_scope,
+        target_type=target_type,
+        target_id=target_id,
+        severity=severity,
+        reason=reason,
+    )
     cur = conn.execute(
         """
-        INSERT INTO human_attention(matter_scope, target_type, target_id, severity, reason, status, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO human_attention(
+          matter_scope, target_type, target_id, severity, reason, status,
+          owner, signature, superseded_by, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (resolved_matter_scope, target_type, target_id, severity, reason, status, utc_now()),
+        (
+            resolved_matter_scope,
+            target_type,
+            target_id,
+            severity,
+            reason,
+            status,
+            owner,
+            resolved_signature,
+            superseded_by,
+            utc_now(),
+        ),
     )
     lastrowid = cur.lastrowid
     if lastrowid is None:
@@ -1512,21 +1573,29 @@ def record_human_attention_once(
     reason: str,
     status: str = "open",
     matter_scope: str | None = None,
+    owner: str = "operator",
+    signature: str | None = None,
 ) -> int | None:
     target_matter_scope = _matter_scope_for_target(conn, target_type=target_type, target_id=target_id)
     if matter_scope is not None and target_matter_scope is not None and matter_scope != target_matter_scope:
         raise ValueError(f"human attention matter_scope {matter_scope!r} does not match target matter {target_matter_scope!r}")
     resolved_matter_scope = matter_scope or target_matter_scope or "unknown"
+    resolved_signature = signature or _human_attention_signature(
+        matter_scope=resolved_matter_scope,
+        target_type=target_type,
+        target_id=target_id,
+        severity=severity,
+        reason=reason,
+    )
     row = conn.execute(
         """
         SELECT attention_id
         FROM human_attention
-        WHERE matter_scope = ? AND target_type = ? AND target_id = ?
-          AND severity = ? AND reason = ? AND status = ?
+        WHERE matter_scope = ? AND signature = ? AND status = ?
         ORDER BY attention_id DESC
         LIMIT 1
         """,
-        (resolved_matter_scope, target_type, target_id, severity, reason, status),
+        (resolved_matter_scope, resolved_signature, status),
     ).fetchone()
     if row is not None:
         return None
@@ -1538,7 +1607,86 @@ def record_human_attention_once(
         reason=reason,
         status=status,
         matter_scope=resolved_matter_scope,
+        owner=owner,
+        signature=resolved_signature,
     )
+
+
+def _human_attention_signature(
+    *,
+    matter_scope: str,
+    target_type: str,
+    target_id: str,
+    severity: str,
+    reason: str,
+) -> str:
+    return "|".join((matter_scope, target_type, target_id, severity, reason))
+
+
+def resolve_attention_by_signature(
+    conn: sqlite3.Connection,
+    *,
+    matter_scope: str,
+    signature: str,
+    resolution_source: str = "system",
+) -> int:
+    cur = conn.execute(
+        """
+        UPDATE human_attention
+        SET status = 'closed'
+        WHERE matter_scope = ? AND signature = ? AND status = 'open'
+        """,
+        (matter_scope, signature),
+    )
+    changed = int(cur.rowcount if cur.rowcount is not None and cur.rowcount > 0 else 0)
+    if changed:
+        _ = emit_event(
+            conn,
+            "human_attention.resolved",
+            matter_scope=matter_scope,
+            payload={
+                "signature": signature,
+                "resolved_count": changed,
+                "resolution_source": resolution_source,
+            },
+        )
+    return changed
+
+
+def supersede_attention(
+    conn: sqlite3.Connection,
+    *,
+    attention_id: int,
+    superseded_by: str,
+    resolution_source: str = "system",
+) -> int:
+    row = conn.execute(
+        "SELECT matter_scope FROM human_attention WHERE attention_id = ?",
+        (attention_id,),
+    ).fetchone()
+    if row is None:
+        return 0
+    cur = conn.execute(
+        """
+        UPDATE human_attention
+        SET status = 'superseded', superseded_by = ?
+        WHERE attention_id = ? AND status = 'open'
+        """,
+        (superseded_by, attention_id),
+    )
+    changed = int(cur.rowcount if cur.rowcount is not None and cur.rowcount > 0 else 0)
+    if changed:
+        _ = emit_event(
+            conn,
+            "human_attention.superseded",
+            matter_scope=str(row["matter_scope"]),
+            payload={
+                "attention_id": attention_id,
+                "superseded_by": superseded_by,
+                "resolution_source": resolution_source,
+            },
+        )
+    return changed
 
 
 def resolve_provider_control_plane_attention(

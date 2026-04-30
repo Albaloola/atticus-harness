@@ -377,7 +377,8 @@ def _stale_artifact_ids(conn: sqlite3.Connection, matter_scope: str) -> list[str
 def _open_human_attention(conn: sqlite3.Connection, matter_scope: str) -> list[dict[str, object]]:
     rows = conn.execute(
         """
-        SELECT attention_id, matter_scope, target_type, target_id, severity, reason, status, created_at
+        SELECT attention_id, matter_scope, target_type, target_id, severity, reason, status,
+               owner, signature, superseded_by, created_at
         FROM human_attention
         WHERE matter_scope = ? AND status = 'open'
         ORDER BY CASE severity WHEN 'blocker' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, attention_id DESC

@@ -8,7 +8,7 @@ the legal operating model.
 
 from __future__ import annotations
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 DDL = """
 PRAGMA foreign_keys = ON;
@@ -762,6 +762,9 @@ CREATE TABLE IF NOT EXISTS human_attention (
   severity TEXT NOT NULL,
   reason TEXT NOT NULL,
   status TEXT NOT NULL,
+  owner TEXT NOT NULL DEFAULT 'operator',
+  signature TEXT NOT NULL DEFAULT '',
+  superseded_by TEXT,
   created_at TEXT NOT NULL
 ) STRICT;
 

@@ -674,11 +674,19 @@ def test_legacy_human_attention_schema_backfills_matter_scope(tmp_path: Path):
     with repo.db_connection(db_path) as conn:
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(human_attention)")}
         index_columns = [row["name"] for row in conn.execute("PRAGMA index_info(human_attention_scope_status_idx)")]
-        attention = cast(Mapping[str, object], conn.execute("SELECT matter_scope FROM human_attention").fetchone())
+        attention = cast(
+            Mapping[str, object],
+            conn.execute("SELECT matter_scope, owner, signature, superseded_by FROM human_attention").fetchone(),
+        )
 
     assert "matter_scope" in columns
+    assert "owner" in columns
+    assert "signature" in columns
+    assert "superseded_by" in columns
     assert index_columns[:2] == ["matter_scope", "status"]
     assert attention["matter_scope"] == "beta"
+    assert attention["owner"] == "operator"
+    assert str(attention["signature"]).endswith("|matter|beta|blocker|legacy issue")
 
 
 def test_lease_events_use_task_matter_scope(tmp_path: Path):
@@ -723,7 +731,79 @@ def test_human_attention_is_matter_scoped_and_status_can_filter(tmp_path: Path):
     assert alpha_status.counts["open_human_attention"] == 1
     assert alpha_status.human_attention[0]["matter_scope"] == "alpha"
     assert alpha_status.human_attention[0]["target_id"] == "alpha-attention"
+    assert alpha_status.human_attention[0]["owner"] == "operator"
+    assert alpha_status.human_attention[0]["signature"]
     assert global_status.counts["open_human_attention"] == 2
+
+
+def test_human_attention_once_dedupes_by_signature_and_tracks_owner(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(conn, TaskSpec(task_id="alpha-attention", title="Alpha attention", task_type="extract", matter_scope="alpha"))
+        first = repo.record_human_attention_once(
+            conn,
+            target_type="task",
+            target_id="alpha-attention",
+            severity="blocker",
+            reason="provider requires intervention",
+            owner="provider",
+            signature="provider:openrouter:auth",
+        )
+        second = repo.record_human_attention_once(
+            conn,
+            target_type="task",
+            target_id="alpha-attention",
+            severity="blocker",
+            reason="provider requires intervention again",
+            owner="provider",
+            signature="provider:openrouter:auth",
+        )
+        rows = [
+            dict(cast(Mapping[str, object], row))
+            for row in conn.execute("SELECT owner, signature FROM human_attention WHERE matter_scope = 'alpha'").fetchall()
+        ]
+
+    assert first is not None
+    assert second is None
+    assert rows == [{"owner": "provider", "signature": "provider:openrouter:auth"}]
+
+
+def test_human_attention_signature_resolution_and_supersession(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(conn, TaskSpec(task_id="alpha-attention", title="Alpha attention", task_type="extract", matter_scope="alpha"))
+        attention_id = repo.record_human_attention(
+            conn,
+            target_type="task",
+            target_id="alpha-attention",
+            severity="warning",
+            reason="old blocker",
+            owner="orchestrator",
+            signature="blocker:old",
+        )
+        superseded = repo.supersede_attention(conn, attention_id=attention_id, superseded_by="repair-plan-1")
+        replacement_id = repo.record_human_attention(
+            conn,
+            target_type="task",
+            target_id="alpha-attention",
+            severity="blocker",
+            reason="new blocker",
+            owner="operator",
+            signature="blocker:new",
+        )
+        resolved = repo.resolve_attention_by_signature(conn, matter_scope="alpha", signature="blocker:new")
+        rows = [
+            dict(cast(Mapping[str, object], row))
+            for row in conn.execute("SELECT attention_id, status, superseded_by FROM human_attention ORDER BY attention_id").fetchall()
+        ]
+
+    assert superseded == 1
+    assert replacement_id != attention_id
+    assert resolved == 1
+    assert rows == [
+        {"attention_id": attention_id, "status": "superseded", "superseded_by": "repair-plan-1"},
+        {"attention_id": replacement_id, "status": "closed", "superseded_by": None},
+    ]
 
 
 def test_human_attention_rejects_explicit_matter_scope_mismatch(tmp_path: Path):

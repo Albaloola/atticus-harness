@@ -93,10 +93,12 @@ def generate_status(db_path: str, *, matter_scope: str | None = None) -> StatusR
                 "target_id": row["target_id"],
                 "severity": row["severity"],
                 "reason": row["reason"],
+                "owner": row["owner"],
+                "signature": row["signature"],
             }
             for row in conn.execute(
                 f"""
-                SELECT attention_id, matter_scope, target_type, target_id, severity, reason
+                SELECT attention_id, matter_scope, target_type, target_id, severity, reason, owner, signature
                 FROM human_attention
                 WHERE status = 'open'
                 {matter_filter}

@@ -222,7 +222,8 @@ def _human_attention(conn: sqlite3.Connection, *, matter_scope: str) -> dict[str
         _row_to_dict(row)
         for row in conn.execute(
             """
-            SELECT attention_id, target_type, target_id, severity, reason, status, created_at
+            SELECT attention_id, target_type, target_id, severity, reason, status,
+                   owner, signature, superseded_by, created_at
             FROM human_attention
             WHERE matter_scope = ?
             ORDER BY CASE severity WHEN 'blocker' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END,
