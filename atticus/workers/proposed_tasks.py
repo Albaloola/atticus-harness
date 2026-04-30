@@ -115,11 +115,15 @@ def import_proposed_tasks_from_candidate(conn: sqlite3.Connection, candidate: Ma
             )
             continue
         if _task_exists(conn, task_id):
-            if _existing_task_is_same_import(conn, task_id=task_id, matter_scope=matter_scope, candidate_id=candidate_id):
-                imported.append(task_id)
+            collision = _resolve_task_id_collision(conn, task_id=task_id, matter_scope=matter_scope, task_map=task_map, candidate_id=candidate_id)
+            if collision["decision"] in {"identical_existing", "same_import"}:
+                imported.append(str(collision["task_id"]))
+                continue
+            if collision["decision"] == "use_suffixed_id":
+                task_id = str(collision["task_id"])
             else:
-                _record_rejected_proposed_task(conn, task_id=task_id, matter_scope=matter_scope, reason="proposed task id collides with an existing task")
-            continue
+                _record_rejected_proposed_task(conn, task_id=task_id, matter_scope=matter_scope, reason=str(collision["reason"]))
+                continue
         stage = str(task_map.get("stage") or LegalStage.S0_SOURCE_INVENTORY)
         try:
             provider_policy = _provider_policy(task_map, parent_policy=parent_policy)
@@ -479,3 +483,96 @@ def _normalized_cost_limit(value: float | None, *, provider_policy: Mapping[str,
         return None
     estimated = _optional_float(provider_policy.get("estimated_cost_usd")) or 0.0
     return max(value, estimated)
+
+
+def _resolve_task_id_collision(
+    conn: sqlite3.Connection,
+    *,
+    task_id: str,
+    matter_scope: str,
+    task_map: Mapping[object, object],
+    candidate_id: str,
+) -> dict[str, object]:
+    if _existing_task_is_same_import(conn, task_id=task_id, matter_scope=matter_scope, candidate_id=candidate_id):
+        return {"decision": "same_import", "task_id": task_id}
+    row = conn.execute(
+        """
+        SELECT task_id, matter_scope, title, task_type, stage, instructions,
+               source_dependencies_json, artifact_dependencies_json, task_dependencies_json,
+               required_certifications_json, validation_gates_json
+        FROM tasks
+        WHERE task_id = ?
+        """,
+        (task_id,),
+    ).fetchone()
+    if row is None:
+        return {"decision": "missing", "task_id": task_id}
+    if _existing_task_semantically_matches(row, matter_scope=matter_scope, task_map=task_map):
+        _ = repo.emit_event(
+            conn,
+            "proposed_task.collision_identical_skipped",
+            matter_scope=matter_scope,
+            payload={"task_id": task_id, "imported_from_candidate_id": candidate_id},
+        )
+        return {"decision": "identical_existing", "task_id": task_id}
+    if not _collision_safe_to_suffix(row, task_map=task_map):
+        return {"decision": "reject", "task_id": task_id, "reason": "proposed task id collides with an existing task"}
+    for suffix in range(2, 100):
+        candidate = f"{task_id}-{suffix}"
+        if _existing_task_is_same_import(conn, task_id=candidate, matter_scope=matter_scope, candidate_id=candidate_id):
+            return {"decision": "same_import", "task_id": candidate}
+        if not _task_exists(conn, candidate):
+            _ = repo.emit_event(
+                conn,
+                "proposed_task.id_collision_suffixed",
+                matter_scope=matter_scope,
+                payload={"original_task_id": task_id, "new_task_id": candidate, "imported_from_candidate_id": candidate_id},
+            )
+            return {"decision": "use_suffixed_id", "task_id": candidate}
+    return {"decision": "reject", "task_id": task_id, "reason": "proposed task id collides with existing tasks and no stable suffix is available"}
+
+
+def _existing_task_semantically_matches(row: sqlite3.Row, *, matter_scope: str, task_map: Mapping[object, object]) -> bool:
+    if str(row["matter_scope"]) != matter_scope:
+        return False
+    checks = {
+        "title": str(task_map.get("title") or str(row["task_id"])),
+        "task_type": str(task_map.get("task_type") or "followup"),
+        "stage": str(task_map.get("stage") or LegalStage.S0_SOURCE_INVENTORY),
+        "instructions": str(task_map.get("instructions") or ""),
+    }
+    for key, expected in checks.items():
+        if str(row[key] or "") != expected:
+            return False
+    json_checks = {
+        "source_dependencies_json": _string_list(task_map.get("source_dependencies")),
+        "artifact_dependencies_json": _string_list(task_map.get("artifact_dependencies")),
+        "task_dependencies_json": _string_list(task_map.get("task_dependencies")),
+        "required_certifications_json": _mapping_list(task_map.get("required_certifications")),
+        "validation_gates_json": _string_list(task_map.get("validation_gates")),
+    }
+    for column, expected in json_checks.items():
+        try:
+            current = json.loads(str(row[column] or "[]"))
+        except json.JSONDecodeError:
+            return False
+        if current != expected:
+            return False
+    return True
+
+
+def _collision_safe_to_suffix(row: sqlite3.Row, *, task_map: Mapping[object, object]) -> bool:
+    """Return true when only the requested id collides, not semantics.
+
+    Unsafe ambiguity remains rejected.  A suffix is allowed only when the
+    proposed task has the same title/type/stage/instructions as the existing
+    task but different dependencies/provenance, which represents a deterministic
+    id collision rather than an attempt to overwrite a different named task.
+    """
+
+    return (
+        str(row["title"] or "") == str(task_map.get("title") or str(row["task_id"]))
+        and str(row["task_type"] or "") == str(task_map.get("task_type") or "followup")
+        and str(row["stage"] or "") == str(task_map.get("stage") or LegalStage.S0_SOURCE_INVENTORY)
+        and str(row["instructions"] or "") == str(task_map.get("instructions") or "")
+    )

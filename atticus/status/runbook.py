@@ -9,6 +9,7 @@ from pathlib import Path
 import sqlite3
 from typing import cast
 
+from atticus.agents.repair_executor import execute_repair_tick
 from atticus.agents.repair_planner import list_repair_plans, next_repair_plan
 from atticus.reducer.review_queue import list_reducer_reviews
 from atticus.status.completion import build_matter_completion_report, next_resume_action
@@ -30,6 +31,9 @@ def build_runbook(conn: sqlite3.Connection, *, matter_scope: str, db_path: str =
     stale_dependencies = _stale_dependencies(conn, matter_scope=matter_scope)
     final_gate = _materialize_resume_commands(final_gate_readiness(conn, matter_scope), db_path)
     final_gate_repairs = _materialize_resume_commands({"repairs": plan_final_gate_repairs(conn, matter_scope)}, db_path)
+    repair_executions = _recent_repair_executions(conn, matter_scope=matter_scope)
+    repair_executor = execute_repair_tick(conn, matter_scope=matter_scope, max_repairs=10, write=False).as_dict()
+    terminal_lanes = [item for item in repair_executor.get("terminal", []) if isinstance(item, Mapping)]
     return {
         "matter_scope": matter_scope,
         "completion": completion,
@@ -54,6 +58,13 @@ def build_runbook(conn: sqlite3.Connection, *, matter_scope: str, db_path: str =
         "stale_warnings": _stale_warnings(completion, stale_dependencies),
         "final_gate": final_gate,
         "final_gate_repairs": final_gate_repairs["repairs"] if isinstance(final_gate_repairs, Mapping) else [],
+        "repair_executions": repair_executions,
+        "repair_executor": repair_executor,
+        "next_auto_repairable_action": (repair_executor.get("attempted") or [None])[0] if isinstance(repair_executor.get("attempted"), list) and repair_executor.get("attempted") else None,
+        "next_reducer_owned_action": (reducer_reviews[0] if reducer_reviews else None),
+        "terminal_provider_operator_blockers": terminal_lanes,
+        "repair_tick_write_can_make_progress": bool(repair_executor.get("made_progress") or repair_executor.get("attempted")),
+        "run_free_loop_can_continue_safely": str(cast(Mapping[str, object], next_action).get("owner") or "") not in {"provider", "operator"},
         "exact_resume_command": str(cast(Mapping[str, object], next_action).get("resume_command") or ""),
     }
 
@@ -121,6 +132,16 @@ def render_runbook_markdown(runbook: Mapping[str, object]) -> str:
         "## Final Gate",
         f"- Ready: {cast(Mapping[str, object], runbook['final_gate']).get('ready')}",
         f"- Next action: {cast(Mapping[str, object], cast(Mapping[str, object], runbook['final_gate']).get('next_action') or {}).get('type', '')}",
+        "",
+        "## Repair Executor",
+        f"- repair-tick --write can make progress: {runbook.get('repair_tick_write_can_make_progress')}",
+        f"- run-free-loop can continue safely: {runbook.get('run_free_loop_can_continue_safely')}",
+        f"- Next auto-repairable action: {cast(Mapping[str, object] | None, runbook.get('next_auto_repairable_action'))}",
+        f"- Next reducer-owned action: {cast(Mapping[str, object] | None, runbook.get('next_reducer_owned_action'))}",
+        *_table(["repair_plan_id", "action_type", "owner", "reason"], cast(list[Mapping[str, object]], runbook.get("terminal_provider_operator_blockers") or [])),
+        "",
+        "## Repair Executions",
+        *_table(["repair_plan_id", "action_type", "mode", "status", "created_at"], cast(list[Mapping[str, object]], runbook["repair_executions"])),
         "",
         "## Exact Resume Command",
         f"```bash\n{runbook.get('exact_resume_command') or 'true'}\n```",
@@ -419,6 +440,34 @@ def _reducer_review_commands(reviews: list[Mapping[str, object]], db_path: str) 
             }
         )
     return commands
+
+
+def _recent_repair_executions(conn: sqlite3.Connection, *, matter_scope: str) -> list[dict[str, object]]:
+    rows = conn.execute(
+        """
+        SELECT payload_json, created_at
+        FROM events
+        WHERE matter_scope = ? AND event_type = 'repair.plan_executed'
+        ORDER BY created_at DESC
+        LIMIT 25
+        """,
+        (matter_scope,),
+    ).fetchall()
+    items: list[dict[str, object]] = []
+    for row in rows:
+        payload = json.loads(str(row["payload_json"] or "{}")) if row["payload_json"] else {}
+        outcome = payload.get("outcome") if isinstance(payload.get("outcome"), Mapping) else {}
+        items.append(
+            {
+                "repair_plan_id": str(payload.get("repair_plan_id") or ""),
+                "action_type": str(payload.get("action_type") or ""),
+                "mode": str(outcome.get("mode") or ""),
+                "status": "executed",
+                "outcome": str(outcome),
+                "created_at": str(row["created_at"]),
+            }
+        )
+    return items
 
 
 def _stale_warnings(completion: Mapping[str, object], stale_dependencies: list[Mapping[str, object]]) -> list[dict[str, object]]:

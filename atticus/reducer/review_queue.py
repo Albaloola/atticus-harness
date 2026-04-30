@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from atticus.agents.repair_planner import ensure_repair_plan_for_blocker
 from atticus.core.events import utc_now
+from atticus.core.policies import TaskStatus
 from atticus.db import repo
 from atticus.reducer.reducer import reduce_candidate
 
@@ -213,10 +214,25 @@ def reject_reducer_review(
         raise ValueError("reducer review rejection requires a reason")
     if not write:
         return {"dry_run": True, "review": item.as_dict(), "would_reject_candidate": candidate_id, "reason": reason}
+    other_candidate = conn.execute(
+        """
+        SELECT 1
+        FROM candidate_outputs
+        WHERE task_id = ? AND candidate_id != ? AND status = 'candidate'
+        LIMIT 1
+        """,
+        (item.task_id, candidate_id),
+    ).fetchone()
+    next_task_status = TaskStatus.REDUCER_PENDING if other_candidate is not None else TaskStatus.QUEUED
+    now = utc_now()
     _ = conn.execute("UPDATE candidate_outputs SET status = 'quarantined', quarantined_reason = ? WHERE candidate_id = ?", (reason, candidate_id))
     _ = conn.execute(
+        "UPDATE tasks SET status = ?, blocked_reasons_json = '[]', updated_at = ? WHERE task_id = ?",
+        (str(next_task_status), now, item.task_id),
+    )
+    _ = conn.execute(
         "UPDATE reducer_review_queue SET status = 'rejected', reason = ?, updated_at = ? WHERE candidate_id = ?",
-        (reason, utc_now(), candidate_id),
+        (reason, now, candidate_id),
     )
     plan = ensure_repair_plan_for_blocker(
         conn,

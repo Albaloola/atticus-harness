@@ -64,6 +64,7 @@ def ensure_repair_plan_for_blocker(
     blocker_type = classify_blocker(clean_reason)
     signature = blocker_signature(blocker_type=blocker_type, reason=clean_reason)
     actions = actions_for_blocker(conn, matter_scope=matter_scope, target_type=target_type, target_id=target_id, reason=clean_reason, blocker_type=blocker_type)
+    actions = _with_typed_action_fields(actions, target_type=target_type, target_id=target_id, blocker_type=blocker_type)
     status = "requires_human" if blocker_type in {"provider_control_plane", "external_or_human_action"} else "proposed"
     owner = _owner_for_actions(actions, fallback="operator" if status == "requires_human" else "orchestrator")
     terminal_reason = clean_reason if status == "requires_human" and blocker_type == "external_or_human_action" else ""
@@ -137,7 +138,7 @@ def ensure_repair_plan_for_blocker(
             "actions": list(actions),
         },
     )
-    if status == "requires_human":
+    if status == "requires_human" and target_type != "human_attention":
         _record_attention_once(
             conn,
             matter_scope=matter_scope,
@@ -303,6 +304,8 @@ def classify_blocker(reason: str) -> str:
         return "missing_certification"
     if "incomplete task dependency:" in lowered:
         return "incomplete_dependency"
+    if "local_stub capability block" in lowered or "local/no-live runtime cannot produce reducer-grade" in lowered:
+        return "local_runtime_capability"
     if any(term in lowered for term in PROVIDER_BLOCKER_TERMS):
         return "provider_control_plane"
     if "worker output quarantined" in lowered or "quarantined" in lowered:
@@ -344,11 +347,21 @@ def actions_for_blocker(
                 {
                     "action_type": "create_or_run_citation_audit",
                     "owner": "orchestrator",
-                    "resume_command": f"python -m atticus.cli coordinator plan --db DB --matter {matter_scope} --goal \"create missing citation_audit work\"",
+                    "repairability": "auto",
+                    "target_type": target_type,
+                    "target_id": target_id,
+                    "certification_type": certification,
+                    "blocker_kind": blocker_type,
+                    "resume_command": f"python -m atticus.cli repair-tick --db DB --matter {matter_scope} --write --json",
                 },
                 {
                     "action_type": "then_run_final_quality_gate",
                     "owner": "orchestrator",
+                    "repairability": "auto",
+                    "target_type": target_type,
+                    "target_id": target_id,
+                    "certification_type": "final_quality_gate",
+                    "blocker_kind": blocker_type,
                     "resume_command": f"python -m atticus.cli final-gate readiness --db DB --matter {matter_scope} --json",
                 },
             )
@@ -357,7 +370,11 @@ def actions_for_blocker(
                 "action_type": "create_certification_work",
                 "certification_type": certification,
                 "owner": "orchestrator",
-                "resume_command": f"python -m atticus.cli coordinator plan --db DB --matter {matter_scope} --goal \"create missing {certification} work\"",
+                "repairability": "auto" if certification != "final_quality_gate" else "scheduler",
+                "target_type": target_type,
+                "target_id": target_id,
+                "blocker_kind": blocker_type,
+                "resume_command": f"python -m atticus.cli repair-tick --db DB --matter {matter_scope} --write --json",
             },
         )
     if blocker_type == "incomplete_dependency":
@@ -368,7 +385,11 @@ def actions_for_blocker(
                 {
                     "action_type": "manual_reducer_review",
                     "owner": "reducer",
+                    "repairability": "reducer",
+                    "target_type": target_type,
+                    "target_id": target_id,
                     "dependency_task_id": dependency_id,
+                    "blocker_kind": blocker_type,
                     "resume_command": f"python -m atticus.cli inspect --db DB --type task --id {dependency_id}",
                 },
             )
@@ -377,7 +398,11 @@ def actions_for_blocker(
                 {
                     "action_type": "run_or_repair_dependency",
                     "owner": "scheduler",
+                    "repairability": "scheduler",
+                    "target_type": target_type,
+                    "target_id": target_id,
                     "dependency_task_id": dependency_id,
+                    "blocker_kind": blocker_type,
                     "dependency_status": str(dependency["status"]),
                     "resume_command": f"python -m atticus.cli run-free-loop --db DB --matter {matter_scope} --capacity 15 --max-ticks 1",
                 },
@@ -405,6 +430,21 @@ def actions_for_blocker(
                 "action_type": "repair_worker_contract_or_prompt",
                 "owner": "orchestrator",
                 "resume_command": f"python -m atticus.cli inspect --db DB --type {target_type} --id {target_id}",
+            },
+        )
+    if blocker_type == "local_runtime_capability":
+        return (
+            {
+                "action_type": "use_deterministic_source_led_generator_or_import_packet",
+                "owner": "orchestrator",
+                "retry_worker": False,
+                "resume_command": f"python -m atticus.cli import-candidates --help",
+            },
+            {
+                "action_type": "use_provider_backed_worker_if_authorized",
+                "owner": "provider",
+                "retry_worker": False,
+                "resume_command": f"python -m atticus.cli provider-health --db DB --matter {matter_scope} --group-by-policy --json",
             },
         )
     if blocker_type == "context_budget":
@@ -531,3 +571,33 @@ def _record_attention_once(
         severity=severity,
         reason=reason,
     )
+
+
+def _with_typed_action_fields(
+    actions: tuple[dict[str, object], ...],
+    *,
+    target_type: str,
+    target_id: str,
+    blocker_type: str,
+) -> tuple[dict[str, object], ...]:
+    owner_repairability = {
+        "orchestrator": "auto",
+        "scheduler": "scheduler",
+        "reducer": "reducer",
+        "provider": "provider",
+        "operator": "operator",
+    }
+    enriched: list[dict[str, object]] = []
+    for action in actions:
+        item = dict(action)
+        owner = str(item.get("owner") or "")
+        item.setdefault("repairability", owner_repairability.get(owner, "terminal"))
+        item.setdefault("target_type", target_type)
+        item.setdefault("target_id", target_id)
+        item.setdefault("blocker_kind", blocker_type)
+        if blocker_type == "provider_control_plane":
+            item["repairability"] = "provider"
+        if blocker_type == "external_or_human_action":
+            item["repairability"] = "terminal"
+        enriched.append(item)
+    return tuple(enriched)

@@ -131,6 +131,73 @@ def test_matter_health_reports_missing_citation_audit_before_final_quality_gate(
     assert action["after"] == "run citation audit, then final quality gate"
 
 
+def test_matter_health_prioritizes_runnable_user_directed_work_before_final_gate_drift(tmp_path: Path) -> None:
+    db_path = init_db(tmp_path)
+    task_id = "napier-accommodation-arrears-coord-prepare-urgent-evidence-led-hardship-and-notice-to-quit-pause-position-p-ctx-1-evidence-triage"
+    with repo.db_connection(db_path) as conn:
+        _add_final_work_task(conn)
+        _certify_all_except(conn, "final_quality_gate")
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id=task_id,
+                matter_scope=MATTER,
+                title="Prepare urgent hardship and Notice to Quit pause position pack",
+                task_type="evidence_triage",
+                stage=LegalStage.S5_ISSUE_ROUTE_MAP,
+                status=TaskStatus.QUEUED,
+                expected_value=100.0,
+            ),
+        )
+
+        action = next_resume_action(conn, MATTER)
+
+    assert action["type"] == "supervisor_tick"
+    assert action["owner"] == "scheduler"
+    assert action["task_id"] == task_id
+    assert action["task_type"] == "evidence_triage"
+    assert "run-free-loop" in str(action["resume_command"])
+
+
+def test_matter_health_surfaces_gate_resolved_blocked_task_before_final_gate_drift(tmp_path: Path) -> None:
+    db_path = init_db(tmp_path)
+    parent_id = "urgent-hardship-evidence-triage"
+    audit_id = "urgent-hardship-citation-audit"
+    with repo.db_connection(db_path) as conn:
+        _add_final_work_task(conn)
+        _certify_all_except(conn, "final_quality_gate")
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id=parent_id,
+                matter_scope=MATTER,
+                title="Urgent hardship evidence triage",
+                task_type="evidence_triage",
+                stage=LegalStage.S2_EVIDENCE_REGISTRY,
+                status=TaskStatus.COMPLETE,
+            ),
+        )
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id=audit_id,
+                matter_scope=MATTER,
+                title="Audit urgent hardship citations",
+                task_type="citation_audit",
+                stage=LegalStage.S7_HOSTILE_REVIEW,
+                status=TaskStatus.BLOCKED,
+                task_dependencies=[parent_id],
+            ),
+        )
+        repo.update_task_blocked(conn, audit_id, [f"incomplete task dependency: {parent_id}"])
+
+        action = next_resume_action(conn, MATTER)
+
+    assert action["type"] == "supervisor_tick"
+    assert action["task_id"] == audit_id
+    assert "safely requeueable blocked" in str(action["reason"])
+
+
 def test_matter_health_excludes_closed_human_attention(tmp_path: Path) -> None:
     db_path = init_db(tmp_path)
     with repo.db_connection(db_path) as conn:

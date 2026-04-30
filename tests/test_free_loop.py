@@ -193,14 +193,13 @@ def test_free_loop_no_progress_with_missing_certification_surfaces_next_action(t
         ).fetchone()
 
     invariant = cast(Mapping[str, object], result["no_silent_idle"])
-    assert invariant["ok"] is False
-    assert invariant["reason"] == "no_progress_with_incomplete_matter"
-    assert cast(Mapping[str, object], invariant["next_action"])["type"] == "missing_certification"
-    assert "final_quality_gate" in invariant["missing_certifications"]
-    assert event is not None
-    assert "final_quality_gate" in str(json.loads(str(event["payload_json"])))
+    assert invariant["ok"] is True
+    assert invariant["reason"] == "progress_made"
+    assert result["repair_progress"] is True
+    assert result["created_repair_task_ids"]
+    assert event is None
     assert repair_plan is not None
-    assert attention is not None
+    assert attention is None
 
 
 def test_free_loop_no_silent_idle_does_not_fire_when_matter_done(tmp_path: Path):

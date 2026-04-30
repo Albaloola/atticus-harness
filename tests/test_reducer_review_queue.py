@@ -101,11 +101,14 @@ def test_reducer_review_reject_creates_repair_plan(tmp_path: Path) -> None:
 
         result = reject_reducer_review(conn, candidate_id=candidate_id, reason="unsupported citations", write=True)
         candidate = conn.execute("SELECT status, quarantined_reason FROM candidate_outputs WHERE candidate_id = ?", (candidate_id,)).fetchone()
+        task = conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = ?", ("citation-repair",)).fetchone()
 
     assert result["repair_plan"]["blocker_type"] == "generic_blocker"
     assert result["review"]["status"] == "rejected"
     assert candidate["status"] == "quarantined"
     assert candidate["quarantined_reason"] == "unsupported citations"
+    assert task["status"] == "queued"
+    assert task["blocked_reasons_json"] == "[]"
 
 
 def test_reducer_review_cli_lists_and_shows_items(tmp_path: Path, capsys) -> None:

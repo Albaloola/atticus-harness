@@ -82,12 +82,18 @@ class CitationSupportSummary:
     details: dict[str, object]
 
 
-def validate_candidate_citation_support(conn: sqlite3.Connection, candidate_id: str) -> CitationSupportSummary:
+def validate_candidate_citation_support(
+    conn: sqlite3.Connection,
+    candidate_id: str,
+    *,
+    force_required: bool = False,
+    persist_results: bool = True,
+) -> CitationSupportSummary:
     row = cast(
         SqlRow | None,
         conn.execute(
             """
-            SELECT co.payload_json, co.task_id, t.matter_scope, t.stage, t.task_type
+            SELECT co.payload_json, co.task_id, t.matter_scope, t.stage, t.task_type, t.validation_gates_json
             FROM candidate_outputs co
             JOIN tasks t ON t.task_id = co.task_id
             WHERE co.candidate_id = ?
@@ -113,9 +119,11 @@ def validate_candidate_citation_support(conn: sqlite3.Connection, candidate_id: 
 
     stage = str(row["stage"] or "")
     task_type = str(row["task_type"] or "")
-    required = stage in SUPPORT_REQUIRED_STAGES or task_type in SUPPORT_REQUIRED_TASK_TYPES
+    validation_gates = _string_list_from_json(row["validation_gates_json"])
+    required = force_required or stage in SUPPORT_REQUIRED_STAGES or task_type in SUPPORT_REQUIRED_TASK_TYPES or "citation_support_integrity" in validation_gates
     if not required:
-        _replace_support_results(conn, matter_scope=str(row["matter_scope"]), candidate_id=candidate_id, artifact_id=None, results=[])
+        if persist_results:
+            _replace_support_results(conn, matter_scope=str(row["matter_scope"]), candidate_id=candidate_id, artifact_id=None, results=[])
         return CitationSupportSummary(
             True,
             {
@@ -147,7 +155,8 @@ def validate_candidate_citation_support(conn: sqlite3.Connection, candidate_id: 
                 )
             )
 
-    _replace_support_results(conn, matter_scope=str(row["matter_scope"]), candidate_id=candidate_id, artifact_id=None, results=results)
+    if persist_results:
+        _replace_support_results(conn, matter_scope=str(row["matter_scope"]), candidate_id=candidate_id, artifact_id=None, results=results)
     failures = [result for result in results if not _support_status_passes(result.support_status)]
     return CitationSupportSummary(
         not failures,
@@ -523,6 +532,16 @@ def _semantic_terms(text: str) -> set[str]:
         "with",
     }
     return {term for term in re.findall(r"[a-z0-9£$]+", text.casefold()) if len(term) >= 3 and term not in stop}
+
+
+def _string_list_from_json(raw: object) -> list[str]:
+    try:
+        value = json.loads(str(raw or "[]"))
+    except (json.JSONDecodeError, TypeError):
+        return []
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in cast(list[object], value) if str(item)]
 
 
 def _negation_mismatch(proposition_text: str, quote: str) -> bool:

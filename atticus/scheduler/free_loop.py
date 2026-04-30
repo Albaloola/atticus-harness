@@ -20,10 +20,11 @@ from atticus.core.events import utc_now
 from atticus.core.policies import LegalStage, TaskStatus
 from atticus.agents.decomposition import compact_decomposed_parent_if_needed, decompose_broad_task_if_needed
 from atticus.agents.orchestrator import report_worker_failure_to_orchestrator
+from atticus.agents.repair_executor import execute_repair_tick
 from atticus.db import repo
 from atticus.providers.cache_observability import fingerprint_provider_policy
 from atticus.providers.live_readiness import probe_live_openrouter
-from atticus.reducer.review_queue import enqueue_reducer_review
+from atticus.reducer.review_queue import enqueue_open_reducer_reviews_for_matter, enqueue_reducer_review
 from atticus.reducer.reducer import ReductionBlocked, reduce_candidate
 from atticus.scheduler.capacity import MAX_PARALLEL_AGENT_CAPACITY, agent_capacity
 from atticus.scheduler.gates import LIVE_CODEX_NOT_ENABLED_BLOCKER, LIVE_OPENROUTER_NOT_ENABLED_BLOCKER
@@ -73,7 +74,7 @@ def run_free_loop_once(
     for candidate in _pending_candidates(conn):
         candidate_id = str(candidate["candidate_id"])
         task_id = str(candidate["task_id"])
-        matter_scope = str(candidate["matter_scope"])
+        candidate_matter_scope = str(candidate["matter_scope"])
         skip_reason = _auto_reduce_skip_reason(candidate)
         if skip_reason:
             skipped_reductions.append({"candidate_id": candidate_id, "task_id": task_id, "reason": skip_reason})
@@ -86,7 +87,7 @@ def run_free_loop_once(
             _record_auto_reduce_skip_attention(
                 conn,
                 candidate_id=candidate_id,
-                matter_scope=matter_scope,
+                matter_scope=candidate_matter_scope,
                 reason=skip_reason,
             )
             _commit_progress(conn)
@@ -127,6 +128,28 @@ def run_free_loop_once(
                 task_id=task_id,
                 reason=f"free loop reduction failed: {exc}",
             )
+            _commit_progress(conn)
+
+    reducer_review_ids: list[str] = []
+    repair_execution: dict[str, object] = {
+        "attempted": [],
+        "applied": [],
+        "skipped": [],
+        "terminal": [],
+        "created_task_ids": [],
+        "unblocked_task_ids": [],
+        "reducer_review_ids": [],
+        "attention_ids": [],
+        "made_progress": False,
+    }
+    if matter_scope:
+        reviews = enqueue_open_reducer_reviews_for_matter(conn, matter_scope=matter_scope)
+        reducer_review_ids = [review.reducer_review_id for review in reviews]
+        if reducer_review_ids:
+            _commit_progress(conn)
+        repair_result = execute_repair_tick(conn, matter_scope=matter_scope, max_repairs=10, write=True)
+        repair_execution = repair_result.as_dict()
+        if repair_result.made_progress:
             _commit_progress(conn)
 
     runnable = select_runnable_tasks(
@@ -199,8 +222,19 @@ def run_free_loop_once(
         "skipped_reductions": skipped_reductions,
         "worker_errors": worker_errors,
         "preflight_groups": preflight_groups,
+        "reducer_review_ids": reducer_review_ids,
+        "repair_execution": repair_execution,
+        "repair_progress": bool(repair_execution.get("made_progress")),
+        "created_repair_task_ids": list(repair_execution.get("created_task_ids") or []),
+        "unblocked_repair_task_ids": list(repair_execution.get("unblocked_task_ids") or []),
     }
-    result["no_silent_idle"] = evaluate_no_silent_idle(conn, matter_scope, result, write=True)
+    result["no_silent_idle"] = evaluate_no_silent_idle(
+        conn,
+        matter_scope,
+        result,
+        write=True,
+        auto_execute=True,
+    )
     _ = repo.emit_event(
         conn,
         "free_loop.tick",
@@ -250,7 +284,14 @@ def run_free_loop(
             matter_scope=matter_scope,
         )
         ticks.append(tick)
-        if not tick["reduced_candidates"] and not tick["leased_tasks"]:
+        if _matter_complete(conn, matter_scope):
+            break
+        if not _tick_made_progress(tick):
+            next_action = _safe_next_action(conn, matter_scope)
+            owner = str(next_action.get("owner") or "")
+            action_type = str(next_action.get("type") or "")
+            if owner in {"provider", "operator"} or action_type in {"human_attention", "manual_reducer_review"}:
+                break
             break
     ok = all(bool(tick.get("ok")) for tick in ticks)
     return {"ok": ok, "ticks": ticks, "tick_count": len(ticks)}
@@ -786,3 +827,42 @@ def _tick_matter_scope(
     if len(scopes) == 1:
         return scopes.pop()
     return "multi"
+
+
+def _tick_made_progress(tick: Mapping[str, object]) -> bool:
+    progress_keys = (
+        "reduced_candidates",
+        "imported_tasks",
+        "leased_tasks",
+        "executed_tasks",
+        "reducer_review_ids",
+        "created_repair_task_ids",
+        "unblocked_repair_task_ids",
+    )
+    for key in progress_keys:
+        value = tick.get(key)
+        if isinstance(value, (list, tuple, set, dict)) and bool(value):
+            return True
+    return bool(tick.get("repair_progress"))
+
+
+def _matter_complete(conn: sqlite3.Connection, matter_scope: str | None) -> bool:
+    if not matter_scope:
+        return False
+    try:
+        from atticus.status.completion import build_matter_completion_report
+
+        return build_matter_completion_report(conn, matter_scope).done
+    except Exception:
+        return False
+
+
+def _safe_next_action(conn: sqlite3.Connection, matter_scope: str | None) -> dict[str, object]:
+    if not matter_scope:
+        return {}
+    try:
+        from atticus.status.completion import next_resume_action
+
+        return next_resume_action(conn, matter_scope)
+    except Exception:
+        return {}

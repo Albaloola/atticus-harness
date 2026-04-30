@@ -63,6 +63,26 @@ PRO_REQUIRED_RUNTIME_TASK_TYPES = {
     "high_risk_procedural_analysis",
 }
 MODEL_DOWNGRADE_CERTIFICATION = "model_downgrade_authorized"
+LOCAL_STUB_UNSUPPORTED_STAGES = {"S5", "S6", "S7", "S8", "S9"}
+LOCAL_STUB_UNSUPPORTED_TASK_TYPES = {
+    "authority_audit",
+    "authority_map",
+    "certification_decision_packet",
+    "citation_audit",
+    "citation_repair",
+    "contradiction_analysis",
+    "draft",
+    "draft_preparation",
+    "evidence_issue_map",
+    "evidence_triage",
+    "final_quality_gate",
+    "high_risk_procedural_analysis",
+    "hostile_opponent_review",
+    "hostile_review",
+    "privacy_redaction_audit",
+    "redaction_fix",
+    "redaction_review",
+}
 
 
 @dataclass(frozen=True)
@@ -124,6 +144,7 @@ def execute_local_work_order(
     provider_policy = _load_provider_policy_after_lease(conn, task=task, lease_id=lease_id, task_id=task_id)
     _enforce_model_decision_runtime_gate(conn, task=task, task_id=task_id, lease_id=lease_id, provider_policy=provider_policy)
     _block_unsafe_local_stub_provider_policy(conn, lease_id=lease_id, task_id=task_id, provider_policy=provider_policy)
+    _block_local_stub_unsupported_legal_work(conn, lease_id=lease_id, task=task)
     require_cost_estimate = _requires_local_cost_estimate(conn, task=task)
     try:
         estimated_cost = parse_estimated_cost_usd(provider_policy, task_id=task_id, require_present=require_cost_estimate)
@@ -250,6 +271,40 @@ def _block_unsafe_local_stub_provider_policy(
         reason = decision.reason
         _block_preflight_after_lease(conn, lease_id=lease_id, task_id=task_id, reason=reason)
         raise WorkerExecutionBlocked(reason)
+
+
+def _block_local_stub_unsupported_legal_work(
+    conn: sqlite3.Connection,
+    *,
+    lease_id: str,
+    task: Mapping[str, object],
+) -> None:
+    """Prevent local_stub from fabricating reducer-grade legal work.
+
+    The local adapter exists to exercise the harness plumbing for low-risk
+    source/inventory tasks. It cannot perform quote-supported legal synthesis,
+    citation audit, repair, or final-gate review. Blocking here prevents the
+    exact failure mode seen in live Napier runs: empty ``local_stub_result``
+    packets repeatedly reaching citation-support/reducer gates.
+    """
+
+    task_id = str(task["task_id"])
+    task_type = str(task["task_type"])
+    stage = str(task["stage"])
+    validation_gates = _json_list(str(task["validation_gates_json"] if "validation_gates_json" in task else "[]"))
+    needs_citation_support = any(str(gate) == "citation_support_integrity" for gate in validation_gates)
+    if task_type not in LOCAL_STUB_UNSUPPORTED_TASK_TYPES and stage not in LOCAL_STUB_UNSUPPORTED_STAGES and not needs_citation_support:
+        return
+
+    reason = (
+        "local_stub capability block: local/no-live runtime cannot produce "
+        "reducer-grade citation-supported legal output for "
+        f"task_type={task_type!r}, stage={stage!r}. Use a provider-backed worker "
+        "with explicit approval, a deterministic source-led generator, or import "
+        "a quote-supported worker_result_packet.v2 candidate."
+    )
+    _block_preflight_after_lease(conn, lease_id=lease_id, task_id=task_id, reason=reason)
+    raise WorkerExecutionBlocked(reason)
 
 
 def execute_openrouter_work_order(

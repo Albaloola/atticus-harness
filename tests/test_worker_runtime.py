@@ -282,6 +282,87 @@ def test_execute_local_work_order_rejects_blocked_reserved_or_held_provider_poli
     assert candidate_count == 0
 
 
+@pytest.mark.parametrize(
+    ("task_type", "stage"),
+    [
+        ("evidence_triage", LegalStage.S5_ISSUE_ROUTE_MAP),
+        ("citation_repair", LegalStage.S7_HOSTILE_REVIEW),
+        ("citation_audit", LegalStage.S7_HOSTILE_REVIEW),
+        ("final_quality_gate", LegalStage.S9_FINAL_QUALITY_GATE),
+    ],
+)
+def test_execute_local_work_order_blocks_reducer_grade_legal_work_before_stub(
+    tmp_path: Path,
+    task_type: str,
+    stage: LegalStage,
+) -> None:
+    db_path = init_db(tmp_path)
+    task_id = f"local-blocked-{task_type}"
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id=task_id,
+                title=f"Local blocked {task_type}",
+                task_type=task_type,
+                stage=stage,
+                provider_policy={"provider": "local", "model": "stub", "estimated_cost_usd": 0.0},
+            ),
+        )
+        for certification_type in (
+            "source_inventory",
+            "extraction_coverage",
+            "evidence_registry",
+            "production_mapping",
+            "chronology_citations",
+            "issue_route_map",
+            "authority_map",
+            "draft_preparation",
+            "hostile_review",
+        ):
+            validation_id = repo.record_validation(
+                conn,
+                matter_scope="atticus",
+                target_type="matter",
+                target_id="atticus",
+                gate_name=certification_type,
+                passed=True,
+                details={"test": True},
+            )
+            repo.add_certification(
+                conn,
+                subject_type="matter",
+                subject_id="atticus",
+                certification_type=certification_type,
+                validator="test",
+                validation_result_id=validation_id,
+                evidence={"test": True},
+            )
+        lease_id = acquire_lease(conn, task_id=task_id, worker_id="worker-local")
+        with pytest.raises(WorkerExecutionBlocked, match="local_stub capability block"):
+            _ = execute_local_work_order(
+                conn,
+                task_id=task_id,
+                lease_id=lease_id,
+                worker_id="worker-local",
+                output_dir=tmp_path / "out",
+            )
+        task = cast(Mapping[str, object], conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = ?", (task_id,)).fetchone())
+        lease = cast(Mapping[str, object], conn.execute("SELECT status FROM leases WHERE lease_id = ?", (lease_id,)).fetchone())
+        repair_plan = cast(Mapping[str, object] | None, conn.execute("SELECT blocker_type, actions_json FROM repair_plans WHERE target_id = ?", (task_id,)).fetchone())
+        candidate_count = _count(conn, "SELECT COUNT(*) AS n FROM candidate_outputs WHERE task_id = '%s'" % task_id)
+        attempt_count = _count(conn, "SELECT COUNT(*) AS n FROM worker_attempts WHERE task_id = '%s'" % task_id)
+
+    assert task["status"] == TaskStatus.BLOCKED
+    assert "cannot produce reducer-grade citation-supported legal output" in str(task["blocked_reasons_json"])
+    assert lease["status"] == "failed"
+    assert candidate_count == 0
+    assert attempt_count == 0
+    assert repair_plan is not None
+    assert repair_plan["blocker_type"] == "local_runtime_capability"
+    assert "provider-health" in str(repair_plan["actions_json"])
+
+
 def _flash_downgrade_policy() -> dict[str, object]:
     return {
         "provider": "openrouter",
@@ -339,7 +420,7 @@ def test_execute_local_work_order_blocks_flash_downgrade_without_certification(t
     assert provider_runs == 0
 
 
-def test_execute_local_work_order_allows_flash_downgrade_only_with_task_certification(tmp_path: Path):
+def test_execute_local_work_order_authorizes_flash_downgrade_then_blocks_local_stub_legal_work(tmp_path: Path):
     db_path = init_db(tmp_path)
     with repo.db_connection(db_path) as conn:
         repo.add_task(
@@ -371,20 +452,23 @@ def test_execute_local_work_order_allows_flash_downgrade_only_with_task_certific
         )
         lease_id = acquire_lease(conn, task_id="certified-authority-flash-downgrade", worker_id="worker-local")
 
-        result = execute_local_work_order(
-            conn,
-            task_id="certified-authority-flash-downgrade",
-            lease_id=lease_id,
-            worker_id="worker-local",
-            output_dir=tmp_path / "out",
-        )
+        with pytest.raises(WorkerExecutionBlocked, match="local_stub capability block"):
+            _ = execute_local_work_order(
+                conn,
+                task_id="certified-authority-flash-downgrade",
+                lease_id=lease_id,
+                worker_id="worker-local",
+                output_dir=tmp_path / "out",
+            )
 
-        task = cast(Mapping[str, object], conn.execute("SELECT status FROM tasks WHERE task_id = 'certified-authority-flash-downgrade'").fetchone())
+        task = cast(Mapping[str, object], conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'certified-authority-flash-downgrade'").fetchone())
         event_count = _count(conn, "SELECT COUNT(*) AS n FROM events WHERE event_type = 'model_downgrade_authorized.runtime_gate'")
+        candidate_count = _count(conn, "SELECT COUNT(*) AS n FROM candidate_outputs WHERE task_id = 'certified-authority-flash-downgrade'")
 
-    assert result.candidate_id.startswith("cand-")
-    assert task["status"] == TaskStatus.REDUCER_PENDING
+    assert task["status"] == TaskStatus.BLOCKED
+    assert "local_stub capability block" in str(task["blocked_reasons_json"])
     assert event_count == 1
+    assert candidate_count == 0
 
 
 def test_execute_codex_work_order_requires_live_gate_before_dispatch(tmp_path: Path):

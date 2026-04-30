@@ -7,6 +7,7 @@ import sqlite3
 from typing import cast
 
 from atticus.agents.repair_planner import ensure_repair_plans_for_matter
+from atticus.agents.repair_executor import execute_next_repair_plan, execute_repair_tick
 from atticus.db import repo
 from atticus.status.completion import (
     assert_completion_has_next_action,
@@ -23,6 +24,10 @@ PROGRESS_KEYS = (
     "executed_tasks",
     "applied_actions",
     "routed_operator_signals",
+    "reducer_review_ids",
+    "created_repair_task_ids",
+    "unblocked_repair_task_ids",
+    "repair_progress",
 )
 
 EXPLANATION_KEYS = (
@@ -41,6 +46,7 @@ def evaluate_no_silent_idle(
     tick_result: Mapping[str, object],
     *,
     write: bool = True,
+    auto_execute: bool = False,
 ) -> dict[str, object]:
     """Return ok=False when a zero-progress tick leaves unresolved matter work."""
 
@@ -62,6 +68,13 @@ def evaluate_no_silent_idle(
         repair_plans = [plan.as_dict() for plan in ensure_repair_plans_for_matter(conn, matter_scope=resolved_matter)] if write else []
         invariant = assert_completion_has_next_action(conn, resolved_matter)
         snapshot = record_completion_snapshot(conn, resolved_matter).as_dict() if write else {}
+        if auto_execute and write:
+            tick_execution = execute_repair_tick(conn, matter_scope=resolved_matter, max_repairs=10, write=True)
+            execution = tick_execution.as_dict()
+            if tick_execution.made_progress:
+                invariant = assert_completion_has_next_action(conn, resolved_matter)
+        else:
+            execution = None
         decision = _blocker_decision(next_action)
         if write:
             _ = repo.emit_event(
@@ -75,6 +88,7 @@ def evaluate_no_silent_idle(
                     "completion_invariant": invariant.as_dict(),
                     "completion_snapshot_id": snapshot.get("snapshot_id", ""),
                     "repair_plan_ids": [str(plan["repair_plan_id"]) for plan in repair_plans],
+                    "repair_execution": execution,
                 },
             )
         return {
@@ -86,6 +100,7 @@ def evaluate_no_silent_idle(
             "completion_invariant": invariant.as_dict(),
             "completion_snapshot_id": snapshot.get("snapshot_id", ""),
             "repair_plans": repair_plans,
+            "repair_execution": execution,
         }
 
     report = build_matter_completion_report(conn, resolved_matter)
@@ -102,9 +117,17 @@ def evaluate_no_silent_idle(
     next_action = next_resume_action(conn, resolved_matter)
     repair_plans: list[dict[str, object]] = []
     attention_id: int | None = None
+    execution: dict[str, object] | None = None
     if write:
         repair_plans = [plan.as_dict() for plan in ensure_repair_plans_for_matter(conn, matter_scope=resolved_matter)]
         invariant = assert_completion_has_next_action(conn, resolved_matter)
+        if auto_execute:
+            tick_execution = execute_repair_tick(conn, matter_scope=resolved_matter, max_repairs=10, write=True)
+            execution = tick_execution.as_dict()
+            if tick_execution.made_progress:
+                invariant = assert_completion_has_next_action(conn, resolved_matter)
+        else:
+            execution = None
         snapshot = record_completion_snapshot(conn, resolved_matter).as_dict()
         reason = f"supervisor made no progress while matter remains incomplete: {next_action.get('reason') or next_action.get('type')}"
         escalation = repo.record_loop_guard_failure(
@@ -141,6 +164,7 @@ def evaluate_no_silent_idle(
                 "failed_count": report.failed_count,
                 "blocked_count": report.blocked_count,
                 "repair_plan_ids": [str(plan["repair_plan_id"]) for plan in repair_plans],
+                "repair_execution": execution,
                 "attention_id": attention_id or "",
                 "blocker_decision": _blocker_decision(next_action),
                 "escalation": escalation,
@@ -165,6 +189,7 @@ def evaluate_no_silent_idle(
         "blocked_count": report.blocked_count,
         "repair_plans": repair_plans,
         "attention_id": attention_id or "",
+        "repair_execution": execution,
     }
 
 

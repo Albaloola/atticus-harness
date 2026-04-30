@@ -25,9 +25,9 @@ from atticus.agents.repair_planner import (
     get_repair_plan,
     list_repair_plans,
     next_repair_plan,
-    record_repair_attempt,
 )
 from atticus.agents.maintenance import maintenance_report, maintenance_status, maintenance_tick, request_maintenance
+from atticus.agents.repair_executor import execute_repair_plan, repair_tick_payload
 from atticus.config import DEFAULT_DB_PATH
 from atticus.context.diagnostics import build_context_diagnostics
 from atticus.core.events import utc_now
@@ -99,6 +99,7 @@ from atticus.verifier import verify_candidate
 from atticus.validation.citation_support import trace_quote_in_source_material, validate_candidate_citation_support
 from atticus.workflows.final_gate import create_missing_final_gate_work, final_gate_readiness, plan_final_gate_repairs, record_final_gate_state
 from atticus.workflows.registry import list_workflows, load_workflow, plan_workflow
+from atticus.workflows.source_led_packet import create_source_led_candidate_for_task
 from atticus.workers.outputs import reject_candidate_output
 from atticus.workers.runtime import execute_local_work_order
 from atticus.workers.work_order import build_work_order
@@ -248,6 +249,13 @@ def build_parser() -> argparse.ArgumentParser:
     _ = next_action.add_argument("--matter", required=True)
     _ = next_action.add_argument("--json", dest="json_output", action="store_true")
 
+    repair_tick = sub.add_parser("repair-tick", help="execute one bounded deterministic repair continuation tick")
+    _ = repair_tick.add_argument("--db", required=True)
+    _ = repair_tick.add_argument("--matter", required=True)
+    _ = repair_tick.add_argument("--max-repairs", type=int, default=10)
+    _ = repair_tick.add_argument("--write", action="store_true", help="apply repairs; dry-run is the default")
+    _ = repair_tick.add_argument("--json", dest="json_output", action="store_true")
+
     repairs = sub.add_parser("repairs", help="list, show, and advance deterministic repair plans")
     _ = repairs.add_argument("action", choices=["list", "show", "next", "apply"])
     _ = repairs.add_argument("--db", required=True)
@@ -365,6 +373,17 @@ def build_parser() -> argparse.ArgumentParser:
     _ = imp.add_argument("--db", required=True)
     _ = imp.add_argument("--dry-run", dest="dry_run", action="store_true", default=True)
     _ = imp.add_argument("--write", dest="dry_run", action="store_false", help="actually write candidate artifacts and validation tasks")
+
+    source_led = sub.add_parser("source-led-packet", help="generate a deterministic quote-supported candidate from current source chunks")
+    _ = source_led.add_argument("action", choices=["create"])
+    _ = source_led.add_argument("--db", required=True)
+    _ = source_led.add_argument("--matter", required=True)
+    _ = source_led.add_argument("--task-id", required=True)
+    _ = source_led.add_argument("--source-id", action="append", default=[])
+    _ = source_led.add_argument("--max-sources", type=int, default=12)
+    _ = source_led.add_argument("--dry-run", dest="dry_run", action="store_true", default=True)
+    _ = source_led.add_argument("--write", dest="dry_run", action="store_false", help="write source chunks if needed and record the candidate packet")
+    _ = source_led.add_argument("--json", dest="json_output", action="store_true")
 
     seed = sub.add_parser("seed-matter", help="seed or repair a matter from a local workspace inventory")
     _ = seed.add_argument("--db", required=True)
@@ -731,6 +750,13 @@ def _main(args: CliArgs) -> int:
                 payload = build_matter_completion_report(conn, args.matter).as_dict()
                 payload["next_action"] = next_resume_action(conn, args.matter)
                 payload["completion_invariant"] = assert_completion_has_next_action(conn, args.matter).as_dict()
+            from atticus.agents.repair_executor import execute_repair_tick
+            repair_preview = execute_repair_tick(conn, matter_scope=args.matter, max_repairs=10, write=False).as_dict()
+            payload["repair_executor"] = {
+                **repair_preview,
+                "can_repair_tick_write_make_progress": bool(repair_preview.get("made_progress") or repair_preview.get("attempted")),
+                "run_free_loop_can_continue_safely": str(payload.get("next_action", {}).get("owner") if isinstance(payload.get("next_action"), dict) else "") not in {"provider", "operator"},
+            }
             if args.write_snapshot:
                 payload["completion_snapshot"] = record_completion_snapshot(conn, args.matter).as_dict()
         print_json(_materialize_resume_commands(payload, args.db))
@@ -744,6 +770,16 @@ def _main(args: CliArgs) -> int:
                 return 2
             payload = next_resume_action(conn, args.matter)
             payload["completion_invariant"] = assert_completion_has_next_action(conn, args.matter).as_dict()
+        print_json(_materialize_resume_commands(payload, args.db))
+        return 0
+
+    if args.command == "repair-tick":
+        with repo.db_connection(args.db, read_only=not args.write) as conn:
+            schema_check = schema_check_json(conn, db_path=args.db)
+            if not schema_check["ok"]:
+                print_json(schema_check)
+                return 2
+            payload = repair_tick_payload(conn, matter_scope=args.matter, max_repairs=args.max_repairs, write=args.write)
         print_json(_materialize_resume_commands(payload, args.db))
         return 0
 
@@ -778,14 +814,11 @@ def _main(args: CliArgs) -> int:
                     payload = {"dry_run": True, "repair_plan": plan.as_dict() if plan is not None else None}
                     print_json(_materialize_resume_commands(payload, args.db))
                     return 0
-                plan = record_repair_attempt(
-                    conn,
-                    repair_plan_id=args.repair_plan_id,
-                    action_type="operator_acknowledged_repair_plan",
-                    status="attempted",
-                    result={"source": "cli.repairs.apply"},
-                )
+                execution = execute_repair_plan(conn, repair_plan_id=args.repair_plan_id, max_actions=1, dry_run=False)
+                plan = get_repair_plan(conn, args.repair_plan_id)
                 payload = {"repair_plan": plan.as_dict()}
+                if execution is not None:
+                    payload["repair_execution"] = execution
         print_json(_materialize_resume_commands(payload, args.db))
         return 0
 
@@ -1015,6 +1048,19 @@ def _main(args: CliArgs) -> int:
                 "candidates": [c.__dict__ for c in result.candidates],
             }
         )
+        return 0
+
+    if args.command == "source-led-packet":
+        with repo.db_connection(args.db, read_only=args.dry_run) as conn:
+            result = create_source_led_candidate_for_task(
+                conn,
+                matter_scope=args.matter,
+                task_id=args.task_id,
+                max_sources=args.max_sources,
+                source_ids=args.source_id or None,
+                write=not args.dry_run,
+            )
+        print_json(result.as_dict())
         return 0
 
     if args.command == "seed-matter":
@@ -2092,7 +2138,7 @@ def _citation_support_payload(conn: sqlite3.Connection, args: CliArgs) -> dict[s
         raise ValueError("citation-support verify requires --candidate-id or --matter")
     results = []
     for candidate_id in candidate_ids:
-        summary = validate_candidate_citation_support(conn, candidate_id)
+        summary = validate_candidate_citation_support(conn, candidate_id, persist_results=bool(args.write))
         results.append({"candidate_id": candidate_id, "passed": summary.passed, "details": summary.details})
     return {"write": args.write, "verified_count": len(results), "results": results}
 

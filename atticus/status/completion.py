@@ -14,6 +14,7 @@ import sqlite3
 from uuid import uuid4
 
 from atticus.core.events import utc_now
+from atticus.scheduler.gates import blocked_task_auto_requeue_allowed, evaluate_task_gates
 
 
 FINAL_LEGAL_DRAFT_CERTIFICATIONS: tuple[str, ...] = (
@@ -387,6 +388,21 @@ def next_resume_action(conn: sqlite3.Connection, matter_scope: str) -> dict[str,
             "resume_command": command,
         }
 
+    runnable_or_requeueable = _runnable_or_requeueable_tasks(conn, matter_scope)
+    if runnable_or_requeueable:
+        task = _choose_runnable_task(runnable_or_requeueable)
+        requeue_note = " or safely requeueable blocked" if str(task["status"]) == "blocked" else ""
+        return {
+            "type": "supervisor_tick",
+            "owner": "scheduler",
+            "task_id": task["task_id"],
+            "stage": task["stage"],
+            "task_type": task["task_type"],
+            "reason": f"runnable{requeue_note} tasks remain",
+            "after": "rerun matter-health after the scheduler tick",
+            "resume_command": f"python -m atticus.cli run-free-loop --db DB --matter {matter_scope} --output-dir OUT --capacity 15 --max-ticks 1",
+        }
+
     if report.missing_certifications:
         certification = report.missing_certifications[0]
         return {
@@ -428,14 +444,6 @@ def next_resume_action(conn: sqlite3.Connection, matter_scope: str) -> dict[str,
             "attention_id": item["attention_id"],
             "reason": item["reason"],
             "resume_command": f"python -m atticus.cli human-attention --db DB --matter {matter_scope}",
-        }
-
-    if report.runnable_count:
-        return {
-            "type": "supervisor_tick",
-            "owner": "scheduler",
-            "reason": "runnable tasks remain",
-            "resume_command": f"python -m atticus.cli run-free-loop --db DB --matter {matter_scope} --output-dir OUT --capacity 15 --max-ticks 1",
         }
 
     return {
@@ -496,7 +504,9 @@ def _observed_matter_certifications(conn: sqlite3.Connection, matter_scope: str)
 def _tasks_by_status(conn: sqlite3.Connection, matter_scope: str, statuses: tuple[str, ...]) -> list[dict[str, object]]:
     rows = conn.execute(
         """
-        SELECT task_id, title, task_type, stage, status, blocked_reasons_json, updated_at, created_at, expected_value
+        SELECT task_id, matter_scope, title, task_type, stage, status, blocked_reasons_json, updated_at, created_at, expected_value,
+               source_dependencies_json, artifact_dependencies_json, task_dependencies_json, matter_dependencies_json,
+               required_certifications_json, validation_gates_json, provider_policy_json, cost_limit_usd
         FROM tasks
         WHERE matter_scope = ? AND status IN ({placeholders})
         ORDER BY
@@ -624,6 +634,35 @@ def _choose_reducer_pending_task(tasks: list[dict[str, object]]) -> dict[str, ob
         return (2, str(task["created_at"]))
 
     return sorted(tasks, key=priority)[0]
+
+
+def _choose_runnable_task(tasks: list[dict[str, object]]) -> dict[str, object]:
+    def priority(task: Mapping[str, object]) -> tuple[int, str]:
+        task_type = str(task["task_type"])
+        title = str(task.get("title") or "").lower()
+        task_id = str(task["task_id"]).lower()
+        urgent_terms = ("urgent", "hardship", "notice-to-quit", "notice to quit", "ntq", "pause")
+        if any(term in title or term in task_id for term in urgent_terms):
+            return (0, str(task["created_at"]))
+        if task_type in {"citation_repair", "citation_audit"}:
+            return (1, str(task["created_at"]))
+        if str(task["stage"]) in {"S9", "S8", "S7", "S6"}:
+            return (2, str(task["created_at"]))
+        return (3, str(task["created_at"]))
+
+    return sorted(tasks, key=priority)[0]
+
+
+def _runnable_or_requeueable_tasks(conn: sqlite3.Connection, matter_scope: str) -> list[dict[str, object]]:
+    tasks = _tasks_by_status(conn, matter_scope, ("queued", "ready"))
+    blocked = _tasks_by_status(conn, matter_scope, ("blocked",))
+    for task in blocked:
+        if not blocked_task_auto_requeue_allowed(task):
+            continue
+        gate = evaluate_task_gates(conn, task)
+        if gate.allowed:
+            tasks.append(task)
+    return tasks
 
 
 def _latest_candidate_for_task(conn: sqlite3.Connection, task_id: str) -> str:
