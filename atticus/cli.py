@@ -82,6 +82,7 @@ from atticus.skills.registry import list_skills, load_skill
 from atticus.status.completion import build_matter_completion_report, explain_why_not_done, next_resume_action
 from atticus.status.inspect import inspect_record
 from atticus.status.report import generate_status
+from atticus.status.runbook import export_runbook
 from atticus.tools.registry import list_tools
 from atticus.validation.gates import run_validation
 from atticus.verifier import verify_candidate
@@ -245,6 +246,13 @@ def build_parser() -> argparse.ArgumentParser:
     _ = final_gate.add_argument("--matter", required=True)
     _ = final_gate.add_argument("--write", action="store_true")
     _ = final_gate.add_argument("--json", dest="json_output", action="store_true")
+
+    runbook = sub.add_parser("runbook", help="export a matter operator runbook")
+    _ = runbook.add_argument("action", choices=["export"])
+    _ = runbook.add_argument("--db", required=True)
+    _ = runbook.add_argument("--matter", required=True)
+    _ = runbook.add_argument("--out", required=True)
+    _ = runbook.add_argument("--json", dest="json_output", action="store_true")
 
     inspect = sub.add_parser("inspect", help="read-only record inspection")
     _ = inspect.add_argument("--db", required=True)
@@ -725,6 +733,16 @@ def _main(args: CliArgs) -> int:
                     raise ValueError("final-gate create-missing requires --write")
                 payload = create_missing_final_gate_work(conn, args.matter)
         print_json(_materialize_resume_commands(payload, args.db))
+        return 0
+
+    if args.command == "runbook":
+        with repo.db_connection(args.db, read_only=True) as conn:
+            schema_check = schema_check_json(conn, db_path=args.db)
+            if not schema_check["ok"]:
+                print_json(schema_check)
+                return 2
+            payload = export_runbook(conn, matter_scope=args.matter, out_path=args.out, db_path=args.db)
+        print_json(payload)
         return 0
 
     if args.command == "inspect":
