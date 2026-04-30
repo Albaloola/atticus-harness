@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import json
 import re
 import sqlite3
 from typing import cast
@@ -87,8 +88,18 @@ def final_gate_readiness(conn: sqlite3.Connection, matter_scope: str) -> dict[st
             }
         )
     only_final_missing = missing == ["final_quality_gate"]
+    state_payload = compute_final_gate_state(
+        matter_scope=matter_scope,
+        active_certifications=active,
+        missing=missing,
+        open_reviews=open_reviews,
+        blocked_reasons=blocked_reasons,
+        can_create_final_gate=only_final_missing and not open_reviews and not report.stale_artifacts and not report.unresolved_human_attention,
+    )
     return {
         "matter_scope": matter_scope,
+        "state": state_payload["state"],
+        "owner": state_payload["owner"],
         "ready": not blocked_reasons,
         "complete": "final_quality_gate" in active and not blocked_reasons,
         "can_create_final_gate": only_final_missing and not open_reviews and not report.stale_artifacts and not report.unresolved_human_attention,
@@ -99,8 +110,73 @@ def final_gate_readiness(conn: sqlite3.Connection, matter_scope: str) -> dict[st
         "open_human_attention_count": len(report.unresolved_human_attention),
         "failed_final_tasks_without_repair_plan": failed_without_plan,
         "blocked_reasons": blocked_reasons,
-        "next_action": _next_final_gate_action(matter_scope, missing, open_reviews, blocked_reasons),
+        "next_action": state_payload["next_action"],
     }
+
+
+def compute_final_gate_state(
+    *,
+    matter_scope: str,
+    active_certifications: set[str],
+    missing: list[str],
+    open_reviews: list[dict[str, object]],
+    blocked_reasons: list[dict[str, object]],
+    can_create_final_gate: bool,
+) -> dict[str, object]:
+    next_action = _next_final_gate_action(matter_scope, missing, open_reviews, blocked_reasons)
+    if "final_quality_gate" in active_certifications and not blocked_reasons:
+        state = "certified"
+        owner = "none"
+    elif any(str(reason.get("type") or "") == "open_human_attention" for reason in blocked_reasons):
+        state = "human_blocked"
+        owner = "operator"
+    elif open_reviews:
+        state = "waiting_reducer_review"
+        owner = "reducer"
+    elif any(str(reason.get("type") or "") in {"stale_artifact", "failed_final_task_without_repair_plan"} for reason in blocked_reasons):
+        state = "repairing"
+        owner = "orchestrator"
+    elif not active_certifications and missing:
+        state = "not_started"
+        owner = "orchestrator"
+    elif missing and missing[0] != "final_quality_gate":
+        state = "creating_missing"
+        owner = "orchestrator"
+    elif can_create_final_gate:
+        state = "ready_for_final_task"
+        owner = "orchestrator"
+    elif missing == ["final_quality_gate"]:
+        state = "final_task_pending"
+        owner = "scheduler"
+    else:
+        state = "repairing"
+        owner = str(next_action.get("owner") or "orchestrator")
+    return {"state": state, "owner": owner, "next_action": next_action}
+
+
+def record_final_gate_state(conn: sqlite3.Connection, matter_scope: str) -> dict[str, object]:
+    readiness = final_gate_readiness(conn, matter_scope)
+    blockers = {"blocked_reasons": readiness.get("blocked_reasons") or []}
+    next_action = readiness.get("next_action") if isinstance(readiness.get("next_action"), Mapping) else {}
+    _ = conn.execute(
+        """
+        INSERT INTO final_gate_states(matter_scope, state, blocker_json, next_action_json, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(matter_scope) DO UPDATE SET
+          state = excluded.state,
+          blocker_json = excluded.blocker_json,
+          next_action_json = excluded.next_action_json,
+          updated_at = excluded.updated_at
+        """,
+        (
+            matter_scope,
+            str(readiness["state"]),
+            json.dumps(blockers, sort_keys=True, separators=(",", ":")),
+            json.dumps(next_action, sort_keys=True, separators=(",", ":")),
+            repo.utc_now(),
+        ),
+    )
+    return readiness
 
 
 def plan_final_gate_repairs(conn: sqlite3.Connection, matter_scope: str) -> list[dict[str, object]]:
@@ -183,6 +259,7 @@ def create_missing_final_gate_work(conn: sqlite3.Connection, matter_scope: str) 
             expected_value=0.95,
         ),
     )
+    _ = record_final_gate_state(conn, matter_scope)
     return {
         "created": True,
         "task_id": task_id,

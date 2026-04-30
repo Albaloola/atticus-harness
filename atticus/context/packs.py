@@ -421,6 +421,7 @@ def _load_source_materials(
         extraction_metadata = _json_object(str(row["extraction_metadata_json"] or "{}"))
         ocr_metadata = _json_object(str(row["ocr_metadata_json"] or "{}"))
         artifact_id = str(row["artifact_id"])
+        material_confidence = _source_material_confidence(row["confidence"], ocr_metadata)
         current, stale_reasons = _source_material_currentness(
             source_stale=bool(row["source_stale"]),
             artifact_stale=bool(row["artifact_stale"]),
@@ -430,8 +431,10 @@ def _load_source_materials(
             extraction_coverage=str(row["extraction_coverage_status"] or ""),
             ocr_coverage=str(row["ocr_coverage_status"] or ""),
             has_ocr=bool(row["ocr_id"] or row["ocr_engine"]),
+            confidence=material_confidence,
         )
         source_material_state = "current" if current else "stale"
+        proof_semantics = _source_material_proof_semantics(source_chunks, current=current)
         if compact:
             materials.append(
                 {
@@ -442,10 +445,11 @@ def _load_source_materials(
                     "artifact_type": row["artifact_type"],
                     "source_material_state": source_material_state,
                     "current": current,
+                    "proof_semantics": proof_semantics,
                     "stale_reasons": stale_reasons,
                     "source_snapshot_id": row["current_source_snapshot_id"] or "",
                     "coverage_status": row["extraction_coverage_status"] or row["ocr_coverage_status"] or "available",
-                    "confidence": row["confidence"] if row["confidence"] is not None else None,
+                    "confidence": material_confidence,
                     "content_excerpt": excerpt,
                     "selected_source_chunks": [_compact_chunk(chunk) for chunk in source_chunks],
                     "omitted_source_material_summary": {"omitted_chunk_count": omitted_chunks},
@@ -461,6 +465,7 @@ def _load_source_materials(
                     "artifact_citation_allowed": artifact_id in allowed_artifacts,
                     "source_material_state": source_material_state,
                     "current": current,
+                    "proof_semantics": proof_semantics,
                     "stale_reasons": stale_reasons,
                     "source_provenance": {
                         "source_id": source_id,
@@ -479,7 +484,7 @@ def _load_source_materials(
                         "tool": str(extraction_metadata.get("extractor") or extraction_metadata.get("extractor_tool") or row["extraction_method"] or "artifact_text"),
                         "performed_by": str(extraction_metadata.get("extracted_by") or "atticus.local_extraction"),
                         "coverage_status": row["extraction_coverage_status"] or "available",
-                        "confidence": row["confidence"] if row["confidence"] is not None else None,
+                        "confidence": material_confidence,
                         "created_at": row["extraction_created_at"] or "",
                         "source_path": extraction_metadata.get("source_path") or row["source_path"],
                         "output_path": extraction_metadata.get("output_path") or row["path"],
@@ -500,7 +505,7 @@ def _load_source_materials(
                     "excerpt_truncated": len(content) > len(excerpt),
                     "extraction_method": row["extraction_method"] or "artifact_text",
                     "coverage_status": row["extraction_coverage_status"] or "available",
-                    "confidence": row["confidence"] if row["confidence"] is not None else None,
+                    "confidence": material_confidence,
                     "ocr_engine": row["ocr_engine"],
                 }
             )
@@ -516,6 +521,33 @@ def _task_retrieval_query(task: Mapping[str, object]) -> str:
             parts.append("")
     return "\n".join(parts)
 
+
+
+def _source_material_proof_semantics(chunks: list[dict[str, object]], *, current: bool) -> dict[str, object]:
+    if not current:
+        return {
+            "proof_role": "orientation_only_stale_source_material",
+            "final_proof_allowed": False,
+            "reason": "source material is stale or incomplete; use current source chunks before final proof",
+        }
+    if not chunks:
+        return {
+            "proof_role": "orientation_only_prefix_fallback",
+            "final_proof_allowed": False,
+            "reason": "content_excerpt is a prefix fallback without source chunk span/hash metadata",
+        }
+    eligible = [chunk for chunk in chunks if bool(chunk.get("proof_eligible", True))]
+    if not eligible:
+        return {
+            "proof_role": "orientation_only_low_confidence_chunks",
+            "final_proof_allowed": False,
+            "reason": "selected source chunks are below the proof confidence threshold",
+        }
+    return {
+        "proof_role": "source_chunk_proof",
+        "final_proof_allowed": True,
+        "source_chunk_ids": [str(chunk.get("chunk_id") or "") for chunk in eligible if str(chunk.get("chunk_id") or "")],
+    }
 
 def _source_excerpt_from_chunks(chunks: list[dict[str, object]], *, per_source_chars: int) -> str:
     if not chunks:
@@ -533,6 +565,9 @@ def _compact_chunk(chunk: Mapping[str, object]) -> dict[str, object]:
         "end_offset": chunk.get("end_offset"),
         "text_hash": chunk.get("text_hash") or "",
         "confidence": chunk.get("confidence"),
+        "proof_eligible": chunk.get("proof_eligible", True),
+        "proof_role": chunk.get("proof_role", "source_chunk_proof"),
+        "confidence_threshold": chunk.get("confidence_threshold"),
         "retrieval_score": chunk.get("retrieval_score", 0),
         "estimated_tokens": chunk.get("estimated_tokens", 0),
         "offset_basis": chunk.get("offset_basis", "artifact_content_utf8_codepoints"),
@@ -550,6 +585,7 @@ def _source_material_currentness(
     extraction_coverage: str,
     ocr_coverage: str,
     has_ocr: bool,
+    confidence: float | None,
 ) -> tuple[bool, list[str]]:
     reasons: list[str] = []
     if source_stale:
@@ -560,10 +596,27 @@ def _source_material_currentness(
         reasons.append(f"extraction_coverage_{extraction_coverage}")
     if has_ocr and ocr_coverage and ocr_coverage != "complete":
         reasons.append(f"ocr_coverage_{ocr_coverage}")
+    if confidence is not None and confidence < 0.6:
+        reasons.append("low_confidence_ocr")
     provenance_hashes = [value for value in (extraction_source_sha256, ocr_source_sha256) if value]
     if source_sha256 and provenance_hashes and all(value != source_sha256 for value in provenance_hashes):
         reasons.append("source_sha256_mismatch")
     return not reasons, reasons
+
+
+def _source_material_confidence(extraction_confidence: object, ocr_metadata: Mapping[str, object]) -> float | None:
+    if extraction_confidence is not None:
+        try:
+            return float(str(extraction_confidence))
+        except (TypeError, ValueError):
+            return None
+    confidence = ocr_metadata.get("confidence")
+    if confidence is None:
+        return None
+    try:
+        return float(str(confidence))
+    except (TypeError, ValueError):
+        return None
 
 
 def _compact_source_context(*, task_type: str, source_count: int) -> bool:

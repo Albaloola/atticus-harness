@@ -26,6 +26,9 @@ class ReducerReviewItem:
     status: str
     reason: str
     recommended_action: str
+    blocks_certification_type: str
+    blocks_final_gate: bool
+    reviewer: str
     created_at: str
     updated_at: str
 
@@ -53,17 +56,22 @@ def enqueue_reducer_review(
     if row is None:
         raise ValueError(f"unknown candidate: {candidate_id}")
     now = utc_now()
+    stage = str(row["stage"])
+    task_type = str(row["task_type"])
     review_id = f"reducer-review-{uuid4().hex}"
     _ = conn.execute(
         """
         INSERT INTO reducer_review_queue(reducer_review_id, matter_scope, candidate_id, task_id,
-          stage, task_type, priority, status, reason, recommended_action, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?)
+          stage, task_type, priority, status, reason, recommended_action,
+          blocks_certification_type, blocks_final_gate, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)
         ON CONFLICT(candidate_id) DO UPDATE SET
           priority = MIN(reducer_review_queue.priority, excluded.priority),
           status = CASE WHEN reducer_review_queue.status IN ('accepted', 'rejected') THEN reducer_review_queue.status ELSE 'open' END,
           reason = excluded.reason,
           recommended_action = excluded.recommended_action,
+          blocks_certification_type = excluded.blocks_certification_type,
+          blocks_final_gate = excluded.blocks_final_gate,
           updated_at = excluded.updated_at
         """,
         (
@@ -71,11 +79,13 @@ def enqueue_reducer_review(
             str(row["matter_scope"]),
             candidate_id,
             str(row["task_id"]),
-            str(row["stage"]),
-            str(row["task_type"]),
+            stage,
+            task_type,
             priority,
             reason,
             recommended_action,
+            _blocks_certification_type(stage=stage, task_type=task_type),
+            int(_blocks_final_gate(stage=stage, task_type=task_type)),
             now,
             now,
         ),
@@ -144,6 +154,25 @@ def get_reducer_review_by_candidate(conn: sqlite3.Connection, candidate_id: str)
     return _row_to_item(row) if row is not None else None
 
 
+def get_reducer_review(conn: sqlite3.Connection, reducer_review_id: str) -> ReducerReviewItem | None:
+    row = conn.execute("SELECT * FROM reducer_review_queue WHERE reducer_review_id = ?", (reducer_review_id,)).fetchone()
+    return _row_to_item(row) if row is not None else None
+
+
+def next_reducer_review(conn: sqlite3.Connection, *, matter_scope: str) -> ReducerReviewItem | None:
+    row = conn.execute(
+        """
+        SELECT *
+        FROM reducer_review_queue
+        WHERE matter_scope = ? AND status = 'open'
+        ORDER BY blocks_final_gate DESC, priority ASC, updated_at ASC
+        LIMIT 1
+        """,
+        (matter_scope,),
+    ).fetchone()
+    return _row_to_item(row) if row is not None else None
+
+
 def accept_reducer_review(
     conn: sqlite3.Connection,
     *,
@@ -158,7 +187,7 @@ def accept_reducer_review(
         return {"dry_run": True, "review": item.as_dict(), "would_reduce_candidate": candidate_id}
     reduction = reduce_candidate(conn, candidate_id=candidate_id, reducer_lease_id=reducer_lease_id, dry_run=False)
     _ = conn.execute(
-        "UPDATE reducer_review_queue SET status = 'accepted', updated_at = ? WHERE candidate_id = ?",
+        "UPDATE reducer_review_queue SET status = 'accepted', reviewer = COALESCE(NULLIF(reviewer, ''), 'operator'), updated_at = ? WHERE candidate_id = ?",
         (utc_now(), candidate_id),
     )
     _ = repo.emit_event(
@@ -250,6 +279,26 @@ def _could_unblock(task_type: str) -> str:
     }.get(task_type, "")
 
 
+def _blocks_certification_type(*, stage: str, task_type: str) -> str:
+    if task_type in {"citation_repair", "citation_audit"}:
+        return "citation_audit"
+    if task_type == "final_quality_gate":
+        return "final_quality_gate"
+    if task_type in {"authority_map", "authority_audit"}:
+        return "authority_map"
+    if task_type in {"hostile_opponent_review", "hostile_review"}:
+        return "hostile_review"
+    if task_type in {"privacy_redaction_audit", "redaction_fix", "redaction_review"}:
+        return "privacy_redaction_audit"
+    if stage in {"S8", "S9"}:
+        return "final_quality_gate"
+    return ""
+
+
+def _blocks_final_gate(*, stage: str, task_type: str) -> bool:
+    return bool(_blocks_certification_type(stage=stage, task_type=task_type) or stage in {"S6", "S7", "S8", "S9"})
+
+
 def _priority_for(*, stage: str, task_type: str) -> int:
     if task_type in {"citation_repair", "citation_audit", "final_quality_gate"}:
         return 10
@@ -272,6 +321,9 @@ def _row_to_item(row: sqlite3.Row) -> ReducerReviewItem:
         status=str(row["status"]),
         reason=str(row["reason"]),
         recommended_action=str(row["recommended_action"]),
+        blocks_certification_type=str(row["blocks_certification_type"]) if "blocks_certification_type" in row.keys() else "",
+        blocks_final_gate=bool(row["blocks_final_gate"]) if "blocks_final_gate" in row.keys() else False,
+        reviewer=str(row["reviewer"]) if "reviewer" in row.keys() else "",
         created_at=str(row["created_at"]),
         updated_at=str(row["updated_at"]),
     )

@@ -196,6 +196,43 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
             "signature": "TEXT NOT NULL DEFAULT ''",
             "superseded_by": "TEXT",
         },
+        "authority_verifications": {
+            "jurisdiction_status": "TEXT NOT NULL DEFAULT ''",
+            "proposition_hash": "TEXT NOT NULL DEFAULT ''",
+            "verification_method": "TEXT NOT NULL DEFAULT ''",
+            "source_url_or_reference": "TEXT NOT NULL DEFAULT ''",
+            "expires_at": "TEXT",
+        },
+        "citation_support_results": {
+            "proposition_text": "TEXT NOT NULL DEFAULT ''",
+            "semantic_support_status": "TEXT NOT NULL DEFAULT 'unchecked_requires_human'",
+            "authority_support_status": "TEXT NOT NULL DEFAULT ''",
+            "source_chunk_id": "TEXT",
+            "start_offset": "INTEGER",
+            "end_offset": "INTEGER",
+            "support_confidence": "REAL",
+            "requires_human_review": "INTEGER NOT NULL DEFAULT 0 CHECK(requires_human_review IN (0, 1))",
+        },
+        "source_chunks": {
+            "chunk_kind": "TEXT NOT NULL DEFAULT 'text'",
+            "page_label": "TEXT NOT NULL DEFAULT ''",
+            "line_start": "INTEGER",
+            "line_end": "INTEGER",
+            "span_index_status": "TEXT NOT NULL DEFAULT 'indexed'",
+        },
+        "repair_plans": {
+            "owner": "TEXT NOT NULL DEFAULT 'orchestrator'",
+            "retry_after": "TEXT",
+            "terminal_reason": "TEXT NOT NULL DEFAULT ''",
+        },
+        "repair_attempts": {
+            "outcome_json": "TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(outcome_json))",
+        },
+        "reducer_review_queue": {
+            "blocks_certification_type": "TEXT NOT NULL DEFAULT ''",
+            "blocks_final_gate": "INTEGER NOT NULL DEFAULT 0 CHECK(blocks_final_gate IN (0, 1))",
+            "reviewer": "TEXT NOT NULL DEFAULT ''",
+        },
     }
     for table, columns in additions.items():
         try:

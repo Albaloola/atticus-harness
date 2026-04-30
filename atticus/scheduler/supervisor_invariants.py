@@ -8,7 +8,12 @@ from typing import cast
 
 from atticus.agents.repair_planner import ensure_repair_plans_for_matter
 from atticus.db import repo
-from atticus.status.completion import build_matter_completion_report, next_resume_action
+from atticus.status.completion import (
+    assert_completion_has_next_action,
+    build_matter_completion_report,
+    next_resume_action,
+    record_completion_snapshot,
+)
 
 
 PROGRESS_KEYS = (
@@ -55,6 +60,8 @@ def evaluate_no_silent_idle(
             }
         next_action = next_resume_action(conn, resolved_matter)
         repair_plans = [plan.as_dict() for plan in ensure_repair_plans_for_matter(conn, matter_scope=resolved_matter)] if write else []
+        invariant = assert_completion_has_next_action(conn, resolved_matter)
+        snapshot = record_completion_snapshot(conn, resolved_matter).as_dict() if write else {}
         decision = _blocker_decision(next_action)
         if write:
             _ = repo.emit_event(
@@ -65,25 +72,31 @@ def evaluate_no_silent_idle(
                     "reason": "tick_reported_blocker_or_error",
                     "next_action": next_action,
                     "blocker_decision": decision,
+                    "completion_invariant": invariant.as_dict(),
+                    "completion_snapshot_id": snapshot.get("snapshot_id", ""),
                     "repair_plan_ids": [str(plan["repair_plan_id"]) for plan in repair_plans],
                 },
             )
         return {
-            "ok": True,
+            "ok": invariant.ok,
             "matter_scope": resolved_matter,
-            "reason": "tick_reported_blocker_or_error",
+            "reason": "tick_reported_blocker_or_error" if invariant.ok else invariant.reason,
             "next_action": next_action,
             "blocker_decision": decision,
+            "completion_invariant": invariant.as_dict(),
+            "completion_snapshot_id": snapshot.get("snapshot_id", ""),
             "repair_plans": repair_plans,
         }
 
     report = build_matter_completion_report(conn, resolved_matter)
     if report.done:
+        snapshot = record_completion_snapshot(conn, resolved_matter).as_dict() if write else {}
         return {
             "ok": True,
             "matter_scope": resolved_matter,
             "reason": "matter_complete",
             "next_action": {"type": "complete", "resume_command": ""},
+            "completion_snapshot_id": snapshot.get("snapshot_id", ""),
         }
 
     next_action = next_resume_action(conn, resolved_matter)
@@ -91,6 +104,8 @@ def evaluate_no_silent_idle(
     attention_id: int | None = None
     if write:
         repair_plans = [plan.as_dict() for plan in ensure_repair_plans_for_matter(conn, matter_scope=resolved_matter)]
+        invariant = assert_completion_has_next_action(conn, resolved_matter)
+        snapshot = record_completion_snapshot(conn, resolved_matter).as_dict()
         reason = f"supervisor made no progress while matter remains incomplete: {next_action.get('reason') or next_action.get('type')}"
         escalation = repo.record_loop_guard_failure(
             conn,
@@ -118,6 +133,8 @@ def evaluate_no_silent_idle(
             matter_scope=resolved_matter,
             payload={
                 "next_action": next_action,
+                "completion_invariant": invariant.as_dict(),
+                "completion_snapshot_id": snapshot.get("snapshot_id", ""),
                 "missing_certifications": list(report.missing_certifications),
                 "runnable_count": report.runnable_count,
                 "reducer_pending_count": report.reducer_pending_count,
@@ -129,12 +146,17 @@ def evaluate_no_silent_idle(
                 "escalation": escalation,
             },
         )
+    else:
+        invariant = assert_completion_has_next_action(conn, resolved_matter)
+        snapshot = {}
 
     return {
         "ok": False,
         "matter_scope": resolved_matter,
         "reason": "no_progress_with_incomplete_matter",
         "next_action": next_action,
+        "completion_invariant": invariant.as_dict(),
+        "completion_snapshot_id": snapshot.get("snapshot_id", ""),
         "blocker_decision": _blocker_decision(next_action),
         "missing_certifications": report.missing_certifications,
         "runnable_count": report.runnable_count,

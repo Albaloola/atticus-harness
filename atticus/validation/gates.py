@@ -10,12 +10,26 @@ import sqlite3
 from typing import cast, Protocol
 
 from atticus.db import repo
-from atticus.validation.citation_support import validate_candidate_citation_support
+from atticus.validation.citation_support import normalize_quote_text, quote_matches_text, validate_candidate_citation_support
 from atticus.workers.citation_context import allowed_citation_targets_for_task, proof_citation_targets_for_task
 from atticus.workers.result_parser import RESULT_PACKET_SCHEMA_VERSION, ResultPacketError, parse_result
 
 SHA256_RE = re.compile(r"^[a-fA-F0-9]{64}$")
 AUTHORITY_CITATION_RE = re.compile(r"(\d{4}|\[[0-9]{4}\]|\b[A-Z][A-Za-z]+ v [A-Z])")
+SOURCE_PROOF_CONFIDENCE_THRESHOLD = 0.6
+CHUNK_FIRST_PROOF_STAGES = frozenset({"S6", "S7", "S8", "S9"})
+CHUNK_FIRST_PROOF_TASK_TYPES = frozenset({
+    "authority_audit",
+    "authority_map",
+    "citation_audit",
+    "citation_repair",
+    "citation_fix",
+    "draft",
+    "draft_preparation",
+    "final_quality_gate",
+    "hostile_opponent_review",
+    "hostile_review",
+})
 SqlRow = Mapping[str, object]
 
 
@@ -458,8 +472,205 @@ def validate_citation_support_integrity(conn: sqlite3.Connection, *, target_type
     if target_type != "candidate":
         return False, {"error": "citation_support_integrity must target candidate"}
     summary = validate_candidate_citation_support(conn, target_id)
-    return summary.passed, summary.details
+    details = dict(summary.details)
+    late_stage_chunk_failures = _chunk_first_source_proof_failures(conn, candidate_id=target_id)
+    if not late_stage_chunk_failures["source_chunk_proof_checked"]:
+        return summary.passed, details
+    for key, value in late_stage_chunk_failures.items():
+        if isinstance(value, list) and isinstance(details.get(key), list):
+            details[key] = [*cast(list[object], details[key]), *value]
+        else:
+            details[key] = value
+    _promote_fallbacks_supported_by_chunks(conn, candidate_id=target_id, details=details)
+    failed = any(
+        cast(list[object], details.get(key, []))
+        for key in (
+            "missing_quote",
+            "hash_mismatch",
+            "quote_not_found",
+            "unsupported_law_without_verified_authority",
+            "orientation_only_target",
+            "derivative_artifact_not_independent_evidence",
+            "source_material_fallback_orientation_only",
+            "source_prefix_fallback_not_final_proof",
+            "source_chunk_missing",
+            "low_confidence_source_chunk",
+        )
+    )
+    return "error" not in details and not failed, details
 
+def _chunk_first_source_proof_failures(conn: sqlite3.Connection, *, candidate_id: str) -> dict[str, object]:
+    task = cast(SqlRow | None, conn.execute(
+        """
+        SELECT t.stage, t.task_type
+        FROM candidate_outputs co
+        JOIN tasks t ON t.task_id = co.task_id
+        WHERE co.candidate_id = ?
+        """,
+        (candidate_id,),
+    ).fetchone())
+    if task is None:
+        return {"source_chunk_proof_checked": False}
+    if not _requires_chunk_first_source_proof(stage=str(task["stage"] or ""), task_type=str(task["task_type"] or "")):
+        return {"source_chunk_proof_checked": False}
+    rows = cast(list[SqlRow], conn.execute(
+        """
+        SELECT csr.finding_id, csr.citation_id, csr.target_id, csr.source_chunk_id,
+          csr.support_status, sc.confidence, sc.chunk_id
+        FROM citation_support_results csr
+        LEFT JOIN source_chunks sc ON sc.chunk_id = csr.source_chunk_id
+        WHERE csr.candidate_id = ?
+          AND csr.target_type = 'source'
+        ORDER BY csr.finding_id, csr.citation_id
+        """,
+        (candidate_id,),
+    ).fetchall())
+    prefix_fallback: list[dict[str, str]] = []
+    missing_chunk: list[dict[str, str]] = []
+    low_confidence: list[dict[str, object]] = []
+    for row in rows:
+        failure = {
+            "finding_id": str(row["finding_id"]),
+            "citation_id": str(row["citation_id"]),
+            "target": f"source:{row['target_id']}",
+        }
+        if str(row["support_status"]) == "source_material_fallback_orientation_only":
+            prefix_fallback.append({
+                **failure,
+                "reason": "late-stage source proof must resolve to a source_chunk_id; prefix/extracted-text fallback is orientation-only",
+            })
+            continue
+        source_chunk_id = str(row["source_chunk_id"] or "")
+        if not source_chunk_id:
+            if str(row["support_status"]) != "verified_quote_in_source":
+                continue
+            prefix_fallback.append({
+                **failure,
+                "reason": "late-stage source proof must resolve to a source_chunk_id; prefix/extracted-text fallback is orientation-only",
+            })
+            continue
+        if row["chunk_id"] is None:
+            missing_chunk.append({
+                **failure,
+                "source_chunk_id": source_chunk_id,
+                "reason": "citation support result references a missing source chunk",
+            })
+            continue
+        confidence = _float(row["confidence"], default=1.0) if row["confidence"] is not None else None
+        if str(row["support_status"]) == "low_confidence_source_chunk" or (confidence is not None and confidence < SOURCE_PROOF_CONFIDENCE_THRESHOLD):
+            low_confidence.append({
+                **failure,
+                "source_chunk_id": source_chunk_id,
+                "confidence": confidence,
+                "threshold": SOURCE_PROOF_CONFIDENCE_THRESHOLD,
+                "reason": "source chunk confidence is below the final-proof threshold",
+            })
+    return {
+        "source_chunk_proof_checked": True,
+        "source_chunk_proof_required": True,
+        "source_prefix_fallback_not_final_proof": prefix_fallback,
+        "source_chunk_missing": missing_chunk,
+        "low_confidence_source_chunk": low_confidence,
+    }
+
+def _promote_fallbacks_supported_by_chunks(conn: sqlite3.Connection, *, candidate_id: str, details: dict[str, object]) -> None:
+    fallbacks = cast(list[object], details.get("source_material_fallback_orientation_only", []))
+    if not fallbacks:
+        return
+    rows = cast(list[SqlRow], conn.execute(
+        """
+        SELECT finding_id, citation_id, target_id, quote_text
+        FROM citation_support_results
+        WHERE candidate_id = ?
+          AND target_type = 'source'
+          AND support_status = 'source_material_fallback_orientation_only'
+        ORDER BY finding_id, citation_id
+        """,
+        (candidate_id,),
+    ).fetchall())
+    promoted: list[dict[str, str]] = []
+    remaining = list(fallbacks)
+    remaining_prefix = list(cast(list[object], details.get("source_prefix_fallback_not_final_proof", [])))
+    for row in rows:
+        chunk = _current_chunk_supporting_quote(conn, source_id=str(row["target_id"]), quote=str(row["quote_text"] or ""))
+        if not chunk:
+            continue
+        key = (str(row["finding_id"]), str(row["citation_id"]), f"source:{row['target_id']}")
+        remaining = [
+            item for item in remaining
+            if not (
+                isinstance(item, Mapping)
+                and str(item.get("finding_id")) == key[0]
+                and str(item.get("citation_id")) == key[1]
+                and str(item.get("target")) == key[2]
+            )
+        ]
+        remaining_prefix = [
+            item for item in remaining_prefix
+            if not (
+                isinstance(item, Mapping)
+                and str(item.get("finding_id")) == key[0]
+                and str(item.get("citation_id")) == key[1]
+                and str(item.get("target")) == key[2]
+            )
+        ]
+        promoted.append({
+            "finding_id": key[0],
+            "citation_id": key[1],
+            "target": key[2],
+            "source_chunk_id": str(chunk["chunk_id"]),
+            "reason": "fallback quote was resolved to a current source chunk by the gate",
+        })
+    details["source_material_fallback_orientation_only"] = remaining
+    details["source_prefix_fallback_not_final_proof"] = remaining_prefix
+    if promoted:
+        promoted_keys = {(item["finding_id"], item["citation_id"], item["target"]) for item in promoted}
+        details["source_prefix_fallback_not_final_proof"] = [
+            item for item in cast(list[object], details.get("source_prefix_fallback_not_final_proof", []))
+            if not (
+                isinstance(item, Mapping)
+                and (str(item.get("finding_id")), str(item.get("citation_id")), str(item.get("target"))) in promoted_keys
+            )
+        ]
+        details["source_fallback_promoted_to_chunk_proof"] = promoted
+
+
+def _current_chunk_supporting_quote(conn: sqlite3.Connection, *, source_id: str, quote: str) -> SqlRow | None:
+    normalized_quote = normalize_quote_text(quote).casefold()
+    if not normalized_quote:
+        return None
+    rows = cast(list[SqlRow], conn.execute(
+        """
+        SELECT sc.chunk_id, sc.text, sc.confidence
+        FROM source_chunks sc
+        JOIN sources s ON s.source_id = sc.source_id AND s.matter_scope = sc.matter_scope
+        LEFT JOIN artifacts a ON a.artifact_id = sc.artifact_id AND a.matter_scope = sc.matter_scope
+        WHERE sc.source_id = ?
+          AND s.stale = 0
+          AND COALESCE(a.stale, 0) = 0
+          AND (sc.confidence IS NULL OR sc.confidence >= ?)
+          AND (
+            sc.source_snapshot_id IS NULL
+            OR sc.source_snapshot_id = ''
+            OR sc.source_snapshot_id = (
+              SELECT ss.snapshot_id
+              FROM source_snapshots ss
+              WHERE ss.source_id = sc.source_id AND ss.sha256 = s.sha256
+              ORDER BY ss.created_at DESC, ss.snapshot_id DESC
+              LIMIT 1
+            )
+          )
+        ORDER BY sc.start_offset ASC, sc.chunk_id
+        """,
+        (source_id, SOURCE_PROOF_CONFIDENCE_THRESHOLD),
+    ).fetchall())
+    for row in rows:
+        if quote_matches_text(normalized_quote, normalize_quote_text(str(row["text"] or "")).casefold()):
+            return row
+    return None
+
+def _requires_chunk_first_source_proof(*, stage: str, task_type: str) -> bool:
+    return stage in CHUNK_FIRST_PROOF_STAGES or task_type in CHUNK_FIRST_PROOF_TASK_TYPES
 
 def validate_privacy_redaction(conn: sqlite3.Connection, *, target_type: str, target_id: str) -> tuple[bool, dict[str, object]]:
     matter_scope = _matter_scope_for_validation_target(conn, target_type=target_type, target_id=target_id)

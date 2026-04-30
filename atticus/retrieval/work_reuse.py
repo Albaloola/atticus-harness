@@ -12,6 +12,26 @@ from atticus.db import repo
 from atticus.retrieval.rank import lexical_score
 
 
+_SOURCE_LINK_REQUIRED_STAGES = {"S6", "S7", "S8", "S9"}
+_SOURCE_LINK_REQUIRED_TASK_TYPES = {
+    "authority_map",
+    "hostile_opponent_review",
+    "draft_preparation",
+    "final_quality_gate",
+    "citation_audit",
+    "privacy_redaction_audit",
+    "final_draft",
+}
+_SOURCE_LINK_REQUIRED_STEP_TERMS = (
+    "authority",
+    "hostile",
+    "draft",
+    "final",
+    "citation",
+    "redaction",
+)
+
+
 @dataclass(frozen=True)
 class ReuseDecision:
     reusable: bool
@@ -37,14 +57,18 @@ def validate_reusable_step(conn: sqlite3.Connection, step_id: str) -> ReuseDecis
     if str(step["status"]) != "complete":
         return ReuseDecision(False, f"step status is {step['status']}", orientation_allowed=False)
     task_id = _optional_id(step, "task_id")
+    task_stage = ""
+    task_type = ""
     if task_id:
-        task = conn.execute("SELECT status, matter_scope FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
+        task = conn.execute("SELECT status, matter_scope, stage, task_type FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
         if task is None:
             return ReuseDecision(False, "linked task missing", orientation_allowed=False)
         if str(task["matter_scope"]) != matter_scope:
             return ReuseDecision(False, "linked task belongs to another matter", orientation_allowed=False)
         if str(task["status"]) not in {"complete", "reducer_pending"}:
             return ReuseDecision(False, f"linked task is not complete: {task['status']}", orientation_allowed=True)
+        task_stage = str(task["stage"] or "")
+        task_type = str(task["task_type"] or "")
     artifact_id = _optional_id(step, "artifact_id")
     if artifact_id:
         artifact_decision = _artifact_reuse_decision(conn, matter_scope=matter_scope, artifact_id=artifact_id)
@@ -63,6 +87,16 @@ def validate_reusable_step(conn: sqlite3.Connection, step_id: str) -> ReuseDecis
     source_link_decision = _work_step_source_link_decision(conn, matter_scope=matter_scope, step_id=step_id)
     if not source_link_decision.reusable:
         return source_link_decision
+    if (
+        source_link_decision.reason == "no work step source links recorded"
+        and _requires_recorded_source_links_for_reuse(step, task_stage=task_stage, task_type=task_type)
+    ):
+        return ReuseDecision(
+            False,
+            "final-stage work reuse requires recorded source links; reuse as orientation only until source provenance is recorded",
+            trusted_as_proof=False,
+            orientation_allowed=True,
+        )
     provider_run_id = _optional_id(step, "provider_run_id")
     if provider_run_id:
         provider_decision = _same_matter_target_decision(conn, matter_scope=matter_scope, target_type="provider_run", target_id=provider_run_id)
@@ -388,6 +422,17 @@ def _text_sha_from_material(material: Mapping[str, object]) -> str:
     if isinstance(provenance, Mapping):
         return str(provenance.get("text_sha256") or "")
     return str(material.get("sha256") or "")
+
+
+def _requires_recorded_source_links_for_reuse(step: Mapping[str, object], *, task_stage: str, task_type: str) -> bool:
+    stage = task_stage.strip()
+    normalized_task_type = task_type.strip()
+    step_type = str(step.get("step_type") or "").strip().lower()
+    return (
+        stage in _SOURCE_LINK_REQUIRED_STAGES
+        or normalized_task_type in _SOURCE_LINK_REQUIRED_TASK_TYPES
+        or any(term in step_type for term in _SOURCE_LINK_REQUIRED_STEP_TERMS)
+    )
 
 
 def _optional_id(row: Mapping[str, object], key: str) -> str:

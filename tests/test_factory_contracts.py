@@ -22,8 +22,10 @@ from atticus.migration.import_old_run import import_candidates
 from atticus.providers.budget import BudgetExceeded, require_budget
 from atticus.providers.policy import ProviderActual, ProviderRequest, record_provider_policy_decision
 from atticus.reducer.reducer import ReductionBlocked, reduce_candidate
+from atticus.retrieval.source_chunks import chunk_extracted_artifact
 from atticus.retrieval.ask import answer_question
 from atticus.retrieval.index import rebuild_search_index
+from atticus.retrieval.source_chunks import chunk_extracted_artifact
 from atticus.scheduler.lease import acquire_lease
 from atticus.scheduler.planner import select_runnable_tasks
 from atticus.validation.canonical_write_guard import CanonicalWriteDenied
@@ -36,6 +38,33 @@ def init_db(tmp_path: Path) -> Path:
     db_path = tmp_path / "atticus.sqlite3"
     repo.initialize_database(db_path)
     return db_path
+
+
+def _add_extracted_source_chunk(
+    conn: sqlite3.Connection,
+    *,
+    source_id: str,
+    content: str,
+    path: str = "/candidate/extract.txt",
+    matter_scope: str = "atticus",
+    confidence: float = 0.9,
+) -> str:
+    artifact_id = repo.add_artifact(
+        conn,
+        matter_scope=matter_scope,
+        path=path,
+        artifact_type="extracted_text",
+        content=content,
+        source_ids=[source_id],
+    )
+    _ = chunk_extracted_artifact(
+        conn,
+        matter_scope=matter_scope,
+        source_id=source_id,
+        artifact_id=artifact_id,
+        confidence=confidence,
+    )
+    return artifact_id
 
 
 def _json_mapping(text: str) -> Mapping[str, object]:
@@ -391,13 +420,14 @@ def test_citation_support_integrity_checks_quote_hash_and_source_material(tmp_pa
     quote_hash = hashlib.sha256(" ".join(quote.split()).encode("utf-8")).hexdigest()
     with repo.db_connection(db_path) as conn:
         source_id = repo.add_source(conn, path="/raw/lease.pdf", sha256="c" * 64)
-        repo.add_artifact(
+        artifact_id = repo.add_artifact(
             conn,
             path="/candidate/lease-extract.txt",
             artifact_type="extracted_text",
             content=f"Opening text. {quote} Closing text.",
             source_ids=[source_id],
         )
+        _ = chunk_extracted_artifact(conn, matter_scope="atticus", source_id=source_id, artifact_id=artifact_id, confidence=0.9)
         repo.add_task(
             conn,
             TaskSpec(
@@ -427,7 +457,8 @@ def test_citation_support_integrity_checks_quote_hash_and_source_material(tmp_pa
     with repo.db_connection(db_path, read_only=True) as conn:
         rows = conn.execute(
             """
-            SELECT finding_id, citation_id, target_type, target_id, quote_hash, support_status, support_level
+            SELECT finding_id, citation_id, target_type, target_id, quote_hash, support_status, support_level,
+                   proposition_text, semantic_support_status, requires_human_review
             FROM citation_support_results
             WHERE candidate_id = ?
             """,
@@ -437,6 +468,9 @@ def test_citation_support_integrity_checks_quote_hash_and_source_material(tmp_pa
     assert rows[0]["support_status"] == "verified_quote_in_source"
     assert rows[0]["support_level"] == "quote"
     assert rows[0]["quote_hash"] == quote_hash
+    assert rows[0]["proposition_text"] == "source-supported fact"
+    assert rows[0]["semantic_support_status"] in {"supported", "partially_supported"}
+    assert rows[0]["requires_human_review"] == 0
 
 
 def test_citation_support_integrity_fails_hash_mismatch(tmp_path: Path):
@@ -444,12 +478,11 @@ def test_citation_support_integrity_fails_hash_mismatch(tmp_path: Path):
     quote = "The tenant must pay rent by 1 May."
     with repo.db_connection(db_path) as conn:
         source_id = repo.add_source(conn, path="/raw/lease.pdf", sha256="c" * 64)
-        repo.add_artifact(
+        _add_extracted_source_chunk(
             conn,
+            source_id=source_id,
             path="/candidate/lease-extract.txt",
-            artifact_type="extracted_text",
             content=quote,
-            source_ids=[source_id],
         )
         repo.add_task(
             conn,
@@ -492,13 +525,14 @@ def test_citation_support_integrity_accepts_ordered_ellipsis_fragments(tmp_path:
     quote = "Student Name: MISS ANFAL ELBUSHRA ... Rent: GBP 4686.18"
     with repo.db_connection(db_path) as conn:
         source_id = repo.add_source(conn, path="/raw/lease.pdf", sha256="c" * 64)
-        repo.add_artifact(
+        artifact_id = repo.add_artifact(
             conn,
             path="/candidate/lease-extract.txt",
             artifact_type="extracted_text",
             content="Student Name: MISS ANFAL ELBUSHRA\nSome intervening terms.\nRent: GBP 4686.18",
             source_ids=[source_id],
         )
+        _ = chunk_extracted_artifact(conn, matter_scope="atticus", source_id=source_id, artifact_id=artifact_id, confidence=0.9)
         repo.add_task(
             conn,
             TaskSpec(
@@ -531,13 +565,14 @@ def test_citation_support_integrity_replaces_prior_support_results(tmp_path: Pat
     quote = "The tenant must pay rent by 1 May."
     with repo.db_connection(db_path) as conn:
         source_id = repo.add_source(conn, path="/raw/lease.pdf", sha256="c" * 64)
-        repo.add_artifact(
+        artifact_id = repo.add_artifact(
             conn,
             path="/candidate/lease-extract.txt",
             artifact_type="extracted_text",
             content=quote,
             source_ids=[source_id],
         )
+        _ = chunk_extracted_artifact(conn, matter_scope="atticus", source_id=source_id, artifact_id=artifact_id, confidence=0.9)
         repo.add_task(
             conn,
             TaskSpec(
@@ -895,13 +930,14 @@ def test_reducer_issues_final_certification_with_quote_support(tmp_path: Path):
     quote_hash = hashlib.sha256(" ".join(quote.split()).encode("utf-8")).hexdigest()
     with repo.db_connection(db_path) as conn:
         source_id = repo.add_source(conn, path="/raw/final-source.pdf", sha256="8" * 64)
-        repo.add_artifact(
+        artifact_id = repo.add_artifact(
             conn,
             path="/candidate/final-extract.txt",
             artifact_type="extracted_text",
             content=quote,
             source_ids=[source_id],
         )
+        _ = chunk_extracted_artifact(conn, matter_scope="atticus", source_id=source_id, artifact_id=artifact_id, confidence=0.9)
         repo.add_task(
             conn,
             TaskSpec(

@@ -19,6 +19,7 @@ APPROX_CHARS_PER_TOKEN = 4
 TARGET_CHUNK_CHARS = TARGET_CHUNK_TOKENS * APPROX_CHARS_PER_TOKEN
 MAX_CHUNK_CHARS = 5_200
 MIN_TERM_LENGTH = 4
+SOURCE_CHUNK_PROOF_CONFIDENCE_THRESHOLD = 0.6
 
 
 @dataclass(frozen=True)
@@ -84,6 +85,7 @@ def chunk_extracted_artifact(
         return []
     resolved_snapshot_id = source_snapshot_id or _current_source_snapshot_id(conn, source_id=source_id)
     resolved_extraction_id = extraction_id or _current_extraction_id(conn, source_id=source_id, artifact_id=artifact_id)
+    resolved_confidence = confidence if confidence is not None else _current_extraction_confidence(conn, extraction_id=resolved_extraction_id)
     chunks = [
         SourceChunk(
             chunk_id=_chunk_id(source_id=source_id, artifact_id=artifact_id, start_offset=start, end_offset=end, text=chunk_text),
@@ -97,7 +99,7 @@ def chunk_extracted_artifact(
             end_offset=end,
             text_hash=normalized_text_hash(chunk_text),
             text=chunk_text,
-            confidence=confidence,
+            confidence=resolved_confidence,
             metadata={
                 "strategy": "paragraph_window",
                 "target_tokens": TARGET_CHUNK_TOKENS,
@@ -291,6 +293,21 @@ def _current_source_snapshot_id(conn: sqlite3.Connection, *, source_id: str) -> 
     return str(row["snapshot_id"]) if row is not None else ""
 
 
+def _current_extraction_confidence(conn: sqlite3.Connection, *, extraction_id: str) -> float | None:
+    if not extraction_id:
+        return None
+    row = conn.execute(
+        "SELECT confidence FROM extraction_records WHERE extraction_id = ?",
+        (extraction_id,),
+    ).fetchone()
+    if row is None or row["confidence"] is None:
+        return None
+    try:
+        return float(str(row["confidence"]))
+    except (TypeError, ValueError):
+        return None
+
+
 def _current_extraction_id(conn: sqlite3.Connection, *, source_id: str, artifact_id: str) -> str:
     row = conn.execute(
         """
@@ -312,6 +329,8 @@ def _chunk_id(*, source_id: str, artifact_id: str, start_offset: int, end_offset
 
 def _row_to_context(row: SqlRow) -> dict[str, object]:
     metadata = _json_metadata(row["metadata_json"])
+    confidence = _optional_float(row["confidence"])
+    proof_eligible = confidence is None or confidence >= SOURCE_CHUNK_PROOF_CONFIDENCE_THRESHOLD
     return {
         "chunk_id": row["chunk_id"],
         "source_id": row["source_id"],
@@ -324,6 +343,9 @@ def _row_to_context(row: SqlRow) -> dict[str, object]:
         "text_hash": row["text_hash"],
         "text": row["text"],
         "confidence": row["confidence"],
+        "proof_eligible": proof_eligible,
+        "proof_role": "source_chunk_proof" if proof_eligible else "orientation_only_low_confidence_chunk",
+        "confidence_threshold": SOURCE_CHUNK_PROOF_CONFIDENCE_THRESHOLD,
         "estimated_tokens": metadata.get("estimated_tokens") or estimate_chunk_tokens(str(row["text"] or "")),
         "offset_basis": metadata.get("offset_basis") or "artifact_content_utf8_codepoints",
         "metadata": metadata,
@@ -353,3 +375,12 @@ def _score_chunk(text: str, terms: set[str]) -> int:
 
 def _normalize_text(text: str) -> str:
     return " ".join(text.split()).strip()
+
+
+def _optional_float(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(str(value))
+    except (TypeError, ValueError):
+        return None

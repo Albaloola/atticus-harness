@@ -6,7 +6,7 @@ import json
 from typing import cast
 
 from atticus.core.events import utc_now
-from atticus.core.policies import TrustStatus
+from atticus.core.policies import LegalStage, TaskStatus, TrustStatus
 from atticus.core.tasks import TaskSpec
 from atticus.context.packs import build_context_pack
 from atticus.db import repo
@@ -72,6 +72,46 @@ def test_reusable_work_excludes_candidate_only_output_for_trusted_answer(tmp_pat
     assert excluded
     assert excluded[0]["orientation_allowed"] is True
     assert "candidate-only output" in str(excluded[0]["reason"])
+
+
+def test_final_stage_work_reuse_without_source_links_is_orientation_only(tmp_path: Path):
+    db_path = _init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        source_id = repo.add_source(
+            conn,
+            source_id="ALPHA-SRC-FINAL",
+            matter_scope="alpha",
+            path="/alpha/final.pdf",
+            sha256="9" * 64,
+        )
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="final-draft-without-links",
+                title="Final draft without source links",
+                task_type="draft_preparation",
+                matter_scope="alpha",
+                stage=LegalStage.S8_DRAFT_PREPARATION,
+                status=TaskStatus.COMPLETE,
+                source_dependencies=[source_id],
+            ),
+        )
+        work_run_id = repo.start_work_run(conn, matter_scope="alpha", goal="final draft")
+        _ = repo.record_work_run_step(
+            conn,
+            work_run_id=work_run_id,
+            step_type="draft_preparation",
+            status="complete",
+            task_id="final-draft-without-links",
+        )
+        summary = summarize_reusable_work(conn, "alpha", "final draft")
+
+    assert summary["reusable_steps"] == []
+    excluded = cast(list[dict[str, object]], summary["excluded_steps"])
+    assert excluded
+    assert excluded[0]["orientation_allowed"] is True
+    assert excluded[0]["trusted_as_proof"] is False
+    assert "final-stage work reuse requires recorded source links" in str(excluded[0]["reason"])
 
 
 def test_reusable_work_excludes_artifact_when_source_dependency_goes_stale(tmp_path: Path):

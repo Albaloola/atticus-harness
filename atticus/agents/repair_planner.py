@@ -36,6 +36,9 @@ class RepairPlan:
     blocker_type: str
     severity: str
     status: str
+    owner: str
+    retry_after: str
+    terminal_reason: str
     actions: tuple[dict[str, object], ...]
     max_attempts: int
     attempts_so_far: int
@@ -62,6 +65,8 @@ def ensure_repair_plan_for_blocker(
     signature = blocker_signature(blocker_type=blocker_type, reason=clean_reason)
     actions = actions_for_blocker(conn, matter_scope=matter_scope, target_type=target_type, target_id=target_id, reason=clean_reason, blocker_type=blocker_type)
     status = "requires_human" if blocker_type in {"provider_control_plane", "external_or_human_action"} else "proposed"
+    owner = _owner_for_actions(actions, fallback="operator" if status == "requires_human" else "orchestrator")
+    terminal_reason = clean_reason if status == "requires_human" and blocker_type == "external_or_human_action" else ""
     severity = "blocker" if status == "requires_human" or blocker_type in {"missing_certification", "incomplete_dependency"} else "warning"
     existing = _plan_by_signature(
         conn,
@@ -76,10 +81,10 @@ def ensure_repair_plan_for_blocker(
             _ = conn.execute(
                 """
                 UPDATE repair_plans
-                SET actions_json = ?, severity = ?, status = ?, updated_at = ?
+                SET actions_json = ?, severity = ?, status = ?, owner = ?, terminal_reason = ?, updated_at = ?
                 WHERE repair_plan_id = ?
                 """,
-                (_json(list(actions)), severity, next_status, utc_now(), existing.repair_plan_id),
+                (_json(list(actions)), severity, next_status, owner, terminal_reason, utc_now(), existing.repair_plan_id),
             )
             updated = get_repair_plan(conn, existing.repair_plan_id)
             if updated is None:
@@ -98,8 +103,8 @@ def ensure_repair_plan_for_blocker(
         """
         INSERT INTO repair_plans(repair_plan_id, matter_scope, target_type, target_id,
           blocker_signature, blocker_type, severity, status, actions_json,
-          attempts_so_far, max_attempts, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+          owner, retry_after, terminal_reason, attempts_so_far, max_attempts, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, 0, ?, ?, ?)
         """,
         (
             repair_plan_id,
@@ -111,6 +116,8 @@ def ensure_repair_plan_for_blocker(
             severity,
             status,
             _json(list(actions)),
+            owner,
+            terminal_reason,
             max_attempts,
             now,
             now,
@@ -183,6 +190,10 @@ def record_repair_attempt(
         (attempts, next_status, utc_now(), repair_plan_id),
     )
     if next_status == "requires_human":
+        _ = conn.execute(
+            "UPDATE repair_plans SET owner = ?, terminal_reason = CASE WHEN terminal_reason = '' THEN ? ELSE terminal_reason END WHERE repair_plan_id = ?",
+            ("operator", f"attempt budget exhausted after {attempts} attempts", repair_plan_id),
+        )
         _record_attention_once(
             conn,
             matter_scope=matter_scope,
@@ -472,6 +483,9 @@ def _row_to_plan(row: sqlite3.Row) -> RepairPlan:
         blocker_type=str(row["blocker_type"]),
         severity=str(row["severity"]),
         status=str(row["status"]),
+        owner=str(row["owner"]) if "owner" in row.keys() else "orchestrator",
+        retry_after=str(row["retry_after"] or "") if "retry_after" in row.keys() else "",
+        terminal_reason=str(row["terminal_reason"] or "") if "terminal_reason" in row.keys() else "",
         actions=normalized_actions,
         max_attempts=int(row["max_attempts"]),
         attempts_so_far=int(row["attempts_so_far"]),
@@ -482,6 +496,14 @@ def _row_to_plan(row: sqlite3.Row) -> RepairPlan:
 
 def _json(value: object) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
+def _owner_for_actions(actions: tuple[dict[str, object], ...], *, fallback: str) -> str:
+    for action in actions:
+        owner = str(action.get("owner") or "").strip()
+        if owner:
+            return owner
+    return fallback
 
 
 def _emit_repair_event(conn: sqlite3.Connection, *, matter_scope: str, event_type: str, payload: Mapping[str, object]) -> None:

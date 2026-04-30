@@ -262,9 +262,14 @@ CREATE TABLE IF NOT EXISTS authority_verifications (
   matter_scope TEXT NOT NULL,
   authority_id TEXT NOT NULL REFERENCES legal_authorities(authority_id) ON DELETE CASCADE,
   jurisdiction TEXT NOT NULL DEFAULT '',
+  jurisdiction_status TEXT NOT NULL DEFAULT '',
   binding_status TEXT NOT NULL DEFAULT '',
   currentness_status TEXT NOT NULL DEFAULT 'unknown',
   proposition_supported INTEGER NOT NULL DEFAULT 0 CHECK(proposition_supported IN (0, 1)),
+  proposition_hash TEXT NOT NULL DEFAULT '',
+  verification_method TEXT NOT NULL DEFAULT '',
+  source_url_or_reference TEXT NOT NULL DEFAULT '',
+  expires_at TEXT,
   checked_by TEXT NOT NULL DEFAULT '',
   checked_at TEXT NOT NULL,
   details_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(details_json))
@@ -320,6 +325,14 @@ CREATE TABLE IF NOT EXISTS citation_support_results (
   target_id TEXT NOT NULL,
   quote_text TEXT NOT NULL DEFAULT '',
   quote_hash TEXT NOT NULL DEFAULT '',
+  proposition_text TEXT NOT NULL DEFAULT '',
+  semantic_support_status TEXT NOT NULL DEFAULT 'unchecked_requires_human',
+  authority_support_status TEXT NOT NULL DEFAULT '',
+  source_chunk_id TEXT,
+  start_offset INTEGER,
+  end_offset INTEGER,
+  support_confidence REAL,
+  requires_human_review INTEGER NOT NULL DEFAULT 0 CHECK(requires_human_review IN (0, 1)),
   support_status TEXT NOT NULL,
   support_level TEXT NOT NULL DEFAULT '',
   reason TEXT NOT NULL DEFAULT '',
@@ -333,9 +346,14 @@ CREATE TABLE IF NOT EXISTS source_chunks (
   source_snapshot_id TEXT,
   extraction_id TEXT,
   artifact_id TEXT,
+  chunk_kind TEXT NOT NULL DEFAULT 'text',
+  page_label TEXT NOT NULL DEFAULT '',
   page_number INTEGER,
+  line_start INTEGER,
+  line_end INTEGER,
   start_offset INTEGER,
   end_offset INTEGER,
+  span_index_status TEXT NOT NULL DEFAULT 'indexed',
   text_hash TEXT NOT NULL,
   text TEXT NOT NULL,
   confidence REAL,
@@ -794,6 +812,9 @@ CREATE TABLE IF NOT EXISTS repair_plans (
   blocker_type TEXT NOT NULL,
   severity TEXT NOT NULL,
   status TEXT NOT NULL,
+  owner TEXT NOT NULL DEFAULT 'orchestrator',
+  retry_after TEXT,
+  terminal_reason TEXT NOT NULL DEFAULT '',
   actions_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(actions_json)),
   attempts_so_far INTEGER NOT NULL DEFAULT 0,
   max_attempts INTEGER NOT NULL DEFAULT 3,
@@ -809,6 +830,7 @@ CREATE TABLE IF NOT EXISTS repair_attempts (
   action_type TEXT NOT NULL,
   status TEXT NOT NULL,
   result_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(result_json)),
+  outcome_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(outcome_json)),
   created_at TEXT NOT NULL
 ) STRICT;
 
@@ -823,9 +845,44 @@ CREATE TABLE IF NOT EXISTS reducer_review_queue (
   status TEXT NOT NULL DEFAULT 'open',
   reason TEXT NOT NULL,
   recommended_action TEXT NOT NULL DEFAULT '',
+  blocks_certification_type TEXT NOT NULL DEFAULT '',
+  blocks_final_gate INTEGER NOT NULL DEFAULT 0 CHECK(blocks_final_gate IN (0, 1)),
+  reviewer TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   UNIQUE(candidate_id)
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS matter_completion_snapshots (
+  snapshot_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL,
+  done INTEGER NOT NULL CHECK(done IN (0, 1)),
+  safe_to_finalize INTEGER NOT NULL CHECK(safe_to_finalize IN (0, 1)),
+  blocked INTEGER NOT NULL CHECK(blocked IN (0, 1)),
+  primary_next_action_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(primary_next_action_json)),
+  counts_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(counts_json)),
+  report_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(report_json)),
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS final_gate_states (
+  matter_scope TEXT PRIMARY KEY,
+  state TEXT NOT NULL,
+  blocker_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(blocker_json)),
+  next_action_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(next_action_json)),
+  updated_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS provider_health_checks (
+  provider_health_check_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL,
+  provider_policy_fingerprint TEXT NOT NULL DEFAULT '',
+  requested_provider TEXT NOT NULL DEFAULT '',
+  requested_model TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL,
+  failure_taxonomy TEXT NOT NULL DEFAULT '',
+  details_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(details_json)),
+  created_at TEXT NOT NULL
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS external_action_blocks (
@@ -854,6 +911,10 @@ CREATE INDEX IF NOT EXISTS sources_hash_idx ON sources(sha256);
 CREATE INDEX IF NOT EXISTS repair_plans_scope_status_idx ON repair_plans(matter_scope, status, severity, updated_at);
 CREATE INDEX IF NOT EXISTS repair_attempts_plan_idx ON repair_attempts(repair_plan_id, created_at);
 CREATE INDEX IF NOT EXISTS reducer_review_queue_scope_status_idx ON reducer_review_queue(matter_scope, status, priority, updated_at);
+CREATE INDEX IF NOT EXISTS matter_completion_snapshots_scope_idx
+ON matter_completion_snapshots(matter_scope, created_at);
+CREATE INDEX IF NOT EXISTS provider_health_checks_scope_policy_idx
+ON provider_health_checks(matter_scope, provider_policy_fingerprint, created_at);
 CREATE INDEX IF NOT EXISTS certifications_subject_idx
 ON certifications(subject_type, subject_id, certification_type, status);
 CREATE INDEX IF NOT EXISTS provider_runs_task_idx ON provider_runs(task_id, created_at);

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
+from atticus.cli import main as cli_main
 from atticus.testing.bad_fixtures import all_bad_fixtures, bad_worker_packet_fixtures
 from atticus.workers.result_parser import ResultPacketError, parse_result
 
@@ -48,3 +51,25 @@ def test_fixture_catalog_keeps_live_failure_categories_visible() -> None:
         "worker_packet",
         "proposed_task",
     }.issubset(categories)
+
+
+def test_bad_fixtures_cli_filters_by_category(capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli_main(["bad-fixtures", "run", "--suite", "provider_control_plane", "--json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["suite"] == "provider_control_plane"
+    assert payload["fixture_count"] == 1
+    assert {fixture["category"] for fixture in payload["fixtures"]} == {"provider_control_plane"}
+    assert {fixture["fixture_id"] for fixture in payload["fixtures"]} == {"provider-401"}
+
+
+def test_bad_fixtures_cli_filters_by_fixture_id(capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli_main(["bad-fixtures", "run", "--suite", "provider-timeout", "--json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["suite"] == "provider-timeout"
+    assert payload["fixture_count"] == 1
+    assert payload["fixtures"][0]["fixture_id"] == "provider-timeout"
+    assert payload["fixtures"][0]["expected_outcome"] == "repair"

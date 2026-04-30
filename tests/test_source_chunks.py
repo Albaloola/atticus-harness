@@ -261,6 +261,23 @@ def test_quote_support_uses_source_chunk_text(tmp_path: Path):
 
     assert outcome.passed
     assert cast(list[object], outcome.details["checked_citations"])
+    with repo.db_connection(db_path, read_only=True) as conn:
+        support = cast(
+            Mapping[str, object],
+            conn.execute(
+                """
+                SELECT source_chunk_id, start_offset, end_offset, support_status, support_level
+                FROM citation_support_results
+                WHERE candidate_id = ?
+                """,
+                (candidate_id,),
+            ).fetchone(),
+        )
+    assert support["source_chunk_id"] == "chunk-late-quote"
+    assert support["start_offset"] == 5000
+    assert support["end_offset"] == 5000 + len(quote.casefold())
+    assert support["support_status"] == "verified_quote_in_source"
+    assert support["support_level"] == "quote"
 
 
 def test_quote_support_rejects_source_chunk_with_bad_text_hash(tmp_path: Path):
@@ -419,3 +436,243 @@ def test_derivative_artifact_cannot_directly_prove_material_fact(tmp_path: Path)
 
     assert not outcome.passed
     assert cast(list[object], outcome.details["derivative_artifact_not_independent_evidence"])
+
+
+def test_source_material_fallback_without_current_chunk_is_orientation_only(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    quote = "Fallback OCR text is not final proof without a source chunk."
+    quote_hash = hashlib.sha256(" ".join(quote.split()).encode("utf-8")).hexdigest()
+    with repo.db_connection(db_path) as conn:
+        source_id = repo.add_source(conn, matter_scope="alpha", path="/alpha/scan.pdf", sha256="1" * 64)
+        artifact_id = repo.add_artifact(
+            conn,
+            matter_scope="alpha",
+            path="/alpha/ocr.txt",
+            artifact_type="ocr_text",
+            content=quote,
+            source_ids=[source_id],
+        )
+        _ = conn.execute(
+            """
+            INSERT INTO ocr_records(ocr_id, source_id, artifact_id, engine, coverage_status, metadata_json, created_at)
+            VALUES ('ocr-fallback', ?, ?, 'existing_text', 'complete', ?, '2026-04-30T00:00:00+00:00')
+            """,
+            (source_id, artifact_id, json.dumps({"source_sha256": "1" * 64, "confidence": 0.95})),
+        )
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="fallback-without-chunk",
+                title="Fallback without chunk",
+                task_type="final_quality_gate",
+                stage=LegalStage.S9_FINAL_QUALITY_GATE,
+                matter_scope="alpha",
+                source_dependencies=[source_id],
+            ),
+        )
+        candidate_id = repo.record_candidate_output(
+            conn,
+            task_id="fallback-without-chunk",
+            lease_id=None,
+            worker_id="worker-1",
+            output_type="worker_result_packet",
+            payload={
+                "schema_version": RESULT_PACKET_SCHEMA_VERSION,
+                "task_id": "fallback-without-chunk",
+                "summary": "Fallback-only fact.",
+                "findings": [
+                    {
+                        "finding_id": "finding-1",
+                        "text": "Fallback OCR text is proof.",
+                        "finding_type": "fact",
+                        "citation_ids": ["cite-1"],
+                        "confidence": 0.8,
+                        "reasoning_status": "supported",
+                    }
+                ],
+                "citations": [
+                    {
+                        "citation_id": "cite-1",
+                        "target_type": "source",
+                        "target_id": source_id,
+                        "locator": "ocr-fallback",
+                        "quote": quote,
+                        "quoted_text_hash": quote_hash,
+                    }
+                ],
+                "proposed_artifacts": [],
+                "proposed_tasks": [],
+                "uncertainties": [],
+                "contradictions": [],
+                "risk_flags": [],
+                "redaction_flags": [],
+                "external_action_requests": [],
+            },
+        )
+        outcome = run_validation(conn, gate_name="citation_support_integrity", target_type="candidate", target_id=candidate_id)
+
+    assert not outcome.passed
+    assert cast(list[object], outcome.details["source_material_fallback_orientation_only"])
+
+
+def test_low_confidence_source_chunk_cannot_support_final_proof(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    quote = "Low confidence OCR says collections were paused."
+    quote_hash = hashlib.sha256(" ".join(quote.split()).encode("utf-8")).hexdigest()
+    with repo.db_connection(db_path) as conn:
+        source_id = repo.add_source(conn, matter_scope="alpha", path="/alpha/source.txt", sha256="2" * 64)
+        artifact_id = repo.add_artifact(
+            conn,
+            matter_scope="alpha",
+            path="/alpha/extracted/source.txt",
+            artifact_type="ocr_text",
+            content=quote,
+            source_ids=[source_id],
+        )
+        _ = conn.execute(
+            """
+            INSERT INTO source_chunks(chunk_id, matter_scope, source_id, source_snapshot_id, extraction_id,
+              artifact_id, page_number, start_offset, end_offset, text_hash, text, confidence, metadata_json, created_at)
+            VALUES ('chunk-low-confidence', 'alpha', ?, '', 'ocr-low', ?, NULL, 10, 52, ?, ?, 0.42, '{}', '2026-04-30T00:00:00+00:00')
+            """,
+            (source_id, artifact_id, quote_hash, quote),
+        )
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="low-confidence-proof",
+                title="Low confidence proof",
+                task_type="final_quality_gate",
+                stage=LegalStage.S9_FINAL_QUALITY_GATE,
+                matter_scope="alpha",
+                source_dependencies=[source_id],
+            ),
+        )
+        candidate_id = repo.record_candidate_output(
+            conn,
+            task_id="low-confidence-proof",
+            lease_id=None,
+            worker_id="worker-1",
+            output_type="worker_result_packet",
+            payload={
+                "schema_version": RESULT_PACKET_SCHEMA_VERSION,
+                "task_id": "low-confidence-proof",
+                "summary": "Low confidence fact.",
+                "findings": [
+                    {
+                        "finding_id": "finding-1",
+                        "text": "Collections were paused.",
+                        "finding_type": "fact",
+                        "citation_ids": ["cite-1"],
+                        "confidence": 0.8,
+                        "reasoning_status": "supported",
+                    }
+                ],
+                "citations": [
+                    {
+                        "citation_id": "cite-1",
+                        "target_type": "source",
+                        "target_id": source_id,
+                        "locator": "chunk-low-confidence",
+                        "quote": quote,
+                        "quoted_text_hash": quote_hash,
+                    }
+                ],
+                "proposed_artifacts": [],
+                "proposed_tasks": [],
+                "uncertainties": [],
+                "contradictions": [],
+                "risk_flags": [],
+                "redaction_flags": [],
+                "external_action_requests": [],
+            },
+        )
+        outcome = run_validation(conn, gate_name="citation_support_integrity", target_type="candidate", target_id=candidate_id)
+
+    assert not outcome.passed
+    assert cast(list[object], outcome.details["low_confidence_source_chunk"])
+
+
+def test_source_chunk_with_non_current_snapshot_cannot_support_source_quote(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    quote = "Old snapshot says the balance was waived."
+    quote_hash = hashlib.sha256(" ".join(quote.split()).encode("utf-8")).hexdigest()
+    with repo.db_connection(db_path) as conn:
+        source_id = repo.add_source(conn, matter_scope="alpha", path="/alpha/source.txt", sha256="4" * 64)
+        artifact_id = repo.add_artifact(
+            conn,
+            matter_scope="alpha",
+            path="/alpha/extracted/source.txt",
+            artifact_type="extracted_text",
+            content=quote,
+            source_ids=[source_id],
+        )
+        _ = conn.execute(
+            """
+            INSERT INTO source_snapshots(snapshot_id, source_id, sha256, size_bytes, captured_by, created_at)
+            VALUES ('snap-current', ?, ?, 10, 'test', '2026-04-30T00:00:00+00:00')
+            """,
+            (source_id, "4" * 64),
+        )
+        _ = conn.execute(
+            """
+            INSERT INTO source_chunks(chunk_id, matter_scope, source_id, source_snapshot_id, extraction_id,
+              artifact_id, page_number, start_offset, end_offset, text_hash, text, confidence, metadata_json, created_at)
+            VALUES ('chunk-old-snapshot', 'alpha', ?, 'snap-old', 'extract-old', ?, NULL, 0, 40, ?, ?, 0.95, '{}', '2026-04-30T00:00:00+00:00')
+            """,
+            (source_id, artifact_id, quote_hash, quote),
+        )
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="old-snapshot-proof",
+                title="Old snapshot proof",
+                task_type="draft",
+                stage=LegalStage.S8_DRAFT_PREPARATION,
+                matter_scope="alpha",
+                source_dependencies=[source_id],
+            ),
+        )
+        candidate_id = repo.record_candidate_output(
+            conn,
+            task_id="old-snapshot-proof",
+            lease_id=None,
+            worker_id="worker-1",
+            output_type="worker_result_packet",
+            payload={
+                "schema_version": RESULT_PACKET_SCHEMA_VERSION,
+                "task_id": "old-snapshot-proof",
+                "summary": "Old snapshot fact.",
+                "findings": [
+                    {
+                        "finding_id": "finding-1",
+                        "text": "Balance was waived.",
+                        "finding_type": "fact",
+                        "citation_ids": ["cite-1"],
+                        "confidence": 0.8,
+                        "reasoning_status": "supported",
+                    }
+                ],
+                "citations": [
+                    {
+                        "citation_id": "cite-1",
+                        "target_type": "source",
+                        "target_id": source_id,
+                        "locator": "chunk-old-snapshot",
+                        "quote": quote,
+                        "quoted_text_hash": quote_hash,
+                    }
+                ],
+                "proposed_artifacts": [],
+                "proposed_tasks": [],
+                "uncertainties": [],
+                "contradictions": [],
+                "risk_flags": [],
+                "redaction_flags": [],
+                "external_action_requests": [],
+            },
+        )
+        outcome = run_validation(conn, gate_name="citation_support_integrity", target_type="candidate", target_id=candidate_id)
+
+    assert not outcome.passed
+    assert cast(list[object], outcome.details["source_material_fallback_orientation_only"])

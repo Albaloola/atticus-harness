@@ -10,6 +10,7 @@ import sqlite3
 import sys
 from pathlib import Path
 from typing import Protocol, cast
+from uuid import uuid4
 
 from atticus.commands.registry import command_by_name, list_commands
 from atticus.agents.coordinator import plan_coordinator_work
@@ -65,7 +66,9 @@ from atticus.providers.policy import (
 from atticus.reducer.review_queue import (
     accept_reducer_review,
     enqueue_open_reducer_reviews_for_matter,
+    get_reducer_review,
     list_reducer_reviews,
+    next_reducer_review,
     reject_reducer_review,
     review_item_summary,
 )
@@ -79,14 +82,22 @@ from atticus.scheduler.lease import LeaseError, acquire_lease
 from atticus.scheduler.live_orchestrator import prepare_live_resume
 from atticus.scheduler.planner import budget_blockers, select_runnable_tasks
 from atticus.skills.registry import list_skills, load_skill
-from atticus.status.completion import build_matter_completion_report, explain_why_not_done, next_resume_action
+from atticus.scheduler.supervisor_invariants import evaluate_no_silent_idle
+from atticus.status.completion import (
+    assert_completion_has_next_action,
+    build_matter_completion_report,
+    explain_why_not_done,
+    next_resume_action,
+    record_completion_snapshot,
+)
 from atticus.status.inspect import inspect_record
 from atticus.status.report import generate_status
 from atticus.status.runbook import export_runbook
 from atticus.tools.registry import list_tools
 from atticus.validation.gates import run_validation
 from atticus.verifier import verify_candidate
-from atticus.workflows.final_gate import create_missing_final_gate_work, final_gate_readiness, plan_final_gate_repairs
+from atticus.validation.citation_support import trace_quote_in_source_material, validate_candidate_citation_support
+from atticus.workflows.final_gate import create_missing_final_gate_work, final_gate_readiness, plan_final_gate_repairs, record_final_gate_state
 from atticus.workflows.registry import list_workflows, load_workflow, plan_workflow
 from atticus.workers.outputs import reject_candidate_output
 from atticus.workers.runtime import execute_local_work_order
@@ -189,6 +200,20 @@ class CliArgs(Protocol):
     resume_token: str | None
     why_not_done: bool
     repair_plan_id: str | None
+    write_snapshot: bool
+    review_id: str | None
+    reviewer: str
+    format: str
+    out: str
+    state: bool
+    suite: str
+    all_open: bool
+    authority_id: str | None
+    proposition: str
+    citation_id: str | None
+    quote: str
+    explain_breaks: bool
+    group_by_policy: bool
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -216,6 +241,7 @@ def build_parser() -> argparse.ArgumentParser:
     _ = matter_health.add_argument("--matter", required=True)
     _ = matter_health.add_argument("--json", dest="json_output", action="store_true")
     _ = matter_health.add_argument("--why-not-done", action="store_true")
+    _ = matter_health.add_argument("--write-snapshot", action="store_true")
 
     next_action = sub.add_parser("next-action", help="show the exact next safe action for an incomplete matter")
     _ = next_action.add_argument("--db", required=True)
@@ -227,16 +253,20 @@ def build_parser() -> argparse.ArgumentParser:
     _ = repairs.add_argument("--db", required=True)
     _ = repairs.add_argument("--matter", required=True)
     _ = repairs.add_argument("--repair-plan-id")
+    _ = repairs.add_argument("--status")
+    _ = repairs.add_argument("--dry-run", dest="dry_run", action="store_true")
     _ = repairs.add_argument("--write", action="store_true")
     _ = repairs.add_argument("--json", dest="json_output", action="store_true")
 
     reducer_review = sub.add_parser("reducer-review", help="list, inspect, accept, or reject manual reducer reviews")
-    _ = reducer_review.add_argument("action", choices=["list", "show", "accept", "reject"])
+    _ = reducer_review.add_argument("action", choices=["list", "show", "accept", "reject", "next"])
     _ = reducer_review.add_argument("--db", required=True)
     _ = reducer_review.add_argument("--matter", default="")
     _ = reducer_review.add_argument("--candidate-id")
+    _ = reducer_review.add_argument("--review-id")
     _ = reducer_review.add_argument("--lease-id", default="")
     _ = reducer_review.add_argument("--reason", default="")
+    _ = reducer_review.add_argument("--reviewer", default="operator")
     _ = reducer_review.add_argument("--write", action="store_true")
     _ = reducer_review.add_argument("--json", dest="json_output", action="store_true")
 
@@ -244,6 +274,8 @@ def build_parser() -> argparse.ArgumentParser:
     _ = final_gate.add_argument("action", choices=["readiness", "repair-plan", "create-missing"])
     _ = final_gate.add_argument("--db", required=True)
     _ = final_gate.add_argument("--matter", required=True)
+    _ = final_gate.add_argument("--state", action="store_true")
+    _ = final_gate.add_argument("--dry-run", dest="dry_run", action="store_true")
     _ = final_gate.add_argument("--write", action="store_true")
     _ = final_gate.add_argument("--json", dest="json_output", action="store_true")
 
@@ -255,8 +287,61 @@ def build_parser() -> argparse.ArgumentParser:
     _ = runbook.add_argument("action", choices=["export"])
     _ = runbook.add_argument("--db", required=True, help="SQLite matter ledger to inspect")
     _ = runbook.add_argument("--matter", required=True, help="matter scope to export")
-    _ = runbook.add_argument("--out", required=True, help="markdown destination path")
+    _ = runbook.add_argument("--out", required=True, help="destination path")
+    _ = runbook.add_argument("--format", choices=["md", "json"], default="md")
     _ = runbook.add_argument("--json", dest="json_output", action="store_true", help="also print JSON export metadata")
+
+    supervisor = sub.add_parser("supervisor", help="diagnose no-silent-idle and write deterministic next-action evidence")
+    _ = supervisor.add_argument("action", choices=["diagnose-idle"])
+    _ = supervisor.add_argument("--db", required=True)
+    _ = supervisor.add_argument("--matter", required=True)
+    _ = supervisor.add_argument("--write", action="store_true")
+    _ = supervisor.add_argument("--json", dest="json_output", action="store_true")
+
+    source_trace = sub.add_parser("source-trace", help="trace a quote or citation to current source chunks/spans")
+    _ = source_trace.add_argument("--db", required=True)
+    _ = source_trace.add_argument("--matter", required=True)
+    _ = source_trace.add_argument("--source-id")
+    _ = source_trace.add_argument("--citation-id")
+    _ = source_trace.add_argument("--quote", default="")
+    _ = source_trace.add_argument("--json", dest="json_output", action="store_true")
+
+    citation_support = sub.add_parser("citation-support", help="verify candidate citation quote/span/proposition support")
+    _ = citation_support.add_argument("action", choices=["verify"])
+    _ = citation_support.add_argument("--db", required=True)
+    _ = citation_support.add_argument("--candidate-id")
+    _ = citation_support.add_argument("--matter", default="")
+    _ = citation_support.add_argument("--stage", default="")
+    _ = citation_support.add_argument("--write", action="store_true")
+    _ = citation_support.add_argument("--json", dest="json_output", action="store_true")
+
+    authority = sub.add_parser("authority", help="verify current authority status and proposition support metadata")
+    _ = authority.add_argument("action", choices=["verify"])
+    _ = authority.add_argument("--db", required=True)
+    _ = authority.add_argument("--matter", required=True)
+    _ = authority.add_argument("--authority-id")
+    _ = authority.add_argument("--proposition", default="")
+    _ = authority.add_argument("--all-open", action="store_true")
+    _ = authority.add_argument("--write", action="store_true")
+    _ = authority.add_argument("--json", dest="json_output", action="store_true")
+
+    provider_health = sub.add_parser("provider-health", help="group provider control-plane health by provider policy")
+    _ = provider_health.add_argument("--db", required=True)
+    _ = provider_health.add_argument("--matter", required=True)
+    _ = provider_health.add_argument("--group-by-policy", action="store_true")
+    _ = provider_health.add_argument("--write", action="store_true")
+    _ = provider_health.add_argument("--json", dest="json_output", action="store_true")
+
+    cache_health = sub.add_parser("cache-health", help="report prompt/cache observability and likely cache breaks")
+    _ = cache_health.add_argument("--db", required=True)
+    _ = cache_health.add_argument("--matter", required=True)
+    _ = cache_health.add_argument("--explain-breaks", action="store_true")
+    _ = cache_health.add_argument("--json", dest="json_output", action="store_true")
+
+    bad_fixtures = sub.add_parser("bad-fixtures", help="run historical bad fixture regression suite")
+    _ = bad_fixtures.add_argument("action", choices=["run"])
+    _ = bad_fixtures.add_argument("--suite", default="all")
+    _ = bad_fixtures.add_argument("--json", dest="json_output", action="store_true")
 
     inspect = sub.add_parser("inspect", help="read-only record inspection")
     _ = inspect.add_argument("--db", required=True)
@@ -635,7 +720,7 @@ def _main(args: CliArgs) -> int:
         return 0
 
     if args.command == "matter-health":
-        with repo.db_connection(args.db, read_only=True) as conn:
+        with repo.db_connection(args.db, read_only=not args.write_snapshot) as conn:
             schema_check = schema_check_json(conn, db_path=args.db)
             if not schema_check["ok"]:
                 print_json(schema_check)
@@ -645,6 +730,9 @@ def _main(args: CliArgs) -> int:
             else:
                 payload = build_matter_completion_report(conn, args.matter).as_dict()
                 payload["next_action"] = next_resume_action(conn, args.matter)
+                payload["completion_invariant"] = assert_completion_has_next_action(conn, args.matter).as_dict()
+            if args.write_snapshot:
+                payload["completion_snapshot"] = record_completion_snapshot(conn, args.matter).as_dict()
         print_json(_materialize_resume_commands(payload, args.db))
         return 0
 
@@ -655,6 +743,7 @@ def _main(args: CliArgs) -> int:
                 print_json(schema_check)
                 return 2
             payload = next_resume_action(conn, args.matter)
+            payload["completion_invariant"] = assert_completion_has_next_action(conn, args.matter).as_dict()
         print_json(_materialize_resume_commands(payload, args.db))
         return 0
 
@@ -668,7 +757,11 @@ def _main(args: CliArgs) -> int:
             if args.write and args.action in {"list", "next"}:
                 _ = ensure_repair_plans_for_matter(conn, matter_scope=args.matter)
             if args.action == "list":
-                payload = {"repair_plans": [plan.as_dict() for plan in list_repair_plans(conn, matter_scope=args.matter)]}
+                status = None if args.status in {None, "", "open"} else args.status
+                plans = [plan.as_dict() for plan in list_repair_plans(conn, matter_scope=args.matter, status=status)]
+                if args.status == "open":
+                    plans = [plan for plan in plans if str(plan.get("status")) in {"proposed", "blocked", "requires_human"}]
+                payload = {"repair_plans": plans}
             elif args.action == "next":
                 plan = next_repair_plan(conn, matter_scope=args.matter)
                 payload = {"repair_plan": plan.as_dict() if plan is not None else None}
@@ -681,7 +774,10 @@ def _main(args: CliArgs) -> int:
                 if not args.repair_plan_id:
                     raise ValueError("repairs apply requires --repair-plan-id")
                 if not args.write:
-                    raise ValueError("repairs apply requires --write")
+                    plan = get_repair_plan(conn, args.repair_plan_id)
+                    payload = {"dry_run": True, "repair_plan": plan.as_dict() if plan is not None else None}
+                    print_json(_materialize_resume_commands(payload, args.db))
+                    return 0
                 plan = record_repair_attempt(
                     conn,
                     repair_plan_id=args.repair_plan_id,
@@ -706,25 +802,43 @@ def _main(args: CliArgs) -> int:
                 if args.write:
                     _ = enqueue_open_reducer_reviews_for_matter(conn, matter_scope=args.matter)
                 payload = {"reviews": [item.as_dict() for item in list_reducer_reviews(conn, matter_scope=args.matter)]}
+            elif args.action == "next":
+                if not args.matter:
+                    raise ValueError("reducer-review next requires --matter")
+                if args.write:
+                    _ = enqueue_open_reducer_reviews_for_matter(conn, matter_scope=args.matter)
+                item = next_reducer_review(conn, matter_scope=args.matter)
+                payload = {"review": item.as_dict() if item is not None else None}
             elif args.action == "show":
-                if not args.candidate_id:
-                    raise ValueError("reducer-review show requires --candidate-id")
-                payload = {"review": review_item_summary(conn, candidate_id=args.candidate_id)}
+                candidate_id = _candidate_id_for_review_args(conn, candidate_id=args.candidate_id, review_id=args.review_id)
+                if not candidate_id:
+                    raise ValueError("reducer-review show requires --candidate-id or --review-id")
+                payload = {"review": review_item_summary(conn, candidate_id=candidate_id)}
             elif args.action == "accept":
-                if not args.candidate_id:
-                    raise ValueError("reducer-review accept requires --candidate-id")
-                if not args.lease_id:
-                    raise ValueError("reducer-review accept requires --lease-id")
-                payload = accept_reducer_review(conn, candidate_id=args.candidate_id, reducer_lease_id=args.lease_id, write=args.write)
+                candidate_id = _candidate_id_for_review_args(conn, candidate_id=args.candidate_id, review_id=args.review_id)
+                if not candidate_id:
+                    raise ValueError("reducer-review accept requires --candidate-id or --review-id")
+                lease_id = args.lease_id
+                if args.write and not lease_id:
+                    task_row = conn.execute("SELECT task_id FROM candidate_outputs WHERE candidate_id = ?", (candidate_id,)).fetchone()
+                    if task_row is None:
+                        raise ValueError(f"unknown candidate: {candidate_id}")
+                    lease_id = acquire_lease(conn, task_id=str(task_row["task_id"]), worker_id=args.reviewer, lease_role="reducer")
+                payload = accept_reducer_review(conn, candidate_id=candidate_id, reducer_lease_id=lease_id or "dry-run-review", write=args.write)
+                if args.write:
+                    _ = conn.execute("UPDATE reducer_review_queue SET reviewer = ? WHERE candidate_id = ?", (args.reviewer, candidate_id))
             else:
-                if not args.candidate_id:
-                    raise ValueError("reducer-review reject requires --candidate-id")
-                payload = reject_reducer_review(conn, candidate_id=args.candidate_id, reason=args.reason, write=args.write)
+                candidate_id = _candidate_id_for_review_args(conn, candidate_id=args.candidate_id, review_id=args.review_id)
+                if not candidate_id:
+                    raise ValueError("reducer-review reject requires --candidate-id or --review-id")
+                payload = reject_reducer_review(conn, candidate_id=candidate_id, reason=args.reason, write=args.write)
+                if args.write:
+                    _ = conn.execute("UPDATE reducer_review_queue SET reviewer = ? WHERE candidate_id = ?", (args.reviewer, candidate_id))
         print_json(_materialize_resume_commands(payload, args.db))
         return 0
 
     if args.command == "final-gate":
-        read_only = args.action != "create-missing" or not args.write
+        read_only = not args.write
         with repo.db_connection(args.db, read_only=read_only) as conn:
             schema_check = schema_check_json(conn, db_path=args.db)
             if not schema_check["ok"]:
@@ -732,12 +846,15 @@ def _main(args: CliArgs) -> int:
                 return 2
             if args.action == "readiness":
                 payload = final_gate_readiness(conn, args.matter)
+                if args.write:
+                    payload = record_final_gate_state(conn, args.matter)
             elif args.action == "repair-plan":
                 payload = {"repairs": plan_final_gate_repairs(conn, args.matter)}
             else:
                 if not args.write:
-                    raise ValueError("final-gate create-missing requires --write")
-                payload = create_missing_final_gate_work(conn, args.matter)
+                    payload = {"dry_run": True, "would_create": plan_final_gate_repairs(conn, args.matter), "readiness": final_gate_readiness(conn, args.matter)}
+                else:
+                    payload = create_missing_final_gate_work(conn, args.matter)
         print_json(_materialize_resume_commands(payload, args.db))
         return 0
 
@@ -748,7 +865,93 @@ def _main(args: CliArgs) -> int:
                 print_json(schema_check)
                 return 2
             payload = export_runbook(conn, matter_scope=args.matter, out_path=args.out, db_path=args.db)
+            if args.format == "json":
+                Path(args.out).write_text(json.dumps(payload["runbook"], indent=2, sort_keys=True, allow_nan=False), encoding="utf-8")
+                payload["format"] = "json"
+            else:
+                payload["format"] = "md"
         print_json(payload)
+        return 0
+
+    if args.command == "supervisor":
+        tick_result: dict[str, object] = {
+            "leased_tasks": [],
+            "executed_tasks": [],
+            "imported_tasks": [],
+            "reduced_candidates": [],
+            "applied_actions": [],
+            "routed_operator_signals": [],
+            "worker_errors": [],
+            "preflight_groups": [],
+            "blocked_repairs": [],
+            "terminal_blocks": [],
+        }
+        with repo.db_connection(args.db, read_only=not args.write) as conn:
+            schema_check = schema_check_json(conn, db_path=args.db)
+            if not schema_check["ok"]:
+                print_json(schema_check)
+                return 2
+            payload = evaluate_no_silent_idle(conn, args.matter, tick_result, write=args.write)
+        print_json(_materialize_resume_commands(payload, args.db))
+        return 0
+
+    if args.command == "source-trace":
+        with repo.db_connection(args.db, read_only=True) as conn:
+            schema_check = schema_check_json(conn, db_path=args.db)
+            if not schema_check["ok"]:
+                print_json(schema_check)
+                return 2
+            payload = _source_trace_payload(conn, args)
+        print_json(payload)
+        return 0
+
+    if args.command == "citation-support":
+        with repo.db_connection(args.db, read_only=not args.write) as conn:
+            schema_check = schema_check_json(conn, db_path=args.db)
+            if not schema_check["ok"]:
+                print_json(schema_check)
+                return 2
+            payload = _citation_support_payload(conn, args)
+        print_json(payload)
+        return 0
+
+    if args.command == "authority":
+        with repo.db_connection(args.db, read_only=not args.write) as conn:
+            schema_check = schema_check_json(conn, db_path=args.db)
+            if not schema_check["ok"]:
+                print_json(schema_check)
+                return 2
+            payload = _authority_verify_payload(conn, args)
+        print_json(payload)
+        return 0
+
+    if args.command == "provider-health":
+        with repo.db_connection(args.db, read_only=not args.write) as conn:
+            schema_check = schema_check_json(conn, db_path=args.db)
+            if not schema_check["ok"]:
+                print_json(schema_check)
+                return 2
+            payload = _provider_health_payload(conn, args)
+        print_json(payload)
+        return 0
+
+    if args.command == "cache-health":
+        with repo.db_connection(args.db, read_only=True) as conn:
+            schema_check = schema_check_json(conn, db_path=args.db)
+            if not schema_check["ok"]:
+                print_json(schema_check)
+                return 2
+            payload = _cache_health_payload(conn, args)
+        print_json(payload)
+        return 0
+
+    if args.command == "bad-fixtures":
+        from atticus.testing.bad_fixtures import all_bad_fixtures
+
+        fixtures = [_json_safe(fixture.__dict__) for fixture in all_bad_fixtures()]
+        if args.suite != "all":
+            fixtures = [fixture for fixture in fixtures if args.suite in {str(fixture.get("category")), str(fixture.get("fixture_id"))}]
+        print_json({"suite": args.suite, "fixture_count": len(fixtures), "fixtures": fixtures})
         return 0
 
     if args.command == "inspect":
@@ -1839,6 +2042,267 @@ def _row_to_dict(row: sqlite3.Row) -> JsonObject:
     return {str(key): _row_value(row, str(key)) for key in row.keys()}
 
 
+def _source_trace_payload(conn: sqlite3.Connection, args: CliArgs) -> dict[str, object]:
+    if args.source_id and args.quote:
+        span = trace_quote_in_source_material(conn, source_id=args.source_id, quote=args.quote)
+        return {
+            "matter_scope": args.matter,
+            "source_id": args.source_id,
+            "quote": args.quote,
+            "found": bool(span),
+            "trace": span,
+            "proof_policy": "chunk/span trace is proof metadata; original source snapshot remains the fact source",
+        }
+    if args.citation_id:
+        row = conn.execute(
+            """
+            SELECT *
+            FROM citation_support_results
+            WHERE matter_scope = ? AND citation_id = ?
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (args.matter, args.citation_id),
+        ).fetchone()
+        return {"matter_scope": args.matter, "citation_id": args.citation_id, "trace": _row_to_dict(row) if row is not None else None}
+    raise ValueError("source-trace requires --source-id and --quote, or --citation-id")
+
+
+def _citation_support_payload(conn: sqlite3.Connection, args: CliArgs) -> dict[str, object]:
+    candidate_ids: list[str] = []
+    if args.candidate_id:
+        candidate_ids = [args.candidate_id]
+    elif args.matter:
+        stage_clause = "AND t.stage = ?" if args.stage else ""
+        params: tuple[object, ...] = (args.matter, args.stage) if args.stage else (args.matter,)
+        rows = conn.execute(
+            f"""
+            SELECT co.candidate_id
+            FROM candidate_outputs co
+            JOIN tasks t ON t.task_id = co.task_id
+            WHERE t.matter_scope = ? {stage_clause}
+              AND co.status IN ('candidate', 'accepted')
+            ORDER BY co.created_at DESC
+            LIMIT 50
+            """,
+            params,
+        ).fetchall()
+        candidate_ids = [str(row["candidate_id"]) for row in rows]
+    if not candidate_ids:
+        raise ValueError("citation-support verify requires --candidate-id or --matter")
+    results = []
+    for candidate_id in candidate_ids:
+        summary = validate_candidate_citation_support(conn, candidate_id)
+        results.append({"candidate_id": candidate_id, "passed": summary.passed, "details": summary.details})
+    return {"write": args.write, "verified_count": len(results), "results": results}
+
+
+def _authority_verify_payload(conn: sqlite3.Connection, args: CliArgs) -> dict[str, object]:
+    authority_ids: list[str]
+    if args.all_open:
+        rows = conn.execute(
+            """
+            SELECT authority_id
+            FROM legal_authorities
+            WHERE matter_scope = ? AND status != 'rejected'
+            ORDER BY updated_at DESC, authority_id
+            LIMIT 50
+            """,
+            (args.matter,),
+        ).fetchall()
+        authority_ids = [str(row["authority_id"]) for row in rows]
+    elif args.authority_id:
+        authority_ids = [args.authority_id]
+    else:
+        raise ValueError("authority verify requires --authority-id or --all-open")
+    results: list[dict[str, object]] = []
+    proposition_hash = _sha256_normalized(args.proposition)
+    for authority_id in authority_ids:
+        current = conn.execute(
+            """
+            SELECT *
+            FROM authority_verifications
+            WHERE matter_scope = ? AND authority_id = ?
+              AND currentness_status = 'current'
+              AND proposition_supported = 1
+            ORDER BY checked_at DESC
+            LIMIT 1
+            """,
+            (args.matter, authority_id),
+        ).fetchone()
+        result = {
+            "authority_id": authority_id,
+            "current": current is not None,
+            "proposition_supported": current is not None,
+            "requires_human_review": current is None,
+            "proposition_hash": proposition_hash,
+        }
+        if args.write and current is None:
+            verification_id = f"authority-verification-{authority_id}-{uuid4().hex}"
+            _ = conn.execute(
+                """
+                INSERT INTO authority_verifications(
+                  authority_verification_id, matter_scope, authority_id, jurisdiction,
+                  jurisdiction_status, binding_status, currentness_status, proposition_supported,
+                  proposition_hash, verification_method, source_url_or_reference,
+                  checked_by, checked_at, details_json
+                )
+                VALUES (?, ?, ?, '', 'unchecked', '', 'unknown', 0, ?, 'operator_required', '', 'atticus-cli', ?, ?)
+                """,
+                (
+                    verification_id,
+                    args.matter,
+                    authority_id,
+                    proposition_hash,
+                    utc_now(),
+                    json.dumps({"proposition": args.proposition, "status": "human_review_required"}, sort_keys=True),
+                ),
+            )
+            result["verification_id"] = verification_id
+        results.append(result)
+    return {"write": args.write, "matter_scope": args.matter, "results": results}
+
+
+def _provider_health_payload(conn: sqlite3.Connection, args: CliArgs) -> dict[str, object]:
+    rows = conn.execute(
+        """
+        SELECT provider_policy_json, COUNT(*) AS tasks, GROUP_CONCAT(task_id) AS task_ids
+        FROM tasks
+        WHERE matter_scope = ? AND status IN ('queued', 'ready', 'blocked')
+        GROUP BY provider_policy_json
+        ORDER BY tasks DESC
+        """,
+        (args.matter,),
+    ).fetchall()
+    groups: list[dict[str, object]] = []
+    for row in rows:
+        policy_raw = str(row["provider_policy_json"] or "{}")
+        policy = _json_object_arg(policy_raw) if policy_raw.strip().startswith("{") else {}
+        fingerprint = _sha256_normalized(policy_raw)
+        provider = str(policy.get("provider") or policy.get("requested_provider") or "")
+        model = str(policy.get("model") or policy.get("requested_model") or "")
+        failure_summary = _provider_failure_summary(
+            conn,
+            matter_scope=args.matter,
+            policy_fingerprint=fingerprint,
+            task_ids=[task_id for task_id in str(row["task_ids"] or "").split(",") if task_id],
+        )
+        status = "blocked" if int(failure_summary["failure_count"]) else "not_probed"
+        group = {
+            "provider_policy_fingerprint": fingerprint,
+            "requested_provider": provider,
+            "requested_model": model,
+            "task_count": int(row["tasks"] or 0),
+            "status": status,
+            "failure_taxonomy": failure_summary["failure_taxonomy"],
+            "failure_count": failure_summary["failure_count"],
+            "latest_error_type": failure_summary["latest_error_type"],
+            "synthetic_probe_only": True,
+        }
+        if args.write:
+            _ = conn.execute(
+                """
+                INSERT INTO provider_health_checks(provider_health_check_id, matter_scope, provider_policy_fingerprint,
+                  requested_provider, requested_model, status, failure_taxonomy, details_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    f"provider-health-{uuid4().hex}",
+                    args.matter,
+                    fingerprint,
+                    provider,
+                    model,
+                    status,
+                    str(group["failure_taxonomy"]),
+                    json.dumps(group, sort_keys=True),
+                    utc_now(),
+                ),
+            )
+        groups.append(group)
+    return {"matter_scope": args.matter, "group_by_policy": args.group_by_policy, "groups": groups}
+
+
+def _provider_failure_summary(
+    conn: sqlite3.Connection,
+    *,
+    matter_scope: str,
+    policy_fingerprint: str,
+    task_ids: list[str],
+) -> dict[str, object]:
+    task_clause = ""
+    params: list[object] = [matter_scope, f"%{policy_fingerprint[:12]}%"]
+    if task_ids:
+        task_clause = f" OR (target_type = 'task' AND target_id IN ({','.join('?' for _ in task_ids)}))"
+        params.extend(task_ids)
+    rows = conn.execute(
+        f"""
+        SELECT error_type, message, payload_json, created_at
+        FROM error_logs
+        WHERE matter_scope = ? AND (message LIKE ?{task_clause})
+        ORDER BY created_at DESC
+        """,
+        tuple(params),
+    ).fetchall()
+    if not rows:
+        return {"failure_taxonomy": "no_live_probe", "failure_count": 0, "latest_error_type": ""}
+    taxonomy = _provider_failure_taxonomy(rows)
+    latest = rows[0]
+    return {
+        "failure_taxonomy": taxonomy,
+        "failure_count": len(rows),
+        "latest_error_type": str(latest["error_type"] or ""),
+    }
+
+
+def _provider_failure_taxonomy(rows: list[sqlite3.Row]) -> str:
+    for row in rows:
+        try:
+            payload = json.loads(str(row["payload_json"] or "{}"))
+        except (json.JSONDecodeError, TypeError):
+            payload = {}
+        if isinstance(payload, Mapping):
+            provider_failure_class = str(payload.get("provider_failure_class") or payload.get("failure_taxonomy") or "")
+            if provider_failure_class:
+                return provider_failure_class
+    text = " ".join(f"{row['error_type']} {row['message']}" for row in rows).lower()
+    if any(marker in text for marker in ("401", "403", "unauthorized", "auth")):
+        return "auth"
+    if any(marker in text for marker in ("402", "billing", "credit", "payment", "quota")):
+        return "billing"
+    if any(marker in text for marker in ("timeout", "network", "invalid json", "json message", "http 5")):
+        return "transient"
+    return "provider_control_plane"
+
+
+def _cache_health_payload(conn: sqlite3.Connection, args: CliArgs) -> dict[str, object]:
+    rows = conn.execute(
+        """
+        SELECT reason, possible_cache_break, COUNT(*) AS n,
+               SUM(cache_hit_tokens) AS hit_tokens,
+               SUM(cache_write_tokens) AS write_tokens,
+               SUM(cache_miss_tokens) AS miss_tokens
+        FROM prompt_cache_observations
+        WHERE matter_scope = ?
+        GROUP BY reason, possible_cache_break
+        ORDER BY n DESC
+        LIMIT 50
+        """,
+        (args.matter,),
+    ).fetchall()
+    return {
+        "matter_scope": args.matter,
+        "explain_breaks": args.explain_breaks,
+        "observations": [_row_to_dict(row) for row in rows],
+        "note": "cache health is operational telemetry only and never legal proof",
+    }
+
+
+def _sha256_normalized(value: str) -> str:
+    import hashlib
+
+    return hashlib.sha256(" ".join(value.split()).encode("utf-8")).hexdigest()
+
+
 def _count_table(conn: sqlite3.Connection, name: str) -> int:
     row = conn.execute(f"SELECT COUNT(*) AS n FROM {name}").fetchone()
     return int(str(_row_value(row, "n", 0)))
@@ -1886,6 +2350,25 @@ def _materialize_resume_commands(value: object, db_path: str) -> object:
     if isinstance(value, list | tuple):
         return [_materialize_resume_commands(item, db_path) for item in value]
     return value
+
+
+def _json_safe(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, set):
+        return sorted(str(item) for item in value)
+    if isinstance(value, list | tuple):
+        return [_json_safe(item) for item in value]
+    return value
+
+
+def _candidate_id_for_review_args(conn: sqlite3.Connection, *, candidate_id: str | None, review_id: str | None) -> str:
+    if candidate_id:
+        return candidate_id
+    if review_id:
+        item = get_reducer_review(conn, review_id)
+        return item.candidate_id if item is not None else ""
+    return ""
 
 
 def print_json(value: object) -> None:

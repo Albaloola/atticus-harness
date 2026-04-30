@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 
+from atticus.cli import main as cli_main
 from atticus.core.policies import LegalStage, TaskStatus
 from atticus.core.tasks import TaskSpec
 from atticus.db import repo
@@ -187,3 +189,21 @@ def test_final_gate_blockers_include_owner_signature_and_resume_command(tmp_path
     assert any(blocker["type"] == "reducer_review_required" and blocker["owner"] == "reducer" for blocker in blockers)
     assert any(blocker["type"] == "open_human_attention" and blocker["attention_id"] == attention_id for blocker in blockers)
     assert readiness["next_action"]["resume_command"]
+
+
+def test_final_gate_readiness_exposes_lifecycle_state_and_can_persist(tmp_path: Path, capsys) -> None:
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        _certify_all_except(conn, "final_quality_gate")
+
+    code = cli_main(["final-gate", "readiness", "--db", str(db_path), "--matter", "napier", "--state", "--write", "--json"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert code == 0
+    assert payload["state"] == "ready_for_final_task"
+    assert payload["next_action"]["type"] == "create_missing_certification_work"
+    with repo.db_connection(db_path, read_only=True) as conn:
+        row = conn.execute("SELECT state, next_action_json FROM final_gate_states WHERE matter_scope = 'napier'").fetchone()
+    assert row is not None
+    assert row["state"] == "ready_for_final_task"
+    assert json.loads(row["next_action_json"])["type"] == "create_missing_certification_work"

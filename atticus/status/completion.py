@@ -11,6 +11,9 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 import json
 import sqlite3
+from uuid import uuid4
+
+from atticus.core.events import utc_now
 
 
 FINAL_LEGAL_DRAFT_CERTIFICATIONS: tuple[str, ...] = (
@@ -82,6 +85,39 @@ class MatterCompletionReport:
         data = asdict(self)
         data["requirements"] = [requirement.as_dict() for requirement in self.requirements]
         return data
+
+
+@dataclass(frozen=True)
+class CompletionInvariantResult:
+    incomplete: bool
+    next_action_type: str
+    owner: str
+    repair_plan_id: str
+    reducer_review_id: str
+    runnable_task_id: str
+    terminal_human_attention_id: str
+    ok: bool
+    reason: str
+    next_action: dict[str, object]
+
+    def as_dict(self) -> dict[str, object]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class MatterCompletionSnapshot:
+    snapshot_id: str
+    matter_scope: str
+    done: bool
+    safe_to_finalize: bool
+    blocked: bool
+    primary_next_action: dict[str, object]
+    counts: dict[str, int]
+    report: dict[str, object]
+    created_at: str
+
+    def as_dict(self) -> dict[str, object]:
+        return asdict(self)
 
 
 def build_matter_completion_report(conn: sqlite3.Connection, matter_scope: str) -> MatterCompletionReport:
@@ -198,7 +234,115 @@ def explain_why_not_done(conn: sqlite3.Connection, matter_scope: str) -> dict[st
         **report.as_dict(),
         "why_not_done": [requirement.as_dict() for requirement in report.requirements if requirement.status != "satisfied"],
         "next_action": next_action,
+        "completion_invariant": assert_completion_has_next_action(conn, matter_scope).as_dict(),
     }
+
+
+def build_completion_snapshot(conn: sqlite3.Connection, matter_scope: str) -> MatterCompletionSnapshot:
+    report = build_matter_completion_report(conn, matter_scope)
+    next_action = next_resume_action(conn, matter_scope)
+    return MatterCompletionSnapshot(
+        snapshot_id=f"completion-snapshot-{uuid4().hex}",
+        matter_scope=matter_scope,
+        done=report.done,
+        safe_to_finalize=report.safe_to_finalize,
+        blocked=report.blocked,
+        primary_next_action=next_action,
+        counts={
+            "runnable": report.runnable_count,
+            "reducer_pending": report.reducer_pending_count,
+            "failed": report.failed_count,
+            "blocked": report.blocked_count,
+            "open_reducer_reviews": len(report.reducer_review_queue),
+            "open_human_attention": len(report.unresolved_human_attention),
+            "missing_certifications": len(report.missing_certifications),
+            "stale_artifacts": len(report.stale_artifacts),
+        },
+        report=report.as_dict(),
+        created_at=utc_now(),
+    )
+
+
+def record_completion_snapshot(conn: sqlite3.Connection, matter_scope: str) -> MatterCompletionSnapshot:
+    snapshot = build_completion_snapshot(conn, matter_scope)
+    _ = conn.execute(
+        """
+        INSERT INTO matter_completion_snapshots(
+          snapshot_id, matter_scope, done, safe_to_finalize, blocked,
+          primary_next_action_json, counts_json, report_json, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            snapshot.snapshot_id,
+            snapshot.matter_scope,
+            int(snapshot.done),
+            int(snapshot.safe_to_finalize),
+            int(snapshot.blocked),
+            _json(snapshot.primary_next_action),
+            _json(snapshot.counts),
+            _json(snapshot.report),
+            snapshot.created_at,
+        ),
+    )
+    return snapshot
+
+
+def assert_completion_has_next_action(conn: sqlite3.Connection, matter_scope: str) -> CompletionInvariantResult:
+    """Classify the mandatory next action for a matter.
+
+    This is deliberately stricter than a narrative report. If a matter is
+    incomplete, a blocker explanation only satisfies the invariant when it maps
+    to one primary action owned by a reducer, scheduler, orchestrator, provider,
+    or operator/human-review lane.
+    """
+
+    report = build_matter_completion_report(conn, matter_scope)
+    next_action = next_resume_action(conn, matter_scope)
+    action_type = str(next_action.get("type") or "")
+    owner = str(next_action.get("owner") or "")
+    if report.done:
+        return CompletionInvariantResult(
+            incomplete=False,
+            next_action_type=action_type or "complete",
+            owner=owner or "none",
+            repair_plan_id="",
+            reducer_review_id="",
+            runnable_task_id="",
+            terminal_human_attention_id="",
+            ok=True,
+            reason="matter_complete",
+            next_action=next_action,
+        )
+
+    reducer_review_id = _reducer_review_id_for_next_action(conn, matter_scope, next_action)
+    runnable_task_id = _runnable_task_id_for_next_action(conn, matter_scope, next_action)
+    repair_plan_id = _repair_plan_id_for_next_action(conn, matter_scope, next_action)
+    attention_id = str(next_action.get("attention_id") or "")
+    has_primary = bool(action_type and owner)
+    classified = action_type in {
+        "manual_reducer_review",
+        "missing_certification",
+        "blocked_task",
+        "failed_task",
+        "human_attention",
+        "supervisor_tick",
+    }
+    has_owner_proof = bool(reducer_review_id or runnable_task_id or repair_plan_id or attention_id or action_type in {"missing_certification", "supervisor_tick"})
+    ok = has_primary and classified and has_owner_proof
+    reason = "primary_next_action_classified" if ok else "incomplete_matter_without_actionable_primary_next_action"
+    return CompletionInvariantResult(
+        incomplete=True,
+        next_action_type=action_type,
+        owner=owner,
+        repair_plan_id=repair_plan_id,
+        reducer_review_id=reducer_review_id,
+        runnable_task_id=runnable_task_id,
+        terminal_human_attention_id=attention_id,
+        ok=ok,
+        reason=reason,
+        next_action=next_action,
+    )
 
 
 def next_resume_action(conn: sqlite3.Connection, matter_scope: str) -> dict[str, object]:
@@ -567,3 +711,80 @@ def _after_missing_certification(certification: str) -> str:
 
 def _row_to_dict(row: sqlite3.Row) -> dict[str, object]:
     return {key: row[key] for key in row.keys()}
+
+
+def _json(value: object) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
+def _reducer_review_id_for_next_action(conn: sqlite3.Connection, matter_scope: str, next_action: Mapping[str, object]) -> str:
+    candidate_id = str(next_action.get("candidate_id") or "")
+    if candidate_id:
+        row = conn.execute(
+            """
+            SELECT reducer_review_id
+            FROM reducer_review_queue
+            WHERE matter_scope = ? AND candidate_id = ? AND status = 'open'
+            LIMIT 1
+            """,
+            (matter_scope, candidate_id),
+        ).fetchone()
+        if row is not None:
+            return str(row["reducer_review_id"])
+    if str(next_action.get("type") or "") == "manual_reducer_review":
+        row = conn.execute(
+            """
+            SELECT reducer_review_id
+            FROM reducer_review_queue
+            WHERE matter_scope = ? AND status = 'open'
+            ORDER BY priority ASC, updated_at ASC
+            LIMIT 1
+            """,
+            (matter_scope,),
+        ).fetchone()
+        return str(row["reducer_review_id"]) if row is not None else ""
+    return ""
+
+
+def _runnable_task_id_for_next_action(conn: sqlite3.Connection, matter_scope: str, next_action: Mapping[str, object]) -> str:
+    if str(next_action.get("type") or "") != "supervisor_tick":
+        return ""
+    row = conn.execute(
+        """
+        SELECT task_id
+        FROM tasks
+        WHERE matter_scope = ? AND status IN ('queued', 'ready')
+        ORDER BY expected_value DESC, created_at ASC
+        LIMIT 1
+        """,
+        (matter_scope,),
+    ).fetchone()
+    return str(row["task_id"]) if row is not None else ""
+
+
+def _repair_plan_id_for_next_action(conn: sqlite3.Connection, matter_scope: str, next_action: Mapping[str, object]) -> str:
+    action_type = str(next_action.get("type") or "")
+    target_type = ""
+    target_id = ""
+    if action_type in {"blocked_task", "failed_task"}:
+        target_type = "task"
+        target_id = str(next_action.get("task_id") or "")
+    elif action_type == "missing_certification":
+        target_type = "matter"
+        target_id = matter_scope
+    if not target_type or not target_id:
+        return ""
+    row = conn.execute(
+        """
+        SELECT repair_plan_id
+        FROM repair_plans
+        WHERE matter_scope = ?
+          AND target_type = ?
+          AND target_id = ?
+          AND status IN ('proposed', 'blocked', 'requires_human', 'applied')
+        ORDER BY CASE status WHEN 'requires_human' THEN 0 WHEN 'blocked' THEN 1 ELSE 2 END, updated_at DESC
+        LIMIT 1
+        """,
+        (matter_scope, target_type, target_id),
+    ).fetchone()
+    return str(row["repair_plan_id"]) if row is not None else ""

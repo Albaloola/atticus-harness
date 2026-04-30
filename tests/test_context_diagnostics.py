@@ -230,6 +230,48 @@ def test_work_order_includes_context_pack_and_extracted_source_material(tmp_path
     assert content[0]["coverage_status"] == "complete"
 
 
+def test_work_order_marks_low_confidence_ocr_source_material_as_stale(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        source_id = repo.add_source(conn, matter_scope="alpha", path="/alpha/scan.pdf", sha256="d" * 64, source_type="image")
+        artifact_id = repo.add_artifact(
+            conn,
+            matter_scope="alpha",
+            path="/alpha/03-working/ocr/SRC-LOW.txt",
+            artifact_type="ocr_text",
+            title="SRC-LOW OCR text",
+            content="Low-confidence OCR source material.",
+            source_ids=[source_id],
+        )
+        _ = conn.execute(
+            """
+            INSERT INTO ocr_records(ocr_id, source_id, artifact_id, engine, coverage_status, metadata_json, created_at)
+            VALUES ('ocr-low', ?, ?, 'existing_text', 'complete', ?, '2026-04-30T00:00:00+00:00')
+            """,
+            (source_id, artifact_id, json.dumps({"source_sha256": "d" * 64, "confidence": 0.41})),
+        )
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="ctx-low-ocr",
+                title="Low OCR context",
+                task_type="citation_audit",
+                matter_scope="alpha",
+                source_dependencies=[source_id],
+            ),
+        )
+        order = build_work_order(conn, task_id="ctx-low-ocr", persist_context=False)
+
+    sections = cast(list[Mapping[str, object]], order.context_pack["sections"])
+    source_materials = next(section for section in sections if section["name"] == "source_materials")
+    materials = cast(list[Mapping[str, object]], source_materials["content"])
+
+    assert materials[0]["source_material_state"] == "stale"
+    assert materials[0]["current"] is False
+    assert materials[0]["confidence"] == 0.41
+    assert "low_confidence_ocr" in cast(list[str], materials[0]["stale_reasons"])
+
+
 def test_work_order_many_source_materials_fit_default_budget_with_truncation(tmp_path: Path):
     db_path = init_db(tmp_path)
     with repo.db_connection(db_path) as conn:
