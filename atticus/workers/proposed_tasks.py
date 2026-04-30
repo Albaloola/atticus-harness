@@ -18,6 +18,7 @@ SCOPED_SEARCH_TASK_TYPES = {
     "evidence_acquisition",
     "evidence_collection",
     "evidence_gathering",
+    "evidence_reconciliation",
     "evidence_search",
     "privacy_review",
     "privacy_redaction_review",
@@ -255,6 +256,36 @@ def _unsupported_proposed_task_reason(task_map: Mapping[object, object]) -> str:
     if "ocr" in capabilities and task_type in {"ocr_enhancement", "structured_extraction"}:
         if not any(term in text for term in ("local extraction", "local ocr", "tesseract", "atticus.local_extraction")):
             return "proposed OCR task requested an unconfigured OCR capability instead of a bounded local Atticus OCR repair"
+    external_action_task_types = {
+        "evidence_acquisition",
+        "source_acquisition",
+        "source_collection",
+        "external_request",
+        "human_review",
+        "manual_review",
+    }
+    external_action_terms = (
+        "obtain clearer copy",
+        "obtain a clearer copy",
+        "obtain certified",
+        "obtain and review",
+        "certified notice",
+        "manual verification",
+        "human verification",
+        "operator verification",
+        "human review required",
+        "request from the university",
+        "request from university",
+        "contact the university",
+        "email the university",
+        "ask the university",
+        "send email",
+        "send a letter",
+        "file with",
+        "serve on",
+    )
+    if task_type in external_action_task_types or any(term in text for term in external_action_terms):
+        return "proposed task requests an external or human-only action; Atticus must record human attention instead of executing it"
     return ""
 
 

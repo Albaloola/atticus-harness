@@ -256,7 +256,7 @@ def _proof_authority_ids(conn: sqlite3.Connection, *, matter_scope: str) -> set[
     validated = {
         str(row["authority_id"])
         for row in conn.execute(
-            "SELECT authority_id FROM legal_authorities WHERE matter_scope = ? AND status IN ('validated', 'certified')",
+            "SELECT authority_id FROM legal_authorities WHERE matter_scope = ? AND status IN ('verified', 'validated', 'certified')",
             (matter_scope,),
         ).fetchall()
     }

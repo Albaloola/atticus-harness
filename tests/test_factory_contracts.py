@@ -466,6 +466,45 @@ def test_citation_support_integrity_fails_hash_mismatch(tmp_path: Path):
     assert cast(list[object], outcome.details["hash_mismatch"])
 
 
+def test_citation_support_integrity_accepts_ordered_ellipsis_fragments(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    quote = "Student Name: MISS ANFAL ELBUSHRA ... Rent: GBP 4686.18"
+    with repo.db_connection(db_path) as conn:
+        source_id = repo.add_source(conn, path="/raw/lease.pdf", sha256="c" * 64)
+        repo.add_artifact(
+            conn,
+            path="/candidate/lease-extract.txt",
+            artifact_type="extracted_text",
+            content="Student Name: MISS ANFAL ELBUSHRA\nSome intervening terms.\nRent: GBP 4686.18",
+            source_ids=[source_id],
+        )
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="citation-support-ellipsis",
+                title="Citation support ellipsis",
+                task_type="draft",
+                stage=LegalStage.S8_DRAFT_PREPARATION,
+                source_dependencies=[source_id],
+            ),
+        )
+        packet = cited_fact_packet("citation-support-ellipsis", source_id)
+        citation = cast(list[dict[str, object]], packet["citations"])[0]
+        citation["quote"] = quote
+        citation.pop("quoted_text_hash", None)
+        candidate_id = repo.record_candidate_output(
+            conn,
+            task_id="citation-support-ellipsis",
+            lease_id=None,
+            worker_id="worker-1",
+            output_type="worker_result_packet",
+            payload=packet,
+        )
+        outcome = run_validation(conn, gate_name="citation_support_integrity", target_type="candidate", target_id=candidate_id)
+
+    assert outcome.passed
+
+
 def _authority_law_packet(task_id: str, authority_id: str) -> dict[str, object]:
     packet = valid_packet(task_id)
     packet["findings"] = [

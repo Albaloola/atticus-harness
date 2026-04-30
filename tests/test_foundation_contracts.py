@@ -269,6 +269,50 @@ def test_scheduler_rechecks_blocked_tasks_after_dependency_is_satisfied(tmp_path
     assert requeued["blocked_reasons_json"] == "[]"
 
 
+def test_scheduler_blocks_external_document_acquisition_tasks(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        source_id = repo.add_source(conn, source_id="BETA-SRC-0001", path="/raw/notice.png", sha256="1" * 64, matter_scope="beta")
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="obtain-clearer-ntq",
+                title="Obtain clearer copy of Notice to Quit from the university",
+                task_type="source_verification",
+                matter_scope="beta",
+                source_dependencies=[source_id],
+            ),
+        )
+        runnable = select_runnable_tasks(conn, capacity=1)
+        task = cast(Mapping[str, object], conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'obtain-clearer-ntq'").fetchone())
+
+    assert runnable == []
+    assert task["status"] == TaskStatus.BLOCKED
+    assert "external/human-only action blocked" in str(task["blocked_reasons_json"])
+
+
+def test_scheduler_blocks_manual_verification_tasks(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        source_id = repo.add_source(conn, source_id="BETA-SRC-0002", path="/raw/lease.pdf", sha256="2" * 64, matter_scope="beta")
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="manual-extraction-verify",
+                title="Manual verification of extraction against original PDF",
+                task_type="review",
+                matter_scope="beta",
+                source_dependencies=[source_id],
+            ),
+        )
+        runnable = select_runnable_tasks(conn, capacity=1)
+        task = cast(Mapping[str, object], conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'manual-extraction-verify'").fetchone())
+
+    assert runnable == []
+    assert task["status"] == TaskStatus.BLOCKED
+    assert "external/human-only action blocked" in str(task["blocked_reasons_json"])
+
+
 def test_scheduler_does_not_auto_requeue_terminal_runtime_blocker(tmp_path: Path):
     db_path = init_db(tmp_path)
     with repo.db_connection(db_path) as conn:

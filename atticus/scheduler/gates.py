@@ -66,6 +66,9 @@ def evaluate_task_gates(conn: sqlite3.Connection, task_row: Mapping[str, object]
     reasons: list[str] = []
     task_id = str(task_row["task_id"])
     task_matter = str(task_row["matter_scope"])
+    external_action_reason = _external_action_task_reason(task_row)
+    if external_action_reason:
+        reasons.append(external_action_reason)
     if _task_repair_limit_reached(conn, task_id=task_id):
         reasons.append("orchestrator repair limit reached: user intervention required")
     source_deps = _load_string_list(task_row, "source_dependencies_json", task_id, reasons)
@@ -145,6 +148,50 @@ def evaluate_task_gates(conn: sqlite3.Connection, task_row: Mapping[str, object]
             reasons.append(f"missing certification: {subject_type}:{subject_id}:{cert_type}")
 
     return GateResult(allowed=not reasons, reasons=reasons)
+
+
+def _external_action_task_reason(task_row: Mapping[str, object]) -> str:
+    task_type = _task_value(task_row, "task_type").casefold()
+    title = _task_value(task_row, "title").casefold()
+    instructions = _task_value(task_row, "instructions").casefold()
+    text = f"{task_type} {title} {instructions}"
+    external_action_types = {
+        "evidence_acquisition",
+        "source_acquisition",
+        "source_collection",
+        "external_request",
+        "human_review",
+        "manual_review",
+    }
+    external_phrases = (
+        "obtain clearer copy",
+        "obtain a clearer copy",
+        "obtain certified",
+        "certified notice",
+        "manual verification",
+        "human verification",
+        "operator verification",
+        "human review required",
+        "request from the university",
+        "request from university",
+        "contact the university",
+        "email the university",
+        "ask the university",
+        "send email",
+        "send a letter",
+        "file with",
+        "serve on",
+    )
+    if task_type in external_action_types or any(phrase in text for phrase in external_phrases):
+        return "external/human-only action blocked: task requests outside evidence acquisition or manual intervention; record human attention or create an internal evidence-review task instead"
+    return ""
+
+
+def _task_value(task_row: Mapping[str, object], key: str) -> str:
+    try:
+        return str(task_row[key] or "")
+    except (KeyError, IndexError):
+        return ""
 
 
 def _blocked_reasons(task_row: Mapping[str, object]) -> list[str]:

@@ -591,9 +591,30 @@ def _quote_found_in_source_material(conn: sqlite3.Connection, *, source_id: str,
     )
     for row in rows:
         normalized_content = _normalize_quote_text(str(row["content"] or "")).casefold()
-        if normalized_quote in normalized_content:
+        if _quote_matches_text(normalized_quote, normalized_content):
             return True
     return False
+
+
+def _quote_matches_text(normalized_quote: str, normalized_content: str) -> bool:
+    if normalized_quote in normalized_content:
+        return True
+    if "..." not in normalized_quote and "…" not in normalized_quote:
+        return False
+    fragments = [
+        fragment.strip()
+        for fragment in re.split(r"(?:\.{3,}|…)", normalized_quote)
+        if len(fragment.strip()) >= 3
+    ]
+    if not fragments:
+        return False
+    position = 0
+    for fragment in fragments:
+        index = normalized_content.find(fragment, position)
+        if index < 0:
+            return False
+        position = index + len(fragment)
+    return True
 
 
 def validate_privacy_redaction(conn: sqlite3.Connection, *, target_type: str, target_id: str) -> tuple[bool, dict[str, object]]:
