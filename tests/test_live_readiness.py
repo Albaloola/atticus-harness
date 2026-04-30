@@ -13,6 +13,7 @@ from typing_extensions import override
 
 import pytest
 
+from atticus.cli import main as cli_main
 from atticus.core.policies import LegalStage, TaskStatus
 from atticus.core.tasks import TaskSpec
 from atticus.db import repo
@@ -1408,6 +1409,81 @@ def test_live_readiness_report_blocks_until_foundation_and_budget_are_safe(tmp_p
     assert report["capacity_safe"] == 0
     assert report["runnable_task_ids"] == []
     assert any("missing certification" in reason for item in _object_dicts(report["blocked_tasks"]) for reason in _strings(item["reasons"]))
+
+
+def test_live_readiness_and_resume_can_filter_by_matter(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    env = {"OPENROUTER_API_KEY": "sk-test", "ATTICUS_ENABLE_LIVE_OPENROUTER": "1"}
+    policy = {"provider": "openrouter", "model": "deepseek/deepseek-v4-pro", "allow_fallback": False, "estimated_cost_usd": 0.01}
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="alpha-live-task",
+                title="Alpha live task",
+                task_type="source_inventory",
+                stage=LegalStage.S0_SOURCE_INVENTORY,
+                matter_scope="alpha",
+                provider_policy=policy,
+                status=TaskStatus.QUEUED,
+            ),
+        )
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="beta-live-task",
+                title="Beta live task",
+                task_type="source_inventory",
+                stage=LegalStage.S0_SOURCE_INVENTORY,
+                matter_scope="beta",
+                provider_policy=policy,
+                status=TaskStatus.QUEUED,
+            ),
+        )
+        report = live_readiness_report(conn, capacity=15, env=env, matter_scope="alpha")
+        plan = prepare_live_resume(
+            conn,
+            capacity=15,
+            env=env,
+            matter_scope="alpha",
+            probe_result={"ok": True, "provider": "openrouter", "model": "deepseek/deepseek-v4-pro"},
+            write_leases=True,
+            worker_prefix="alpha-live",
+        )
+        alpha = cast(Mapping[str, object], conn.execute("SELECT status FROM tasks WHERE task_id = 'alpha-live-task'").fetchone())
+        beta = cast(Mapping[str, object], conn.execute("SELECT status FROM tasks WHERE task_id = 'beta-live-task'").fetchone())
+
+    assert report["matter_scope"] == "alpha"
+    assert report["runnable_task_ids"] == ["alpha-live-task"]
+    assert plan["ready"]
+    assert plan["runnable_task_ids"] == ["alpha-live-task"]
+    assert alpha["status"] == TaskStatus.LEASED
+    assert beta["status"] == TaskStatus.QUEUED
+
+
+def test_live_resume_cli_requires_matter_when_multiple_active_matters(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
+    db_path = init_db(tmp_path)
+    policy = {"provider": "openrouter", "model": "deepseek/deepseek-v4-pro", "allow_fallback": False, "estimated_cost_usd": 0.01}
+    with repo.db_connection(db_path) as conn:
+        for matter_scope in ("alpha", "beta"):
+            repo.add_task(
+                conn,
+                TaskSpec(
+                    task_id=f"{matter_scope}-live-task",
+                    title=f"{matter_scope} live task",
+                    task_type="source_inventory",
+                    stage=LegalStage.S0_SOURCE_INVENTORY,
+                    matter_scope=matter_scope,
+                    provider_policy=policy,
+                    status=TaskStatus.QUEUED,
+                ),
+            )
+
+    exit_code = cli_main(["live-resume", "--db", str(db_path), "--capacity", "15"])
+    err = capsys.readouterr().err
+
+    assert exit_code == 2
+    assert "multiple active matters" in err
 
 
 def test_live_readiness_and_resume_reconsider_previously_blocked_safe_tasks(tmp_path: Path):

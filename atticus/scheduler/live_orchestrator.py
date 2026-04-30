@@ -19,6 +19,7 @@ def prepare_live_resume(
     *,
     capacity: int = 15,
     env: Mapping[str, str] | None = None,
+    matter_scope: str | None = None,
     probe_result: object | None = None,
     write_leases: bool = False,
     worker_prefix: str = "atticus-openrouter",
@@ -35,7 +36,7 @@ def prepare_live_resume(
     capacity_requested = max(0, capacity)
     capacity_effective = agent_capacity(capacity_requested)
     expired_leases = expire_leases(conn) if write_leases else []
-    readiness = live_readiness_report(conn, capacity=capacity_requested, env=env)
+    readiness = live_readiness_report(conn, capacity=capacity_requested, env=env, matter_scope=matter_scope)
     plan_readiness = dict(readiness)
     reasons_raw = plan_readiness.get("reasons")
     reasons = [str(reason) for reason in cast(list[object], reasons_raw)] if isinstance(reasons_raw, list) else []

@@ -522,6 +522,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     live_resume = sub.add_parser("live-resume", help="prepare safe live OpenRouter leases without launching workers")
     _ = live_resume.add_argument("--db", required=True)
+    _ = live_resume.add_argument("--matter", help="limit live resume planning/leasing to one matter")
+    _ = live_resume.add_argument("--all-matters", action="store_true", help="explicitly allow global multi-matter live resume")
     _ = live_resume.add_argument("--capacity", type=int, default=15)
     _ = live_resume.add_argument("--model", default="deepseek/deepseek-v4-pro", help="OpenRouter model to probe for live resume")
     _ = live_resume.add_argument("--probe", action="store_true", help="run a live OpenRouter probe before planning")
@@ -1539,10 +1541,12 @@ def _main(args: CliArgs) -> int:
         else:
             probe_result = {"ok": False, "reason": "live-resume requires --probe or --probe-result-json"}
         with repo.db_connection(args.db, read_only=not args.write_leases) as conn:
+            matter_scope = _resolve_scheduler_matter_scope(conn, matter_scope=args.matter, all_matters=args.all_matters)
             plan = prepare_live_resume(
                 conn,
                 capacity=args.capacity,
                 env=env,
+                matter_scope=matter_scope,
                 probe_result=probe_result,
                 write_leases=args.write_leases,
                 worker_prefix=args.worker_prefix,

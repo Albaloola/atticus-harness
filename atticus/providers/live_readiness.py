@@ -243,7 +243,13 @@ def probe_live_openrouter(
     }
 
 
-def live_readiness_report(conn: sqlite3.Connection, *, capacity: int = 15, env: Mapping[str, str] | None = None) -> dict[str, object]:
+def live_readiness_report(
+    conn: sqlite3.Connection,
+    *,
+    capacity: int = 15,
+    env: Mapping[str, str] | None = None,
+    matter_scope: str | None = None,
+) -> dict[str, object]:
     """Return a read-only live resume report without acquiring leases or launching workers."""
 
     env = env if env is not None else os.environ
@@ -255,12 +261,16 @@ def live_readiness_report(conn: sqlite3.Connection, *, capacity: int = 15, env: 
     if not live_openrouter_enabled(env=env):
         global_reasons.append(f"{LIVE_ENABLE_ENV}=1 is required to enable live OpenRouter work")
 
+    matter_clause = "AND matter_scope = ?" if matter_scope else ""
+    params: tuple[object, ...] = (matter_scope,) if matter_scope else ()
     task_rows = cast(Iterable[sqlite3.Row], conn.execute(
-        """
+        f"""
         SELECT * FROM tasks
         WHERE status IN ('queued', 'ready', 'blocked')
+        {matter_clause}
         ORDER BY expected_value DESC, created_at ASC
-        """
+        """,
+        params,
     ))
     for task in task_rows:
         task_id = _row_str(task, "task_id")
@@ -328,6 +338,7 @@ def live_readiness_report(conn: sqlite3.Connection, *, capacity: int = 15, env: 
         "capacity_requested": capacity_requested,
         "capacity_effective": capacity_effective,
         "capacity_limit": MAX_PARALLEL_AGENT_CAPACITY,
+        "matter_scope": matter_scope or "",
         "capacity_safe": len(runnable),
         "runnable_task_ids": [item["task_id"] for item in runnable],
         "runnable_tasks": runnable,
