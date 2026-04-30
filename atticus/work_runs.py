@@ -48,6 +48,13 @@ def record_work_step(
         output_fingerprint=output_fingerprint,
         metadata=dict(metadata or {}),
     )
+    _record_work_step_source_links(
+        conn,
+        work_run_step_id=step_id,
+        task_id=task_id,
+        artifact_id=artifact_id,
+        context_pack_id=context_pack_id,
+    )
     row = conn.execute("SELECT * FROM work_run_steps WHERE work_run_step_id = ?", (step_id,)).fetchone()
     return _step_row(row)
 
@@ -187,3 +194,114 @@ def _step_row(row: sqlite3.Row) -> dict[str, object]:
     result = {key: row[key] for key in row.keys()}
     result["metadata"] = json.loads(str(result.pop("metadata_json") or "{}"))
     return result
+
+
+def _record_work_step_source_links(
+    conn: sqlite3.Connection,
+    *,
+    work_run_step_id: str,
+    task_id: str | None,
+    artifact_id: str | None,
+    context_pack_id: str | None,
+) -> None:
+    row = conn.execute("SELECT matter_scope FROM work_run_steps WHERE work_run_step_id = ?", (work_run_step_id,)).fetchone()
+    if row is None:
+        return
+    matter_scope = str(row["matter_scope"])
+    links: dict[str, dict[str, str]] = {}
+    if context_pack_id:
+        for source in conn.execute(
+            """
+            SELECT source_id, source_snapshot_id, source_sha256, extraction_artifact_id, extraction_text_sha256
+            FROM context_pack_sources
+            WHERE context_pack_id = ?
+            """,
+            (context_pack_id,),
+        ).fetchall():
+            links[str(source["source_id"])] = {
+                "source_snapshot_id": str(source["source_snapshot_id"] or ""),
+                "source_sha256": str(source["source_sha256"] or ""),
+                "extraction_artifact_id": str(source["extraction_artifact_id"] or ""),
+                "extraction_text_sha256": str(source["extraction_text_sha256"] or ""),
+            }
+    if artifact_id:
+        for source in conn.execute(
+            """
+            SELECT s.source_id, s.sha256, a.artifact_id, a.sha256 AS artifact_sha256
+            FROM artifact_sources ars
+            JOIN sources s ON s.source_id = ars.source_id
+            LEFT JOIN artifacts a ON a.artifact_id = ars.artifact_id
+            WHERE ars.artifact_id = ?
+            """,
+            (artifact_id,),
+        ).fetchall():
+            links.setdefault(
+                str(source["source_id"]),
+                {
+                    "source_snapshot_id": _current_source_snapshot_id(conn, source_id=str(source["source_id"]), source_sha256=str(source["sha256"] or "")),
+                    "source_sha256": str(source["sha256"] or ""),
+                    "extraction_artifact_id": str(source["artifact_id"] or ""),
+                    "extraction_text_sha256": str(source["artifact_sha256"] or ""),
+                },
+            )
+    if task_id:
+        task = conn.execute("SELECT source_dependencies_json FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
+        if task is not None:
+            for source_id in _source_ids_from_task(str(task["source_dependencies_json"] or "[]")):
+                source = conn.execute("SELECT sha256 FROM sources WHERE source_id = ?", (source_id,)).fetchone()
+                if source is None:
+                    continue
+                links.setdefault(
+                    source_id,
+                    {
+                        "source_snapshot_id": _current_source_snapshot_id(conn, source_id=source_id, source_sha256=str(source["sha256"] or "")),
+                        "source_sha256": str(source["sha256"] or ""),
+                        "extraction_artifact_id": "",
+                        "extraction_text_sha256": "",
+                    },
+                )
+    _ = conn.execute("DELETE FROM work_step_source_links WHERE work_run_step_id = ?", (work_run_step_id,))
+    for source_id, link in links.items():
+        _ = conn.execute(
+            """
+            INSERT OR REPLACE INTO work_step_source_links(
+              work_run_step_id, matter_scope, source_id, source_snapshot_id, source_sha256,
+              extraction_artifact_id, extraction_text_sha256, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                work_run_step_id,
+                matter_scope,
+                source_id,
+                link["source_snapshot_id"],
+                link["source_sha256"],
+                link["extraction_artifact_id"],
+                link["extraction_text_sha256"],
+                repo.utc_now(),
+            ),
+        )
+
+
+def _source_ids_from_task(raw_json: str) -> list[str]:
+    try:
+        value = json.loads(raw_json)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if str(item)]
+
+
+def _current_source_snapshot_id(conn: sqlite3.Connection, *, source_id: str, source_sha256: str) -> str:
+    row = conn.execute(
+        """
+        SELECT snapshot_id
+        FROM source_snapshots
+        WHERE source_id = ? AND sha256 = ?
+        ORDER BY created_at DESC, snapshot_id DESC
+        LIMIT 1
+        """,
+        (source_id, source_sha256),
+    ).fetchone()
+    return str(row["snapshot_id"]) if row is not None else ""

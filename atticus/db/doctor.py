@@ -270,6 +270,29 @@ REQUIRED_COLUMNS: dict[str, frozenset[str]] = {
             "created_at",
         }
     ),
+    "work_step_source_links": frozenset(
+        {
+            "work_run_step_id",
+            "matter_scope",
+            "source_id",
+            "source_snapshot_id",
+            "source_sha256",
+            "extraction_artifact_id",
+            "extraction_text_sha256",
+            "created_at",
+        }
+    ),
+    "context_pack_sources": frozenset(
+        {
+            "context_pack_id",
+            "matter_scope",
+            "source_id",
+            "source_snapshot_id",
+            "source_sha256",
+            "extraction_artifact_id",
+            "extraction_text_sha256",
+        }
+    ),
 }
 
 

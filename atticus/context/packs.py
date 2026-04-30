@@ -190,7 +190,70 @@ def build_context_pack(
             estimated_tokens=estimated,
             sections=sections,
         )
+        _record_context_pack_sources(
+            conn,
+            context_pack_id=context_pack_id,
+            matter_scope=matter_scope,
+            sources=sources,
+            source_materials=source_materials,
+        )
     return pack
+
+
+def _record_context_pack_sources(
+    conn: sqlite3.Connection,
+    *,
+    context_pack_id: str,
+    matter_scope: str,
+    sources: list[dict[str, object]],
+    source_materials: list[dict[str, object]],
+) -> None:
+    material_by_source = {str(material.get("source_id") or ""): material for material in source_materials}
+    _ = conn.execute("DELETE FROM context_pack_sources WHERE context_pack_id = ?", (context_pack_id,))
+    for source in sources:
+        source_id = str(source["source_id"])
+        material = material_by_source.get(source_id, {})
+        extraction_artifact_id = str(material.get("artifact_id") or "")
+        extraction_text_sha = _context_material_text_sha(material)
+        _ = conn.execute(
+            """
+            INSERT OR REPLACE INTO context_pack_sources(
+              context_pack_id, matter_scope, source_id, source_snapshot_id,
+              source_sha256, extraction_artifact_id, extraction_text_sha256
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                context_pack_id,
+                matter_scope,
+                source_id,
+                _current_source_snapshot_id(conn, source_id=source_id, source_sha256=str(source.get("sha256") or "")),
+                str(source.get("sha256") or ""),
+                extraction_artifact_id,
+                extraction_text_sha,
+            ),
+        )
+
+
+def _context_material_text_sha(material: Mapping[str, object]) -> str:
+    provenance = material.get("extraction_provenance")
+    if isinstance(provenance, Mapping):
+        return str(provenance.get("text_sha256") or "")
+    return str(material.get("sha256") or "")
+
+
+def _current_source_snapshot_id(conn: sqlite3.Connection, *, source_id: str, source_sha256: str) -> str:
+    row = conn.execute(
+        """
+        SELECT snapshot_id
+        FROM source_snapshots
+        WHERE source_id = ? AND sha256 = ?
+        ORDER BY created_at DESC, snapshot_id DESC
+        LIMIT 1
+        """,
+        (source_id, source_sha256),
+    ).fetchone()
+    return str(row["snapshot_id"]) if row is not None else ""
 
 
 def _load_memory_index(conn: sqlite3.Connection, *, matter_scope: str) -> list[dict[str, object]]:

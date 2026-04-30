@@ -8,7 +8,7 @@ the legal operating model.
 
 from __future__ import annotations
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 DDL = """
 PRAGMA foreign_keys = ON;
@@ -711,6 +711,29 @@ CREATE TABLE IF NOT EXISTS work_reuse_records (
   created_at TEXT NOT NULL
 ) STRICT;
 
+CREATE TABLE IF NOT EXISTS work_step_source_links (
+  work_run_step_id TEXT NOT NULL,
+  matter_scope TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  source_snapshot_id TEXT,
+  source_sha256 TEXT NOT NULL,
+  extraction_artifact_id TEXT,
+  extraction_text_sha256 TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(work_run_step_id, source_id)
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS context_pack_sources (
+  context_pack_id TEXT NOT NULL,
+  matter_scope TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  source_snapshot_id TEXT,
+  source_sha256 TEXT NOT NULL,
+  extraction_artifact_id TEXT,
+  extraction_text_sha256 TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY(context_pack_id, source_id)
+) STRICT;
+
 CREATE TABLE IF NOT EXISTS budgets (
   budget_id TEXT PRIMARY KEY,
   scope_type TEXT NOT NULL,
@@ -840,6 +863,8 @@ CREATE INDEX IF NOT EXISTS work_runs_scope_idx ON work_runs(matter_scope, status
 CREATE UNIQUE INDEX IF NOT EXISTS work_runs_resume_token_uq ON work_runs(resume_token);
 CREATE INDEX IF NOT EXISTS work_run_steps_scope_idx ON work_run_steps(matter_scope, status, created_at);
 CREATE INDEX IF NOT EXISTS work_reuse_records_scope_idx ON work_reuse_records(matter_scope, valid, created_at);
+CREATE INDEX IF NOT EXISTS work_step_source_links_source_idx ON work_step_source_links(matter_scope, source_id);
+CREATE INDEX IF NOT EXISTS context_pack_sources_source_idx ON context_pack_sources(matter_scope, source_id);
 CREATE INDEX IF NOT EXISTS budget_entries_budget_idx ON budget_entries(budget_id, created_at);
 CREATE INDEX IF NOT EXISTS error_logs_target_idx ON error_logs(target_type, target_id, created_at);
 CREATE INDEX IF NOT EXISTS error_logs_signature_idx ON error_logs(error_signature, created_at);

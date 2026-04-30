@@ -60,6 +60,9 @@ def validate_reusable_step(conn: sqlite3.Connection, step_id: str) -> ReuseDecis
         context_decision = _context_pack_reuse_decision(conn, matter_scope=matter_scope, context_pack_id=context_pack_id)
         if not context_decision.reusable:
             return context_decision
+    source_link_decision = _work_step_source_link_decision(conn, matter_scope=matter_scope, step_id=step_id)
+    if not source_link_decision.reusable:
+        return source_link_decision
     provider_run_id = _optional_id(step, "provider_run_id")
     if provider_run_id:
         provider_decision = _same_matter_target_decision(conn, matter_scope=matter_scope, target_type="provider_run", target_id=provider_run_id)
@@ -258,6 +261,11 @@ def _context_pack_reuse_decision(conn: sqlite3.Connection, *, matter_scope: str,
         return ReuseDecision(False, "linked context_pack missing", orientation_allowed=False)
     if str(row["matter_scope"]) != matter_scope:
         return ReuseDecision(False, "linked context_pack belongs to another matter", orientation_allowed=False)
+    link_decision = _context_pack_source_link_decision(conn, matter_scope=matter_scope, context_pack_id=context_pack_id)
+    if not link_decision.reusable:
+        return link_decision
+    if link_decision.reason != "no context pack source links recorded":
+        return link_decision
     try:
         sections_raw = json.loads(str(row["sections_json"] or "[]"))
         if not isinstance(sections_raw, list):
@@ -297,6 +305,64 @@ def _context_pack_reuse_decision(conn: sqlite3.Connection, *, matter_scope: str,
     if problems:
         return ReuseDecision(False, "; ".join(problems), orientation_allowed=False)
     return ReuseDecision(True, "context pack source material is same-matter and current", trusted_as_proof=False)
+
+
+def _context_pack_source_link_decision(conn: sqlite3.Connection, *, matter_scope: str, context_pack_id: str) -> ReuseDecision:
+    rows = conn.execute(
+        """
+        SELECT source_id, source_sha256, extraction_artifact_id, extraction_text_sha256
+        FROM context_pack_sources
+        WHERE context_pack_id = ?
+        """,
+        (context_pack_id,),
+    ).fetchall()
+    if not rows:
+        return ReuseDecision(True, "no context pack source links recorded", trusted_as_proof=False)
+    return _source_link_rows_decision(conn, matter_scope=matter_scope, rows=rows, label="context pack")
+
+
+def _work_step_source_link_decision(conn: sqlite3.Connection, *, matter_scope: str, step_id: str) -> ReuseDecision:
+    rows = conn.execute(
+        """
+        SELECT source_id, source_sha256, extraction_artifact_id, extraction_text_sha256
+        FROM work_step_source_links
+        WHERE work_run_step_id = ?
+        """,
+        (step_id,),
+    ).fetchall()
+    if not rows:
+        return ReuseDecision(True, "no work step source links recorded", trusted_as_proof=False)
+    return _source_link_rows_decision(conn, matter_scope=matter_scope, rows=rows, label="work step")
+
+
+def _source_link_rows_decision(conn: sqlite3.Connection, *, matter_scope: str, rows: list[sqlite3.Row], label: str) -> ReuseDecision:
+    problems: list[str] = []
+    for row in rows:
+        source_id = str(row["source_id"])
+        source = conn.execute("SELECT matter_scope, sha256, stale FROM sources WHERE source_id = ?", (source_id,)).fetchone()
+        if source is None:
+            problems.append(f"source missing: {source_id}")
+            continue
+        if str(source["matter_scope"]) != matter_scope:
+            problems.append(f"source cross-matter: {source_id}")
+        if int(source["stale"] or 0):
+            problems.append(f"source stale: {source_id}")
+        if str(row["source_sha256"] or "") and str(row["source_sha256"] or "") != str(source["sha256"] or ""):
+            problems.append(f"source hash changed: {source_id}")
+        artifact_id = str(row["extraction_artifact_id"] or "")
+        if artifact_id:
+            artifact = conn.execute("SELECT matter_scope, sha256, stale FROM artifacts WHERE artifact_id = ?", (artifact_id,)).fetchone()
+            if artifact is None:
+                problems.append(f"extraction artifact missing: {artifact_id}")
+            elif str(artifact["matter_scope"]) != matter_scope:
+                problems.append(f"extraction artifact cross-matter: {artifact_id}")
+            elif int(artifact["stale"] or 0):
+                problems.append(f"extraction artifact stale: {artifact_id}")
+            elif str(row["extraction_text_sha256"] or "") and str(row["extraction_text_sha256"] or "") != str(artifact["sha256"] or ""):
+                problems.append(f"extraction artifact hash changed: {artifact_id}")
+    if problems:
+        return ReuseDecision(False, f"{label} source links stale: " + "; ".join(problems), orientation_allowed=False)
+    return ReuseDecision(True, f"{label} source links current", trusted_as_proof=False)
 
 
 def _source_materials_from_sections(sections: list[object]) -> list[Mapping[str, object]]:
