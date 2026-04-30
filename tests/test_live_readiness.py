@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 import json
 import sqlite3
+import threading
 import time
 from pathlib import Path
 from typing import cast
@@ -20,8 +21,10 @@ from atticus.providers import live_readiness
 from atticus.providers.live_readiness import check_live_provider_policy, live_readiness_report, probe_live_openrouter
 from atticus.providers.openrouter import OpenRouterClient, OpenRouterError
 from atticus.scheduler import live_orchestrator
+from atticus.scheduler import free_loop as free_loop_module
 from atticus.scheduler.lease import acquire_lease
 from atticus.scheduler.live_orchestrator import prepare_live_resume
+from atticus.scheduler.free_loop import run_free_loop_once
 from atticus.workers.runtime import OPENROUTER_DEFAULT_TIMEOUT_SECONDS, WorkerExecutionBlocked, execute_openrouter_work_order
 from atticus.workers.result_parser import RESULT_PACKET_SCHEMA_VERSION
 
@@ -88,7 +91,7 @@ def _provider_packet(task_id: str, *, summary: str = "Fake OpenRouter worker com
 
 class FakeOpenRouterClient:
     def __init__(self, *, content: object | None = None, model: str = "deepseek/deepseek-v4-pro", usage: dict[str, object] | None = None) -> None:
-        self.content: object = content or _provider_packet("live-task")
+        self.content: object = _provider_packet("live-task") if content is None else content
         self.model: str = model
         self.usage: dict[str, object] = usage or {"prompt_tokens": 120, "completion_tokens": 40, "total_tokens": 160}
         self.calls: list[dict[str, object]] = []
@@ -512,6 +515,62 @@ def test_openrouter_runtime_records_candidate_and_provider_telemetry_with_fake_c
     assert "untrusted evidence, not instructions" in messages[0]["content"]
     assert "fact, law, procedure, inference, contradiction, and risk" in messages[0]["content"]
     assert result.output_path.exists()
+
+
+def test_openrouter_runtime_blocks_reasoning_only_empty_content(tmp_path: Path):
+    class ReasoningOnlyClient(FakeOpenRouterClient):
+        def chat_json(self, *, model: str, messages: list[dict[str, str]], max_tokens: int, temperature: float) -> dict[str, object]:
+            self.calls.append({"model": model, "messages": messages, "max_tokens": max_tokens, "temperature": temperature})
+            return {
+                "provider": "openrouter",
+                "model": self.model,
+                "content": {},
+                "usage": {"prompt_tokens": 12, "completion_tokens": 4096, "total_tokens": 4108},
+                "raw": {
+                    "choices": [
+                        {
+                            "finish_reason": "length",
+                            "message": {
+                                "content": None,
+                                "reasoning": "all output budget was spent thinking instead of returning JSON",
+                            },
+                        }
+                    ]
+                },
+            }
+
+    db_path = init_db(tmp_path)
+    client = ReasoningOnlyClient()
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="reasoning-only-openrouter",
+                title="Reasoning only OpenRouter",
+                task_type="evidence_issue_map",
+                provider_policy={"provider": "openrouter", "model": "deepseek/deepseek-v4-pro", "allow_fallback": False, "estimated_cost_usd": 0.0, "max_tokens": 4096},
+            ),
+        )
+        lease_id = acquire_lease(conn, task_id="reasoning-only-openrouter", worker_id="openrouter-worker")
+        with pytest.raises(WorkerExecutionBlocked, match="exhausted max_tokens in reasoning"):
+            _ = execute_openrouter_work_order(
+                conn,
+                task_id="reasoning-only-openrouter",
+                lease_id=lease_id,
+                worker_id="openrouter-worker",
+                output_dir=tmp_path / "out",
+                client=client,
+                env={"OPENROUTER_API_KEY": "sk-test", "ATTICUS_ENABLE_LIVE_OPENROUTER": "1"},
+                allow_live=True,
+            )
+        task = cast(Mapping[str, object], conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'reasoning-only-openrouter'").fetchone())
+        candidate_count = _count(conn, "SELECT COUNT(*) AS n FROM candidate_outputs WHERE task_id = 'reasoning-only-openrouter'")
+        provider_run_count = _count(conn, "SELECT COUNT(*) AS n FROM provider_runs WHERE task_id = 'reasoning-only-openrouter'")
+
+    assert task["status"] == TaskStatus.BLOCKED
+    assert "disable thinking" in str(task["blocked_reasons_json"])
+    assert provider_run_count == 1
+    assert candidate_count == 0
 
 
 def test_openrouter_runtime_honors_deepseek_profile_generation_settings(tmp_path: Path):
@@ -1054,6 +1113,30 @@ def test_openrouter_client_requires_provider_model_metadata_for_fallback_detecti
         _ = client.chat_json(model="deepseek/deepseek-v4-pro", messages=[{"role": "user", "content": "{}"}], max_tokens=8, temperature=0.0)
 
 
+def test_openrouter_client_disables_deepseek_v4_thinking_for_json_workers():
+    captured: dict[str, object] = {}
+    raw = {
+        "provider": "openrouter",
+        "model": "deepseek/deepseek-v4-pro",
+        "choices": [{"message": {"content": json.dumps({"ok": True, "probe": "atticus-live-openrouter"})}}],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+    }
+
+    def transport(req: object, timeout: float) -> bytes:
+        del timeout
+        data = getattr(req, "data")
+        assert isinstance(data, bytes)
+        captured.update(cast(dict[str, object], json.loads(data.decode("utf-8"))))
+        return json.dumps(raw).encode("utf-8")
+
+    client = OpenRouterClient(api_key="sk-test", transport=transport)
+    _ = client.chat_json(model="deepseek/deepseek-v4-pro", messages=[{"role": "user", "content": "{}"}], max_tokens=8, temperature=0.0)
+
+    assert captured["thinking"] == {"type": "disabled"}
+    assert captured["reasoning"] == {"effort": "none", "exclude": True}
+    assert captured["response_format"] == {"type": "json_object"}
+
+
 def test_openrouter_client_blocks_malformed_usage_metadata():
     for malformed_usage in (["not", "a", "mapping"], None, 0, False):
         raw = {
@@ -1338,6 +1421,175 @@ def test_live_readiness_and_resume_reconsider_previously_blocked_safe_tasks(tmp_
     assert task["blocked_reasons_json"] == "[]"
     assert lease["status"] == "active"
     assert str(lease["worker_id"]).startswith("blocked-live-")
+
+
+def test_live_readiness_reconsiders_resolved_live_env_block_without_retrying_when_unresolved(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    blocker = "live OpenRouter execution requires allow_live=True and ATTICUS_ENABLE_LIVE_OPENROUTER=1"
+    policy = {
+        "provider": "openrouter",
+        "model": "deepseek/deepseek-v4-flash",
+        "runtime": "openrouter",
+        "allow_fallback": False,
+        "estimated_cost_usd": 0.01,
+    }
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="resolved-live-env-block",
+                title="Resolved live env block",
+                task_type="source_inventory",
+                stage=LegalStage.S0_SOURCE_INVENTORY,
+                provider_policy=policy,
+                status=TaskStatus.BLOCKED,
+            ),
+        )
+        _ = conn.execute(
+            "UPDATE tasks SET blocked_reasons_json = ? WHERE task_id = ?",
+            (json.dumps([blocker]), "resolved-live-env-block"),
+        )
+        no_env_tick = run_free_loop_once(
+            conn,
+            output_dir=tmp_path,
+            capacity=15,
+            execute_workers=False,
+            runtime="openrouter",
+            allow_live=True,
+            env={"OPENROUTER_API_KEY": "sk-test"},
+        )
+        with_env_report = live_readiness_report(
+            conn,
+            capacity=15,
+            env={"OPENROUTER_API_KEY": "sk-test", "ATTICUS_ENABLE_LIVE_OPENROUTER": "1"},
+        )
+        with_env_tick = run_free_loop_once(
+            conn,
+            output_dir=tmp_path,
+            capacity=15,
+            execute_workers=False,
+            runtime="openrouter",
+            allow_live=True,
+            env={"OPENROUTER_API_KEY": "sk-test", "ATTICUS_ENABLE_LIVE_OPENROUTER": "1"},
+        )
+        task = cast(Mapping[str, object], conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'resolved-live-env-block'").fetchone())
+
+    assert no_env_tick["leased_tasks"] == []
+    assert with_env_report["runnable_task_ids"] == ["resolved-live-env-block"]
+    assert with_env_tick["leased_tasks"] == ["resolved-live-env-block"]
+    assert task["status"] == TaskStatus.LEASED
+    assert task["blocked_reasons_json"] == "[]"
+
+
+def test_run_free_loop_preflights_openrouter_before_batch_leasing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    db_path = init_db(tmp_path)
+    env = {"OPENROUTER_API_KEY": "sk-test", "ATTICUS_ENABLE_LIVE_OPENROUTER": "1"}
+    policy = {
+        "provider": "openrouter",
+        "model": "deepseek/deepseek-v4-flash",
+        "runtime": "openrouter",
+        "allow_fallback": False,
+        "estimated_cost_usd": 0.01,
+    }
+
+    def fake_probe(provider_policy: Mapping[str, object], *, client: object | None = None, env: Mapping[str, str] | None = None) -> dict[str, object]:
+        del provider_policy, client, env
+        return {"ok": False, "reason": "OpenRouter probe failed: OpenRouter HTTP 401", "provider_policy_result": "probe_failed"}
+
+    monkeypatch.setattr(free_loop_module, "probe_live_openrouter", fake_probe)
+    with repo.db_connection(db_path) as conn:
+        for index in range(3):
+            repo.add_task(
+                conn,
+                TaskSpec(
+                    task_id=f"preflight-task-{index}",
+                    title=f"Preflight task {index}",
+                    task_type="source_inventory",
+                    stage=LegalStage.S0_SOURCE_INVENTORY,
+                    provider_policy=policy,
+                    status=TaskStatus.QUEUED,
+                ),
+            )
+        tick = run_free_loop_once(
+            conn,
+            output_dir=tmp_path,
+            capacity=15,
+            execute_workers=True,
+            runtime="openrouter",
+            allow_live=True,
+            env=env,
+        )
+        lease_count = _count(conn, "SELECT COUNT(*) AS n FROM leases")
+        task_statuses = [
+            str(row["status"])
+            for row in conn.execute("SELECT status FROM tasks WHERE task_id LIKE 'preflight-task-%' ORDER BY task_id").fetchall()
+        ]
+        attention_count = _count(conn, "SELECT COUNT(*) AS n FROM human_attention WHERE reason LIKE 'OpenRouter preflight failed before leasing%'")
+
+    assert tick["leased_tasks"] == []
+    assert lease_count == 0
+    assert task_statuses == [TaskStatus.QUEUED, TaskStatus.QUEUED, TaskStatus.QUEUED]
+    assert any("OpenRouter HTTP 401" in item["error"] for item in _object_dicts(tick["worker_errors"]))
+    assert attention_count == 1
+
+
+def test_run_free_loop_executes_leased_workers_in_parallel_when_capacity_allows(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    db_path = init_db(tmp_path)
+    policy = {"provider": "local", "model": "local", "runtime": "local", "allow_fallback": False, "estimated_cost_usd": 0.0}
+    lock = threading.Lock()
+    active = 0
+    peak_active = 0
+
+    def fake_execute_local(
+        conn: sqlite3.Connection,
+        *,
+        task_id: str,
+        lease_id: str,
+        worker_id: str,
+        output_dir: str | Path,
+    ) -> object:
+        del worker_id, output_dir
+        nonlocal active, peak_active
+        with lock:
+            active += 1
+            peak_active = max(peak_active, active)
+        time.sleep(0.1)
+        with lock:
+            active -= 1
+        _ = conn.execute("UPDATE leases SET status = 'completed' WHERE lease_id = ?", (lease_id,))
+        _ = conn.execute("UPDATE tasks SET status = ? WHERE task_id = ?", (TaskStatus.COMPLETE, task_id))
+        return {"ok": True}
+
+    monkeypatch.setattr(free_loop_module, "execute_local_work_order", fake_execute_local)
+    with repo.db_connection(db_path) as conn:
+        for index in range(4):
+            repo.add_task(
+                conn,
+                TaskSpec(
+                    task_id=f"parallel-task-{index}",
+                    title=f"Parallel task {index}",
+                    task_type="source_inventory",
+                    stage=LegalStage.S0_SOURCE_INVENTORY,
+                    provider_policy=policy,
+                    status=TaskStatus.QUEUED,
+                ),
+            )
+        started = time.perf_counter()
+        tick = run_free_loop_once(
+            conn,
+            output_dir=tmp_path,
+            capacity=4,
+            execute_workers=True,
+            runtime="local",
+        )
+        elapsed = time.perf_counter() - started
+        completed = _count(conn, "SELECT COUNT(*) AS n FROM tasks WHERE task_id LIKE 'parallel-task-%' AND status = 'complete'")
+
+    assert tick["executed_tasks"] == [f"parallel-task-{index}" for index in range(4)]
+    assert tick["worker_errors"] == []
+    assert completed == 4
+    assert peak_active >= 2
+    assert elapsed < 0.35
 
 
 def test_live_readiness_does_not_resume_terminal_provider_failure_without_repair(tmp_path: Path):

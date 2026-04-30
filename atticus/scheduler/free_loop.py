@@ -8,6 +8,9 @@ bounded by caller-provided ticks so tests and operators can run it safely.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import json
+import os
 from pathlib import Path
 import sqlite3
 from typing import cast
@@ -15,10 +18,13 @@ from uuid import uuid4
 
 from atticus.core.events import utc_now
 from atticus.core.policies import LegalStage, TaskStatus
+from atticus.agents.decomposition import compact_decomposed_parent_if_needed, decompose_broad_task_if_needed
 from atticus.agents.orchestrator import report_worker_failure_to_orchestrator
 from atticus.db import repo
+from atticus.providers.live_readiness import probe_live_openrouter
 from atticus.reducer.reducer import ReductionBlocked, reduce_candidate
 from atticus.scheduler.capacity import MAX_PARALLEL_AGENT_CAPACITY, agent_capacity
+from atticus.scheduler.gates import LIVE_CODEX_NOT_ENABLED_BLOCKER, LIVE_OPENROUTER_NOT_ENABLED_BLOCKER
 from atticus.scheduler.lease import LeaseError, acquire_lease
 from atticus.scheduler.planner import select_runnable_tasks
 from atticus.workers.proposed_tasks import import_proposed_tasks_from_candidate
@@ -103,67 +109,60 @@ def run_free_loop_once(
             )
             _commit_progress(conn)
 
-    runnable = select_runnable_tasks(conn, capacity=capacity_effective)
+    runnable = select_runnable_tasks(
+        conn,
+        capacity=capacity_effective,
+        resolved_transient_blocker_prefixes=_resolved_transient_blocker_prefixes(
+            runtime=runtime,
+            allow_live=allow_live,
+            env=env,
+        ),
+    )
     leased_tasks: list[str] = []
     executed_tasks: list[str] = []
     worker_errors: list[dict[str, str]] = []
+    preflight_error = (
+        _openrouter_preflight_error(
+            conn,
+            runnable_tasks=runnable,
+            env=env,
+            allow_live=allow_live,
+        )
+        if execute_workers and runtime == "openrouter"
+        else None
+    )
+    if preflight_error is not None:
+        worker_errors.append(preflight_error)
+        runnable = []
 
+    leased_workers: list[dict[str, str]] = []
     for index, task in enumerate(runnable, start=1):
         task_id = str(task["task_id"])
         worker_id = f"atticus-free-{index:02d}-{_short_id()}"
-        lease_id: str | None = None
         try:
             lease_id = acquire_lease(conn, task_id=task_id, worker_id=worker_id, seconds=900, dry_run=False)
             leased_tasks.append(task_id)
-            _commit_progress(conn)
-            if not execute_workers:
-                continue
-            if runtime == "local":
-                _ = execute_local_work_order(conn, task_id=task_id, lease_id=lease_id, worker_id=worker_id, output_dir=output_dir)
-            elif runtime == "openrouter":
-                _ = execute_openrouter_work_order(
-                    conn,
-                    task_id=task_id,
-                    lease_id=lease_id,
-                    worker_id=worker_id,
-                    output_dir=output_dir,
-                    env=env,
-                    allow_live=allow_live,
-                )
-            elif runtime == "codex":
-                _ = execute_codex_work_order(
-                    conn,
-                    task_id=task_id,
-                    lease_id=lease_id,
-                    worker_id=worker_id,
-                    output_dir=output_dir,
-                    env=env,
-                    allow_live=allow_live,
-                    timeout_seconds=codex_timeout_seconds,
-                    reasoning_effort=codex_reasoning_effort,
-                )
-            else:
-                raise ValueError(f"unsupported free loop runtime: {runtime}")
-            executed_tasks.append(task_id)
+            leased_workers.append({"task_id": task_id, "worker_id": worker_id, "lease_id": lease_id, "index": str(index)})
             _commit_progress(conn)
         except Exception as exc:
-            if lease_id is not None:
-                _fail_active_lease_after_worker_exception(conn, lease_id=lease_id, task_id=task_id, reason=str(exc))
             worker_errors.append({"task_id": task_id, "error": str(exc)})
-            if "worker output quarantined" not in str(exc).lower():
-                _ = repo.record_human_attention(
-                    conn,
-                    target_type="task",
-                    target_id=task_id,
-                    severity="blocker",
-                    reason=f"free loop worker failed: {exc}",
-                )
-            _report_failure_without_masking(
-                conn,
-                task_id=task_id,
-                reason=f"free loop worker failed: {exc}",
-            )
+            _report_failure_without_masking(conn, task_id=task_id, reason=f"free loop lease failed: {exc}")
             _commit_progress(conn)
+
+    if execute_workers and leased_workers:
+        results = _execute_leased_workers(
+            conn,
+            leased_workers=leased_workers,
+            output_dir=output_dir,
+            runtime=runtime,
+            allow_live=allow_live,
+            env=env,
+            codex_timeout_seconds=codex_timeout_seconds,
+            codex_reasoning_effort=codex_reasoning_effort,
+        )
+        executed_tasks.extend(task_id for task_id in results["executed_tasks"])
+        worker_errors.extend(results["worker_errors"])
+        _commit_progress(conn)
 
     ok = not reduction_errors and not worker_errors
     _ = repo.emit_event(
@@ -239,6 +238,236 @@ def run_free_loop(
             break
     ok = all(bool(tick.get("ok")) for tick in ticks)
     return {"ok": ok, "ticks": ticks, "tick_count": len(ticks)}
+
+
+def _resolved_transient_blocker_prefixes(
+    *,
+    runtime: str,
+    allow_live: bool,
+    env: Mapping[str, str] | None,
+) -> tuple[str, ...]:
+    if not allow_live:
+        return ()
+    effective_env = env if env is not None else os.environ
+    if runtime == "openrouter" and effective_env.get("ATTICUS_ENABLE_LIVE_OPENROUTER") == "1":
+        return (LIVE_OPENROUTER_NOT_ENABLED_BLOCKER,)
+    if runtime == "codex" and effective_env.get("ATTICUS_ENABLE_LIVE_CODEX") == "1":
+        return (LIVE_CODEX_NOT_ENABLED_BLOCKER,)
+    return ()
+
+
+def _openrouter_preflight_error(
+    conn: sqlite3.Connection,
+    *,
+    runnable_tasks: list[Mapping[str, object]],
+    env: Mapping[str, str] | None,
+    allow_live: bool,
+) -> dict[str, str] | None:
+    if not runnable_tasks:
+        return None
+    first_task = runnable_tasks[0]
+    task_id = str(first_task["task_id"])
+    matter_scope = str(first_task["matter_scope"])
+    try:
+        provider_policy = json.loads(str(first_task["provider_policy_json"] or "{}"))
+    except (json.JSONDecodeError, TypeError) as exc:
+        return {"task_id": task_id, "error": f"OpenRouter preflight could not parse provider policy: {exc}"}
+    if not isinstance(provider_policy, Mapping):
+        return {"task_id": task_id, "error": "OpenRouter preflight provider policy must be a JSON object"}
+    probe = probe_live_openrouter(provider_policy, env=env if env is not None else os.environ)
+    if probe.get("ok") is True:
+        return None
+    reason = str(probe.get("reason") or "OpenRouter preflight failed")
+    message = f"OpenRouter preflight failed before leasing {len(runnable_tasks)} runnable task(s): {reason}"
+    _ = repo.record_human_attention_once(
+        conn,
+        target_type="task",
+        target_id=task_id,
+        severity="blocker",
+        reason=message,
+        matter_scope=matter_scope,
+    )
+    _ = repo.emit_event(
+        conn,
+        "provider.preflight_failed",
+        matter_scope=matter_scope,
+        payload={
+            "task_id": task_id,
+            "runnable_task_count": len(runnable_tasks),
+            "provider": "openrouter",
+            "reason": reason,
+            "provider_policy_result": str(probe.get("provider_policy_result") or ""),
+        },
+    )
+    _report_failure_without_masking(conn, task_id=task_id, reason=message)
+    return {"task_id": task_id, "error": message}
+
+
+def _execute_leased_workers(
+    conn: sqlite3.Connection,
+    *,
+    leased_workers: list[dict[str, str]],
+    output_dir: str | Path,
+    runtime: str,
+    allow_live: bool,
+    env: Mapping[str, str] | None,
+    codex_timeout_seconds: float,
+    codex_reasoning_effort: str,
+) -> dict[str, list[dict[str, str]] | list[str]]:
+    db_path = _db_path_for_connection(conn)
+    if db_path is None or len(leased_workers) <= 1:
+        results = [
+            _execute_one_leased_worker(
+                conn,
+                worker=worker,
+                output_dir=output_dir,
+                runtime=runtime,
+                allow_live=allow_live,
+                env=env,
+                codex_timeout_seconds=codex_timeout_seconds,
+                codex_reasoning_effort=codex_reasoning_effort,
+            )
+            for worker in leased_workers
+        ]
+    else:
+        results = []
+        max_workers = min(len(leased_workers), MAX_PARALLEL_AGENT_CAPACITY)
+        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="atticus-worker") as executor:
+            futures = [
+                executor.submit(
+                    _execute_one_leased_worker_for_db_path,
+                    db_path,
+                    worker=worker,
+                    output_dir=output_dir,
+                    runtime=runtime,
+                    allow_live=allow_live,
+                    env=dict(env) if env is not None else None,
+                    codex_timeout_seconds=codex_timeout_seconds,
+                    codex_reasoning_effort=codex_reasoning_effort,
+                )
+                for worker in leased_workers
+            ]
+            for future in as_completed(futures):
+                results.append(future.result())
+    ordered = sorted(results, key=lambda result: int(result["index"]))
+    return {
+        "executed_tasks": [result["task_id"] for result in ordered if result.get("executed") == "true"],
+        "worker_errors": [
+            {"task_id": result["task_id"], "error": result["error"]}
+            for result in ordered
+            if result.get("error")
+        ],
+    }
+
+
+def _execute_one_leased_worker_for_db_path(
+    db_path: str,
+    *,
+    worker: dict[str, str],
+    output_dir: str | Path,
+    runtime: str,
+    allow_live: bool,
+    env: Mapping[str, str] | None,
+    codex_timeout_seconds: float,
+    codex_reasoning_effort: str,
+) -> dict[str, str]:
+    # The supervisor connection already applied additive schema before leasing.
+    # Re-running schema DDL in every worker keeps SQLite write transactions open
+    # across the whole provider call, which serializes the batch and defeats the
+    # capacity window.
+    with repo.db_connection(db_path, apply_schema=False) as worker_conn:
+        return _execute_one_leased_worker(
+            worker_conn,
+            worker=worker,
+            output_dir=output_dir,
+            runtime=runtime,
+            allow_live=allow_live,
+            env=env,
+            codex_timeout_seconds=codex_timeout_seconds,
+            codex_reasoning_effort=codex_reasoning_effort,
+        )
+
+
+def _execute_one_leased_worker(
+    conn: sqlite3.Connection,
+    *,
+    worker: dict[str, str],
+    output_dir: str | Path,
+    runtime: str,
+    allow_live: bool,
+    env: Mapping[str, str] | None,
+    codex_timeout_seconds: float,
+    codex_reasoning_effort: str,
+) -> dict[str, str]:
+    task_id = worker["task_id"]
+    lease_id = worker["lease_id"]
+    worker_id = worker["worker_id"]
+    try:
+        if runtime == "local":
+            _ = execute_local_work_order(conn, task_id=task_id, lease_id=lease_id, worker_id=worker_id, output_dir=output_dir)
+        elif runtime == "openrouter":
+            _ = execute_openrouter_work_order(
+                conn,
+                task_id=task_id,
+                lease_id=lease_id,
+                worker_id=worker_id,
+                output_dir=output_dir,
+                env=env,
+                allow_live=allow_live,
+            )
+        elif runtime == "codex":
+            _ = execute_codex_work_order(
+                conn,
+                task_id=task_id,
+                lease_id=lease_id,
+                worker_id=worker_id,
+                output_dir=output_dir,
+                env=env,
+                allow_live=allow_live,
+                timeout_seconds=codex_timeout_seconds,
+                reasoning_effort=codex_reasoning_effort,
+            )
+        else:
+            raise ValueError(f"unsupported free loop runtime: {runtime}")
+        return {"index": worker["index"], "task_id": task_id, "executed": "true", "error": ""}
+    except Exception as exc:
+        _handle_worker_exception(conn, task_id=task_id, lease_id=lease_id, reason=str(exc))
+        return {"index": worker["index"], "task_id": task_id, "executed": "false", "error": str(exc)}
+
+
+def _handle_worker_exception(conn: sqlite3.Connection, *, task_id: str, lease_id: str, reason: str) -> None:
+    _fail_active_lease_after_worker_exception(conn, lease_id=lease_id, task_id=task_id, reason=reason)
+    decomposition = decompose_broad_task_if_needed(
+        conn,
+        task_id=task_id,
+        reason=reason,
+        write=True,
+    )
+    compact_retry = (
+        compact_decomposed_parent_if_needed(conn, task_id=task_id, reason=reason, write=True)
+        if not decomposition.get("applied")
+        else {"applied": False}
+    )
+    if "worker output quarantined" not in reason.lower():
+        _ = repo.record_human_attention(
+            conn,
+            target_type="task",
+            target_id=task_id,
+            severity="blocker",
+            reason="free loop worker failed: "
+            + reason
+            + ("; task decomposed into bounded source bundles" if decomposition.get("applied") else "")
+            + ("; decomposed parent compacted for bounded synthesis retry" if compact_retry.get("applied") else ""),
+        )
+    _report_failure_without_masking(conn, task_id=task_id, reason=f"free loop worker failed: {reason}")
+
+
+def _db_path_for_connection(conn: sqlite3.Connection) -> str | None:
+    row = conn.execute("PRAGMA database_list").fetchone()
+    if row is None:
+        return None
+    path = str(row["file"] or "")
+    return path or None
 
 
 def _fail_active_lease_after_worker_exception(conn: sqlite3.Connection, *, lease_id: str, task_id: str, reason: str) -> None:

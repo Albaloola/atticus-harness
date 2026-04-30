@@ -216,7 +216,9 @@ def test_work_order_many_source_materials_fit_default_budget_with_truncation(tmp
     context_pack = cast(Mapping[str, object], order.as_dict()["context_pack"])
     sections = cast(list[Mapping[str, object]], context_pack["sections"])
     materials_section = next(section for section in sections if section["name"] == "source_materials")
+    citation_targets = next(section for section in sections if section["name"] == "citation_targets")
     materials = cast(list[Mapping[str, object]], materials_section["content"])
+    citation_content = cast(Mapping[str, object], citation_targets["content"])
 
     estimated_tokens = int(str(context_pack["estimated_tokens"]))
     token_budget = int(str(context_pack["token_budget"]))
@@ -224,3 +226,81 @@ def test_work_order_many_source_materials_fit_default_budget_with_truncation(tmp
     assert len(materials) == 60
     assert any(bool(material["excerpt_truncated"]) for material in materials)
     assert "Source 0000 beginning" in str(materials[0]["content_excerpt"])
+    assert len(str(materials[0]["content_excerpt"])) < 250
+    assert citation_content["source_material_citation_mode"] == "compact: each source_material row carries its own citation_target; cite that source_id"
+    assert citation_content["source_material_citation_targets"] == []
+
+
+def test_broad_context_compacts_long_dependency_lists_and_model_routing(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        source_ids: list[str] = []
+        for index in range(45):
+            source_id = repo.add_source(
+                conn,
+                source_id=f"BULK-SRC-{index:04d}",
+                matter_scope="alpha",
+                path=f"/alpha/bulk-source-{index:04d}.pdf",
+                sha256=f"{index:064x}"[-64:],
+            )
+            source_ids.append(source_id)
+            artifact_id = repo.add_artifact(
+                conn,
+                matter_scope="alpha",
+                path=f"/alpha/extracted/BULK-SRC-{index:04d}.txt",
+                artifact_type="extracted_text",
+                title=f"BULK-SRC-{index:04d} extracted",
+                content=f"Bulk source {index:04d} begins. " + ("important extracted detail " * 120),
+                source_ids=[source_id],
+            )
+            _ = conn.execute(
+                """
+                INSERT INTO extraction_records(extraction_id, source_id, artifact_id, method,
+                  coverage_status, confidence, metadata_json, created_at)
+                VALUES (?, ?, ?, 'pdf_text', 'complete', 0.9, '{}', '2026-04-29T00:00:00+00:00')
+                """,
+                (f"bulk-extract-{index:04d}", source_id, artifact_id),
+            )
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="ctx-bulk-evidence-map",
+                title="Bulk evidence map",
+                task_type="evidence_issue_map",
+                matter_scope="alpha",
+                source_dependencies=source_ids,
+                instructions=(
+                    "Task deliverable. Bounded source dependencies: "
+                    + ", ".join(source_ids)
+                    + ". Bounded artifact dependencies: none supplied. Task dependencies: none. Validation gates: stale_dependency."
+                ),
+                provider_policy={
+                    "provider": "openrouter",
+                    "model": "deepseek/deepseek-v4-pro",
+                    "runtime": "openrouter",
+                    "allow_fallback": False,
+                    "estimated_cost_usd": 0.03,
+                    "model_routing": {"large": "routing object should not enter context"},
+                    "model_decision": {
+                        "decision_tier": "pro_orchestrator",
+                        "decision_reason": "large evidence volume",
+                        "required_human_review": True,
+                    },
+                },
+            ),
+        )
+        order = build_work_order(conn, task_id="ctx-bulk-evidence-map", persist_context=False)
+
+    payload = order.as_dict()
+    serialized = json.dumps(payload, sort_keys=True)
+    context_pack = cast(Mapping[str, object], payload["context_pack"])
+    sections = cast(list[Mapping[str, object]], context_pack["sections"])
+    task_contract = next(section for section in sections if section["name"] == "task_contract")
+    task_content = cast(Mapping[str, object], task_contract["content"])
+    provider_policy = cast(Mapping[str, object], task_content["provider_policy"])
+
+    assert "BULK-SRC-0001, BULK-SRC-0002" not in str(task_content["instructions"])
+    assert "45 matter-scoped source IDs" in str(task_content["instructions"])
+    assert "model_routing" not in provider_policy
+    assert "routing object should not enter context" not in serialized
+    assert int(str(context_pack["estimated_tokens"])) < 24_000

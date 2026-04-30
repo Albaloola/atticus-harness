@@ -8,6 +8,7 @@ import hashlib
 import json
 from typing import Literal, cast
 
+from atticus.context.token_budget import estimate_text_tokens
 from atticus.workers.result_parser import RESULT_PACKET_SCHEMA_VERSION, result_packet_json_schema
 
 CacheScope = Literal["global", "matter", "task", "volatile"]
@@ -62,7 +63,7 @@ class ContextSection:
 
 
 def estimate_tokens(text: str) -> int:
-    return max(1, (len(text) + 3) // 4)
+    return max(1, estimate_text_tokens(text))
 
 
 def build_default_sections(
@@ -80,8 +81,8 @@ def build_default_sections(
     source_material_artifact_ids = tuple(str(row["artifact_id"]) for row in source_materials if row.get("artifact_id"))
     artifact_ids = tuple(str(row["artifact_id"]) for row in artifacts)
     compact_source_material_citations = len(source_materials) > 25
-    source_material_citation_targets = tuple(
-        _source_material_citation_target(row, artifact_ids=artifact_ids, compact=compact_source_material_citations)
+    source_material_citation_targets = () if compact_source_material_citations else tuple(
+        _source_material_citation_target(row, artifact_ids=artifact_ids, compact=False)
         for row in source_materials
         if row.get("source_id") and row.get("artifact_id")
     )
@@ -135,13 +136,13 @@ def build_default_sections(
             content={
                 "task_id": task["task_id"],
                 "title": task["title"],
-                "instructions": str(task.get("instructions") or ""),
+                "instructions": context_task_instructions(task),
                 "stage": task["stage"],
                 "task_type": task["task_type"],
                 "matter_scope": task["matter_scope"],
                 "validation_gates": validation_gates,
                 "required_certifications": required_certifications,
-                "provider_policy": _json_object(task.get("provider_policy_json")),
+                "provider_policy": context_provider_policy(_json_object(task.get("provider_policy_json"))),
             },
         ),
         ContextSection(
@@ -179,6 +180,12 @@ def build_default_sections(
                     "cite target_type='source' with the source_id. Do not cite the extraction artifact_id unless it is "
                     "also listed in allowed_artifact_targets."
                 ),
+                "source_material_citation_mode": (
+                    "compact: each source_material row carries its own citation_target; cite that source_id"
+                    if compact_source_material_citations
+                    else "expanded"
+                ),
+                "source_material_count": len(source_materials),
                 "source_material_citation_targets": list(source_material_citation_targets),
             },
         ),
@@ -251,7 +258,9 @@ def build_default_sections(
                 "citation_rule": (
                     "Every factual, legal, procedural, contradiction, or risk assertion must cite an allowed "
                     "context target or be explicitly uncertain. Source_material text must be cited through its "
-                    "source_id, not through a generated extraction artifact, unless that artifact is explicitly allowed."
+                    "source_id, not through a generated extraction artifact, unless that artifact is explicitly allowed. "
+                    "Omit quoted_text_hash unless Atticus provides the exact SHA-256 hex digest; never invent or "
+                    "placeholder a hash."
                 ),
                 "canonical_write_rule": "Workers may not write canonical state.",
                 "finding_taxonomy": [
@@ -308,6 +317,92 @@ def _json_object(raw: object) -> dict[str, object]:
     if not isinstance(value, Mapping):
         return {}
     return {str(key): item for key, item in cast(Mapping[object, object], value).items()}
+
+
+def context_task_instructions(task: Mapping[str, object]) -> str:
+    instructions = str(_mapping_get(task, "instructions") or "")
+    source_ids = [str(item) for item in _json_list(_mapping_get(task, "source_dependencies_json"))]
+    artifact_ids = [str(item) for item in _json_list(_mapping_get(task, "artifact_dependencies_json"))]
+    task_dependency_ids = [str(item) for item in _json_list(_mapping_get(task, "task_dependencies_json"))]
+    if len(source_ids) > 25:
+        instructions = _replace_instruction_segment(
+            instructions,
+            start="Bounded source dependencies:",
+            end="Bounded artifact dependencies:",
+            replacement=(
+                f"Bounded source dependencies: {len(source_ids)} matter-scoped source IDs are listed in "
+                "source_dependencies_json and evidence_manifest; do not use sources outside that list. "
+            ),
+        )
+        instructions = (
+            instructions
+            + " Broad task output cap: at most 4 findings, 6 citations, 3 uncertainties, 3 risk_flags, "
+            "3 redaction_flags, and 1 proposed_task. Keep summary under 600 characters, citation quotes under "
+            "180 characters, finding text under 280 characters, and proposed_artifacts[0].content under 1200 "
+            "characters. Propose follow-up tasks for expansion instead of overfilling this packet."
+        )
+    if len(artifact_ids) > 25:
+        instructions = _replace_instruction_segment(
+            instructions,
+            start="Bounded artifact dependencies:",
+            end="Task dependencies:",
+            replacement=(
+                f"Bounded artifact dependencies: {len(artifact_ids)} matter-scoped artifact IDs are listed in "
+                "artifact_dependencies_json and artifact_bundle; do not use artifacts outside that list. "
+            ),
+        )
+    if len(task_dependency_ids) > 25:
+        instructions = _replace_instruction_segment(
+            instructions,
+            start="Task dependencies:",
+            end="Validation gates:",
+            replacement=(
+                f"Task dependencies: {len(task_dependency_ids)} task IDs are listed in task_dependencies_json; "
+                "use only completed dependency artifacts provided in context. "
+            ),
+        )
+    return instructions
+
+
+def _mapping_get(mapping: Mapping[str, object], key: str, default: object = "") -> object:
+    if hasattr(mapping, "keys") and key in mapping.keys():
+        return mapping[key]
+    return default
+
+
+def _replace_instruction_segment(instructions: str, *, start: str, end: str, replacement: str) -> str:
+    start_index = instructions.find(start)
+    if start_index < 0:
+        return instructions
+    end_index = instructions.find(end, start_index + len(start))
+    if end_index < 0:
+        return instructions[:start_index] + replacement
+    return instructions[:start_index] + replacement + instructions[end_index:]
+
+
+def context_provider_policy(provider_policy: Mapping[str, object]) -> dict[str, object]:
+    decision = provider_policy.get("model_decision")
+    decision_map = decision if isinstance(decision, Mapping) else {}
+    result = {
+        "provider": provider_policy.get("provider", ""),
+        "model": provider_policy.get("model", ""),
+        "runtime": provider_policy.get("runtime", ""),
+        "allow_fallback": bool(provider_policy.get("allow_fallback") or False),
+        "model_profile_id": provider_policy.get("model_profile_id", ""),
+        "estimated_cost_usd": provider_policy.get("estimated_cost_usd", 0.0),
+        "max_tokens": provider_policy.get("max_tokens", ""),
+        "timeout_seconds": provider_policy.get("timeout_seconds", ""),
+        "model_decision_reason": provider_policy.get("model_decision_reason", ""),
+        "model_decision": {
+            "decision_tier": decision_map.get("decision_tier", ""),
+            "decision_reason": decision_map.get("decision_reason", ""),
+            "required_human_review": bool(decision_map.get("required_human_review") or False),
+        },
+    }
+    resolved_model = provider_policy.get("resolved_model")
+    if isinstance(resolved_model, Mapping):
+        result["resolved_model"] = {str(key): value for key, value in cast(Mapping[object, object], resolved_model).items()}
+    return result
 
 
 def _source_material_citation_target(row: Mapping[str, object], *, artifact_ids: tuple[str, ...], compact: bool) -> dict[str, object]:

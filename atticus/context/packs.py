@@ -10,6 +10,7 @@ import json
 import sqlite3
 
 from atticus.context.sections import build_default_sections, estimate_tokens as _estimate_tokens
+from atticus.context.token_budget import source_token_estimates_by_id
 from atticus.db import repo
 from atticus.skills.registry import skills_for_task
 
@@ -18,6 +19,15 @@ SOURCE_MATERIAL_TOTAL_CHARS = 20_000
 SOURCE_MATERIAL_MIN_CHARS = 250
 SOURCE_MATERIAL_MAX_CHARS = 6_000
 SOURCE_MATERIAL_COMPACT_THRESHOLD = 25
+BULK_SOURCE_CONTEXT_THRESHOLD = 40
+BULK_SOURCE_MATERIAL_TOTAL_CHARS = 8_000
+BULK_SOURCE_MATERIAL_MIN_CHARS = 80
+BULK_SOURCE_CONTEXT_TASK_TYPES = {
+    "evidence_issue_map",
+    "evidence_organization_plan",
+    "production_mapping",
+    "source_inventory",
+}
 
 
 @dataclass(frozen=True)
@@ -87,7 +97,11 @@ def build_context_pack(
         matter_scope=matter_scope,
         source_ids=source_ids,
         allowed_artifact_ids=explicit_artifact_ids,
+        task_type=str(task["task_type"]),
     )
+    compact_source_context = _compact_source_context(task_type=str(task["task_type"]), source_count=len(source_ids))
+    token_estimates = source_token_estimates_by_id(conn, matter_scope=matter_scope, source_ids=source_ids)
+    source_manifest = _source_manifest_rows(sources, compact=compact_source_context, token_estimates=token_estimates)
     artifact_ids = _dedupe_ordered(
         [
             *explicit_artifact_ids,
@@ -147,13 +161,13 @@ def build_context_pack(
     ]
     tools = _available_tool_context()
     sections = [
-        section.as_dict()
-        for section in build_default_sections(
-            task=dict(task),
-            sources=sources,
-            source_materials=source_materials,
-            artifacts=artifacts,
-            authorities=authorities,
+            section.as_dict()
+            for section in build_default_sections(
+                task=dict(task),
+                sources=source_manifest,
+                source_materials=source_materials,
+                artifacts=artifacts,
+                authorities=authorities,
             memory_index=memory_index,
             skills=skills,
             tools=tools,
@@ -243,6 +257,7 @@ def _load_source_materials(
     matter_scope: str,
     source_ids: list[str],
     allowed_artifact_ids: list[str],
+    task_type: str = "",
 ) -> list[dict[str, object]]:
     if not source_ids:
         return []
@@ -306,13 +321,15 @@ def _load_source_materials(
         """,
         (matter_scope, matter_scope, *source_ids),
     ).fetchall()
+    compact = _compact_source_context(task_type=task_type, source_count=len(source_ids))
+    total_chars = BULK_SOURCE_MATERIAL_TOTAL_CHARS if compact else SOURCE_MATERIAL_TOTAL_CHARS
+    min_chars = BULK_SOURCE_MATERIAL_MIN_CHARS if compact else SOURCE_MATERIAL_MIN_CHARS
     per_source_chars = max(
-        SOURCE_MATERIAL_MIN_CHARS,
-        min(SOURCE_MATERIAL_MAX_CHARS, SOURCE_MATERIAL_TOTAL_CHARS // max(1, len(source_ids))),
+        min_chars,
+        min(SOURCE_MATERIAL_MAX_CHARS, total_chars // max(1, len(source_ids))),
     )
     seen: set[str] = set()
     allowed_artifacts = set(allowed_artifact_ids)
-    compact = len(source_ids) > SOURCE_MATERIAL_COMPACT_THRESHOLD
     materials: list[dict[str, object]] = []
     for row in rows:
         source_id = str(row["source_id"])
@@ -332,15 +349,9 @@ def _load_source_materials(
                     "citation_target": {"target_type": "source", "target_id": source_id},
                     "artifact_citation_allowed": artifact_id in allowed_artifacts,
                     "artifact_type": row["artifact_type"],
-                    "extraction_id": row["extraction_id"] or "",
-                    "extraction_method": row["extraction_method"] or "artifact_text",
-                    "coverage_status": row["extraction_coverage_status"] or "available",
+                    "coverage_status": row["extraction_coverage_status"] or row["ocr_coverage_status"] or "available",
                     "confidence": row["confidence"] if row["confidence"] is not None else None,
-                    "ocr_id": row["ocr_id"] or "",
-                    "ocr_engine": row["ocr_engine"] or "",
                     "content_excerpt": excerpt,
-                    "excerpt_chars": len(excerpt),
-                    "available_chars": len(content),
                     "excerpt_truncated": len(content) > len(excerpt),
                 }
             )
@@ -389,6 +400,39 @@ def _load_source_materials(
                 }
             )
     return materials
+
+
+def _compact_source_context(*, task_type: str, source_count: int) -> bool:
+    if task_type.endswith("_bundle"):
+        return True
+    return source_count > SOURCE_MATERIAL_COMPACT_THRESHOLD or (
+        source_count >= BULK_SOURCE_CONTEXT_THRESHOLD and task_type in BULK_SOURCE_CONTEXT_TASK_TYPES
+    )
+
+
+def _source_manifest_rows(sources: list[dict[str, object]], *, compact: bool, token_estimates: Mapping[str, object]) -> list[dict[str, object]]:
+    if not compact:
+        return [
+            {
+                **source,
+                "estimated_source_tokens": getattr(token_estimates.get(str(source["source_id"])), "estimated_tokens", 0),
+                "token_estimation_basis": getattr(token_estimates.get(str(source["source_id"])), "estimation_basis", "missing_estimate"),
+            }
+            for source in sources
+        ]
+    return [
+        {
+            "source_id": source["source_id"],
+            "path": source["path"],
+            "source_type": source["source_type"],
+            "trust_status": source["trust_status"],
+            "stale": source["stale"],
+            "sha256_prefix": str(source["sha256"])[:16],
+            "estimated_source_tokens": getattr(token_estimates.get(str(source["source_id"])), "estimated_tokens", 0),
+            "token_estimation_basis": getattr(token_estimates.get(str(source["source_id"])), "estimation_basis", "missing_estimate"),
+        }
+        for source in sources
+    ]
 
 
 def _json_object(text: str) -> dict[str, object]:

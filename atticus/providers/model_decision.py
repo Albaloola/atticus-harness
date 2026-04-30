@@ -233,9 +233,11 @@ def _resolve_route_target(
     task_type: str = "",
     task_id: str = "",
 ) -> str:
+    base_task_type = _base_task_type(task_type)
     for routes, key in (
         (policy.task_ids, task_id),
         (policy.task_types, task_type),
+        (policy.task_types, base_task_type),
         (policy.layers, layer),
         (policy.stages, stage),
     ):
@@ -257,11 +259,12 @@ def _explicit_profile_block_reason(profile: ModelProfileLike | None) -> str:
 
 
 def _pro_required(decision_input: ModelDecisionInput) -> bool:
+    task_type = _base_task_type(decision_input.task_type)
     if decision_input.layer in {"orchestrator", "reducer", "hostile_review", "verifier"}:
         return True
     if decision_input.stage in HIGH_RISK_STAGES:
         return True
-    if decision_input.task_type in PRO_TASK_TYPES:
+    if task_type in PRO_TASK_TYPES:
         return True
     if decision_input.authority_required or decision_input.hostile_review_required:
         return True
@@ -278,6 +281,12 @@ def _pro_required(decision_input: ModelDecisionInput) -> bool:
     if any(capability in {"authority_mapping", "hostile_review", "final_quality_gate", "legal_reasoning"} for capability in decision_input.requested_capabilities):
         return True
     return False
+
+
+def _base_task_type(task_type: str) -> str:
+    if task_type.endswith("_bundle"):
+        return task_type[: -len("_bundle")]
+    return task_type
 
 
 def _profile_for_tier(policy: ModelRoutingPolicyLike, tier: str) -> ModelProfileLike | None:

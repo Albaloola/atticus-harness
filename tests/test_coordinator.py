@@ -146,6 +146,39 @@ def test_coordinator_write_assigns_smart_model_decisions(tmp_path: Path, capsys)
     assert hostile_decision["decision_tier"] == "pro_orchestrator"
 
 
+def test_coordinator_bounds_broad_evidence_map_generation(tmp_path: Path, capsys):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        for index in range(30):
+            _ = repo.add_source(conn, matter_scope="alpha", path=f"/alpha/source-{index:04d}.pdf", sha256=f"{index:064x}"[-64:])
+
+    assert (
+        cli_main(
+            [
+                "coordinator",
+                "create-tasks",
+                "--db",
+                str(db_path),
+                "--matter",
+                "alpha",
+                "--goal",
+                "Draft a formal complaint",
+                "--write",
+            ]
+        )
+        == 0
+    )
+    _ = capsys.readouterr()
+
+    with repo.db_connection(db_path) as conn:
+        row = conn.execute(
+            "SELECT provider_policy_json FROM tasks WHERE matter_scope = 'alpha' AND task_type = 'evidence_issue_map'"
+        ).fetchone()
+    assert row is not None
+    policy = cast(Mapping[str, object], json.loads(str(row["provider_policy_json"])))
+    assert policy["max_tokens"] == 4096
+
+
 def test_coordinator_draft_goal_binds_existing_sources_and_prerequisite_stages(tmp_path: Path, capsys):
     db_path = init_db(tmp_path)
     with repo.db_connection(db_path) as conn:

@@ -115,6 +115,7 @@ class OpenRouterClient:
             "max_tokens": max_tokens,
             "response_format": {"type": "json_object"},
         }
+        payload.update(_provider_specific_json_controls(model))
         req = urllib_request.Request(
             f"{self.base_url}/chat/completions",
             data=json.dumps(payload).encode("utf-8"),
@@ -184,3 +185,16 @@ class OpenRouterClient:
 
 def _mapping_to_dict(value: Mapping[object, object]) -> dict[str, object]:
     return {str(key): item for key, item in value.items()}
+
+
+def _provider_specific_json_controls(model: str) -> dict[str, object]:
+    """Return provider-specific controls needed for reliable JSON workers."""
+
+    # DeepSeek V4 models default to thinking mode. For Atticus worker JSON,
+    # thinking can consume the entire output budget and leave content empty.
+    if model in {"deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-pro"}:
+        return {
+            "thinking": {"type": "disabled"},
+            "reasoning": {"effort": "none", "exclude": True},
+        }
+    return {}

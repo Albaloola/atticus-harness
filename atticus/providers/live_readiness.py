@@ -23,7 +23,7 @@ from atticus.providers.openrouter_failover import (
 from atticus.providers.openrouter import OpenRouterClient, OpenRouterError, validate_usage_tokens
 from atticus.providers.policy import ProviderActual, ProviderDecision, ProviderRequest, check_provider_policy
 from atticus.scheduler.capacity import MAX_PARALLEL_AGENT_CAPACITY, agent_capacity
-from atticus.scheduler.gates import blocked_task_auto_requeue_allowed, evaluate_task_gates
+from atticus.scheduler.gates import LIVE_OPENROUTER_NOT_ENABLED_BLOCKER, blocked_task_auto_requeue_allowed, evaluate_task_gates
 
 LIVE_ENABLE_ENV = "ATTICUS_ENABLE_LIVE_OPENROUTER"
 OPENROUTER_KEY_ENV = "OPENROUTER_API_KEY"
@@ -295,7 +295,15 @@ def live_readiness_report(conn: sqlite3.Connection, *, capacity: int = 15, env: 
             budget = check_budget(conn, scope_type=scope_type, scope_id=scope_id, requested_usd=estimated)
             if not budget.allowed:
                 reasons.append(f"budget blocked for {scope_type}:{scope_id}: {budget.reason}")
-        if not reasons and str(task["status"]) == "blocked" and not blocked_task_auto_requeue_allowed(cast(Mapping[str, object], cast(object, task))):
+        resolved_blockers = (LIVE_OPENROUTER_NOT_ENABLED_BLOCKER,) if live_openrouter_enabled(env=env) else ()
+        if (
+            not reasons
+            and str(task["status"]) == "blocked"
+            and not blocked_task_auto_requeue_allowed(
+                cast(Mapping[str, object], cast(object, task)),
+                resolved_transient_blocker_prefixes=resolved_blockers,
+            )
+        ):
             reasons.extend(_blocked_reasons_for_report(task))
         if reasons:
             blocked.append({"task_id": task_id, "title": title, "reasons": reasons})

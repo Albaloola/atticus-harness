@@ -656,6 +656,7 @@ def _task_from_template(
         source_count=len(source_ids),
         requested_capabilities=tuple(template.validation_gates),
     )
+    provider_policy = _apply_provider_generation_limits(provider_policy, template=template, source_count=len(source_ids))
     return {
         "task_id": task_id,
         "matter_scope": matter_scope,
@@ -691,6 +692,25 @@ def _model_layer_for_template(template: CoordinatorTaskTemplate) -> str:
     if template.verifier_required:
         return "verifier"
     return "worker"
+
+
+def _apply_provider_generation_limits(
+    provider_policy: dict[str, object],
+    *,
+    template: CoordinatorTaskTemplate,
+    source_count: int,
+) -> dict[str, object]:
+    """Bound broad worker output so live provider calls do not become stuck work."""
+
+    if str(provider_policy.get("max_tokens") or "").strip():
+        return provider_policy
+    if source_count > 25 and template.task_type in {"evidence_issue_map", "production_mapping", "evidence_organization_plan"}:
+        return {**provider_policy, "max_tokens": 4096}
+    if template.task_type in {"source_inventory", "extraction_qa", "classification", "duplicate_detection"}:
+        return {**provider_policy, "max_tokens": 4096}
+    if template.task_type in {"chronology_event_extraction", "authority_map", "hostile_opponent_review", "final_quality_gate"}:
+        return {**provider_policy, "max_tokens": 8192}
+    return provider_policy
 
 
 def _templates_allowed_by_active_profile(

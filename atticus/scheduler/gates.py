@@ -37,19 +37,29 @@ AUTO_REQUEUE_BLOCKER_PREFIXES = (
     "task estimated cost ",
 )
 
+LIVE_OPENROUTER_NOT_ENABLED_BLOCKER = "live OpenRouter execution requires allow_live=True and ATTICUS_ENABLE_LIVE_OPENROUTER=1"
+LIVE_CODEX_NOT_ENABLED_BLOCKER = "live Codex execution requires allow_live=True and ATTICUS_ENABLE_LIVE_CODEX=1"
 
-def blocked_task_auto_requeue_allowed(task_row: Mapping[str, object]) -> bool:
+
+def blocked_task_auto_requeue_allowed(
+    task_row: Mapping[str, object],
+    *,
+    resolved_transient_blocker_prefixes: tuple[str, ...] = (),
+) -> bool:
     """Return true only for blocked tasks whose old blockers were gate-like.
 
     Provider, runtime, quarantine, parser, and context-build failures must not
     be retried merely because dependency gates pass; those need a repair event
-    or explicit operator/orchestrator requeue.
+    or explicit operator/orchestrator requeue. Runtime configuration blockers
+    are only requeueable when the caller proves the configuration is now
+    resolved, so a missing live flag cannot become an unbounded retry loop.
     """
 
     reasons = _blocked_reasons(task_row)
     if not reasons:
         return True
-    return all(any(reason.startswith(prefix) for prefix in AUTO_REQUEUE_BLOCKER_PREFIXES) for reason in reasons)
+    allowed_prefixes = AUTO_REQUEUE_BLOCKER_PREFIXES + resolved_transient_blocker_prefixes
+    return all(any(reason.startswith(prefix) for prefix in allowed_prefixes) for reason in reasons)
 
 
 def evaluate_task_gates(conn: sqlite3.Connection, task_row: Mapping[str, object]) -> GateResult:

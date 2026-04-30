@@ -9,6 +9,7 @@ from typing import cast
 
 from atticus.core.events import utc_now
 from atticus.core.policies import TaskStatus
+from atticus.agents.decomposition import decomposition_repair_action
 from atticus.db import repo
 from atticus.providers.model_policy import default_smart_model_policy, load_model_routing_policy, smart_provider_policy_for_route
 from atticus.scheduler.capacity import MAX_PARALLEL_AGENT_CAPACITY, agent_capacity
@@ -447,6 +448,9 @@ def _repair_actions_for_blocked_task(
                 "reason": "dependent task is not complete",
             }
         )
+    decomposition_action = decomposition_repair_action(conn, task_id=task_id, reasons=reasons)
+    if decomposition_action is not None:
+        actions.append(decomposition_action)
     if any(term in reason_text for term in ("source dependency", "artifact dependency", "stale")):
         actions.append({"type": "context_rebuild", "reason": "source, artifact, or stale dependency gate failed"})
     if any(term in reason_text for term in ("malformed", "budget blocked", "cost limit")):

@@ -353,6 +353,32 @@ def test_smart_model_policy_routes_flash_pro_and_codex_with_audit_fingerprints()
         assert resolved["model"] == decision["model"]
 
 
+def test_smart_model_policy_routes_routine_bundle_children_by_base_task_type():
+    policy = default_smart_model_policy()
+
+    production_bundle = smart_provider_policy_for_route(
+        policy,
+        layer="worker",
+        stage="S3",
+        task_type="production_mapping_bundle",
+        task_id="production-bundle",
+        source_count=6,
+    )
+    authority_bundle = smart_provider_policy_for_route(
+        policy,
+        layer="worker",
+        stage="S6",
+        task_type="authority_map_bundle",
+        task_id="authority-bundle",
+        source_count=3,
+    )
+
+    assert production_bundle["model"] == "deepseek/deepseek-v4-flash"
+    assert _mapping_value(production_bundle["model_decision"])["decision_tier"] == "flash_worker"
+    assert authority_bundle["model"] == "deepseek/deepseek-v4-pro"
+    assert _mapping_value(authority_bundle["model_decision"])["decision_tier"] == "pro_orchestrator"
+
+
 def test_smart_model_policy_blocks_flash_override_for_pro_required_work():
     policy = default_smart_model_policy()
 

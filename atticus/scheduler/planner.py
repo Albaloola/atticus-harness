@@ -8,6 +8,7 @@ import math
 import sqlite3
 
 from typing import cast
+from atticus.agents.decomposition import decompose_broad_task_if_needed
 from atticus.core.events import utc_now
 from atticus.core.policies import TaskStatus
 from atticus.db import repo
@@ -16,7 +17,12 @@ from atticus.scheduler.capacity import agent_capacity
 from atticus.scheduler.gates import blocked_task_auto_requeue_allowed, evaluate_task_gates
 
 
-def select_runnable_tasks(conn: sqlite3.Connection, *, capacity: int) -> list[Mapping[str, object]]:
+def select_runnable_tasks(
+    conn: sqlite3.Connection,
+    *,
+    capacity: int,
+    resolved_transient_blocker_prefixes: tuple[str, ...] = (),
+) -> list[Mapping[str, object]]:
     capacity_requested = agent_capacity(capacity)
     if capacity_requested == 0:
         return []
@@ -33,10 +39,21 @@ def select_runnable_tasks(conn: sqlite3.Connection, *, capacity: int) -> list[Ma
         budget_reasons = budget_blockers(conn, task)
         if result.allowed and not budget_reasons:
             if str(task["status"]) == str(TaskStatus.BLOCKED):
-                if not blocked_task_auto_requeue_allowed(task):
+                if not blocked_task_auto_requeue_allowed(
+                    task,
+                    resolved_transient_blocker_prefixes=resolved_transient_blocker_prefixes,
+                ):
                     continue
                 _requeue_previously_blocked_task(conn, task_id=str(task["task_id"]))
                 task = cast(Mapping[str, object], conn.execute("SELECT * FROM tasks WHERE task_id = ?", (task["task_id"],)).fetchone())
+            decomposition = decompose_broad_task_if_needed(
+                conn,
+                task_id=str(task["task_id"]),
+                reason="pre_dispatch_token_budget",
+                write=True,
+            )
+            if decomposition.get("applied"):
+                continue
             runnable.append(task)
             if len(runnable) >= capacity_requested:
                 break

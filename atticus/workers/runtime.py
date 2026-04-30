@@ -32,6 +32,7 @@ from atticus.providers.live_readiness import check_live_provider_policy, live_op
 from atticus.providers.openrouter_failover import openrouter_client_for_policy, openrouter_failover_config_from_policy, openrouter_models_for_policy, primary_model_for_policy, safe_openrouter_error_message
 from atticus.providers.openrouter import OpenRouterError, validate_cache_usage_tokens, validate_usage_tokens
 from atticus.providers.policy import ProviderActual, ProviderDecision, ProviderRequest, canonical_provider_policy, check_provider_policy
+from atticus.scheduler.gates import LIVE_CODEX_NOT_ENABLED_BLOCKER, LIVE_OPENROUTER_NOT_ENABLED_BLOCKER
 from atticus.scheduler.lease import LeaseError, require_active_lease
 from atticus.workers.contracts import safe_path_component
 from atticus.workers.outputs import record_worker_result
@@ -276,7 +277,7 @@ def execute_openrouter_work_order(
         _block_preflight_after_lease(conn, lease_id=lease_id, task_id=task_id, reason=reason)
         raise WorkerExecutionBlocked(reason)
     if not allow_live or not live_openrouter_enabled(env=env):
-        reason = "live OpenRouter execution requires allow_live=True and ATTICUS_ENABLE_LIVE_OPENROUTER=1"
+        reason = LIVE_OPENROUTER_NOT_ENABLED_BLOCKER
         _block_preflight_after_lease(conn, lease_id=lease_id, task_id=task_id, reason=reason)
         raise WorkerExecutionBlocked(reason)
 
@@ -305,7 +306,7 @@ def execute_openrouter_work_order(
         _block_preflight_after_lease(conn, lease_id=lease_id, task_id=task_id, reason=str(exc))
         raise
     try:
-        max_tokens = _positive_int_provider_setting(provider_policy, "max_tokens", default=16000)
+        max_tokens = _positive_int_provider_setting(provider_policy, "max_tokens", default=_default_openrouter_max_tokens(task))
         temperature = _nonnegative_float_provider_setting(provider_policy, "temperature", default=0.1)
         timeout_seconds = _positive_float_provider_setting(provider_policy, "timeout_seconds", default=OPENROUTER_DEFAULT_TIMEOUT_SECONDS)
     except ValueError as exc:
@@ -649,6 +650,13 @@ def execute_openrouter_work_order(
             repo.update_task_blocked(conn, task_id, [reason])
             conn.commit()
             raise WorkerExecutionBlocked(reason)
+        content_diagnostic = _openrouter_empty_content_diagnostic(response)
+        if content_diagnostic:
+            _ = _mark_lease_failed(conn, lease_id=lease_id, reason=content_diagnostic)
+            _record_attempt_finished(conn, attempt_id=attempt_id, status="failed", output_path=output_path, error={"error": content_diagnostic})
+            repo.update_task_blocked(conn, task_id, [content_diagnostic])
+            conn.commit()
+            raise WorkerExecutionBlocked(content_diagnostic)
         payload = dict(cast(Mapping[str, object], content))
         output_path.parent.mkdir(parents=True, exist_ok=True)
         _ = output_path.write_text(json.dumps(payload, sort_keys=True, indent=2), encoding="utf-8")
@@ -699,7 +707,7 @@ def execute_codex_work_order(
         _block_preflight_after_lease(conn, lease_id=lease_id, task_id=task_id, reason=reason)
         raise WorkerExecutionBlocked(reason)
     if not allow_live or (env or {}).get(LIVE_CODEX_ENV) != "1":
-        reason = f"live Codex execution requires allow_live=True and {LIVE_CODEX_ENV}=1"
+        reason = LIVE_CODEX_NOT_ENABLED_BLOCKER
         _block_preflight_after_lease(conn, lease_id=lease_id, task_id=task_id, reason=reason)
         raise WorkerExecutionBlocked(reason)
 
@@ -1005,6 +1013,58 @@ def _run_openrouter_adapter_with_deadline(
 def _looks_like_openrouter_timeout(error_message: str) -> bool:
     normalized = " ".join(error_message.lower().split())
     return "timed out" in normalized or "timeout" in normalized
+
+
+def _openrouter_empty_content_diagnostic(response: Mapping[str, object]) -> str:
+    content = response.get("content")
+    if not isinstance(content, Mapping) or content:
+        return ""
+    raw = response.get("raw")
+    if not isinstance(raw, Mapping):
+        return ""
+    choices = raw.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return ""
+    first_choice = choices[0]
+    if not isinstance(first_choice, Mapping):
+        return ""
+    message = first_choice.get("message")
+    if not isinstance(message, Mapping):
+        return ""
+    message_content = message.get("content")
+    has_reasoning = bool(message.get("reasoning") or message.get("reasoning_content") or message.get("reasoning_details"))
+    finish_reason = str(first_choice.get("finish_reason") or "")
+    if (message_content is None or message_content == "") and has_reasoning:
+        if finish_reason == "length":
+            return "OpenRouter response exhausted max_tokens in reasoning and returned no JSON content; disable thinking or increase task decomposition"
+        return "OpenRouter response returned reasoning without JSON content; disable thinking before retrying this structured worker"
+    return ""
+
+
+def _json_list(raw: str) -> list[object]:
+    try:
+        value = json.loads(raw or "[]")
+    except (TypeError, json.JSONDecodeError):
+        return []
+    return cast(list[object], value) if isinstance(value, list) else []
+
+
+def _default_openrouter_max_tokens(task: Mapping[str, object]) -> int:
+    task_type = str(_task_value(task, "task_type") or "")
+    source_count = len(_json_list(str(_task_value(task, "source_dependencies_json") or "[]")))
+    if source_count > 25 and task_type in {"evidence_issue_map", "production_mapping", "evidence_organization_plan"}:
+        return 4096
+    if task_type in {"source_inventory", "extraction_qa", "classification", "duplicate_detection"}:
+        return 4096
+    if task_type in {"chronology_event_extraction", "authority_map", "hostile_opponent_review", "final_quality_gate"}:
+        return 8192
+    return 16000
+
+
+def _task_value(task: Mapping[str, object], key: str, default: object = "") -> object:
+    if hasattr(task, "keys") and key in task.keys():
+        return task[key]
+    return default
 
 
 def _record_openrouter_post_dispatch_failure(

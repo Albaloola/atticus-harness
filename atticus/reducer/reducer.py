@@ -27,9 +27,12 @@ class ReductionBlocked(RuntimeError):
 
 FOUNDATION_ARTIFACT_TYPES_BY_TASK_TYPE = {
     "evidence_issue_map": "evidence_registry",
+    "evidence_issue_map_bundle": "evidence_registry",
     "evidence_triage": "evidence_registry",
     "production_mapping": "production_crosswalk",
+    "production_mapping_bundle": "production_crosswalk",
     "evidence_organization_plan": "production_crosswalk",
+    "evidence_organization_plan_bundle": "production_crosswalk",
     "chronology_event_extraction": "chronology",
     "issue_route_map": "issue_route_map",
     "authority_map": "authority_map",
@@ -89,7 +92,7 @@ def reduce_candidate(
     task_row = cast(sqlite3.Row | None, cast(object, conn.execute(
         """
         SELECT task_id, matter_scope, stage, task_type, required_certifications_json,
-               source_dependencies_json, artifact_dependencies_json
+               source_dependencies_json, artifact_dependencies_json, task_provenance_json
         FROM tasks
         WHERE task_id = ?
         """,
@@ -119,7 +122,7 @@ def reduce_candidate(
     except ResultPacketError as exc:
         raise ReductionBlocked(f"candidate failed task-context schema validation: {exc}") from exc
     proposed = packet.proposed_artifacts[0] if packet.proposed_artifacts else {}
-    source_dependencies = _load_string_list(str(task.get("source_dependencies_json") or "[]"))
+    source_dependencies = _effective_source_dependencies(task)
     artifact_dependencies = _load_string_list(str(task.get("artifact_dependencies_json") or "[]"))
     artifact_type = _artifact_type_for_task(str(task["task_type"]), proposed)
     canonical_preview = {
@@ -236,12 +239,44 @@ def _load_string_list(text: str) -> list[str]:
     return [str(item) for item in cast(list[object], value) if str(item)]
 
 
+def _row_value(row: Mapping[str, object], key: str, default: object = "") -> object:
+    if hasattr(row, "keys") and key in row.keys():
+        return row[key]
+    return row.get(key, default)
+
+
+def _effective_source_dependencies(task: Mapping[str, object]) -> list[str]:
+    source_dependencies = _load_string_list(str(_row_value(task, "source_dependencies_json") or "[]"))
+    if source_dependencies:
+        return source_dependencies
+    try:
+        provenance = json.loads(str(_row_value(task, "task_provenance_json") or "{}"))
+    except (json.JSONDecodeError, TypeError):
+        return []
+    if not isinstance(provenance, Mapping):
+        return []
+    decomposition = provenance.get("source_bundle_decomposition")
+    if not isinstance(decomposition, Mapping):
+        return []
+    original = decomposition.get("original_source_dependencies")
+    if not isinstance(original, list):
+        return []
+    return _dedupe_ordered([str(item) for item in cast(list[object], original) if str(item)])
+
+
 def _artifact_type_for_task(task_type: str, proposed: Mapping[str, object]) -> str:
     proposed_type = str(proposed.get("artifact_type") or "").strip()
     mapped = FOUNDATION_ARTIFACT_TYPES_BY_TASK_TYPE.get(task_type)
     if mapped and proposed_type.lower() in GENERIC_ARTIFACT_TYPES:
         return mapped
-    if mapped and task_type in {"evidence_issue_map", "production_mapping", "evidence_organization_plan"}:
+    if mapped and task_type in {
+        "evidence_issue_map",
+        "evidence_issue_map_bundle",
+        "production_mapping",
+        "production_mapping_bundle",
+        "evidence_organization_plan",
+        "evidence_organization_plan_bundle",
+    }:
         return mapped
     return proposed_type or mapped or "reduced_result"
 

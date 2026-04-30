@@ -371,15 +371,23 @@ def resolve_route_target(
     task_type: str = "",
     task_id: str = "",
 ) -> str:
+    base_task_type = _base_task_type(task_type)
     for routes, key in (
         (policy.task_ids, task_id),
         (policy.task_types, task_type),
+        (policy.task_types, base_task_type),
         (policy.layers, layer),
         (policy.stages, stage),
     ):
         if key and key in routes:
             return routes[key]
     return policy.default
+
+
+def _base_task_type(task_type: str) -> str:
+    if task_type.endswith("_bundle"):
+        return task_type[: -len("_bundle")]
+    return task_type
 
 
 def validate_proposed_task_provider_policy(
@@ -434,6 +442,8 @@ def resolve_provider_policy_from_parent(
                 task_id=str(proposed_task.get("task_id") or ""),
                 matter_scope=str(proposed_task.get("matter_scope") or "atticus"),
                 expected_value=_float_value(proposed_task.get("expected_value"), default=0.0),
+                source_count=_int_value(proposed_task.get("source_count"), default=0),
+                extracted_char_count=_int_value(proposed_task.get("extracted_char_count"), default=0),
                 requested_capabilities=_string_tuple_or_empty(proposed_task.get("validation_gates")),
             )
         return provider_policy_for_route(

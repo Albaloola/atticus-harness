@@ -168,7 +168,11 @@ def result_packet_json_schema() -> dict[str, object]:
                         "target_type": {"enum": sorted(CITATION_TARGET_TYPES)},
                         "target_id": {"type": "string", "minLength": 1},
                         "locator": {"type": "string"},
-                        "quoted_text_hash": {"type": "string"},
+                        "quoted_text_hash": {
+                            "type": "string",
+                            "pattern": "^[0-9a-fA-F]{64}$",
+                            "description": "Optional. Omit unless Atticus supplied the exact SHA-256 hex digest for the quoted text.",
+                        },
                         "quote": {"type": "string"},
                         "excerpt": {"type": "string"},
                     },

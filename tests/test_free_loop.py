@@ -410,12 +410,13 @@ def test_run_free_loop_cli_openrouter_without_live_gate_does_not_dispatch(tmp_pa
     assert code == 2
     assert payload["ok"] is False
     assert worker_errors[0]["task_id"] == "openrouter-no-live"
+    assert "OpenRouter preflight failed before leasing" in str(worker_errors[0]["error"])
     assert provider_runs == 0
     assert candidates == 0
     assert active_leases == 0
-    assert failed_leases == 1
-    assert task["status"] == str(TaskStatus.BLOCKED)
-    assert "ATTICUS_ENABLE_LIVE_OPENROUTER" in str(task["blocked_reasons_json"])
+    assert failed_leases == 0
+    assert task["status"] == str(TaskStatus.QUEUED)
+    assert task["blocked_reasons_json"] == "[]"
 
 
 def test_run_free_loop_cli_self_migrates_stale_v5_db_before_failure_logging(
