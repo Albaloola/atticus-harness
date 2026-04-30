@@ -1689,6 +1689,53 @@ def supersede_attention(
     return changed
 
 
+def dedupe_open_human_attention(
+    conn: sqlite3.Connection,
+    *,
+    matter_scope: str | None = None,
+    resolution_source: str = "maintenance",
+) -> int:
+    where = "WHERE status = 'open' AND signature != ''"
+    params: tuple[object, ...] = ()
+    if matter_scope and matter_scope != "global":
+        where += " AND matter_scope = ?"
+        params = (matter_scope,)
+    groups = conn.execute(
+        f"""
+        SELECT matter_scope, signature, MAX(attention_id) AS keep_id, COUNT(*) AS n
+        FROM human_attention
+        {where}
+        GROUP BY matter_scope, signature
+        HAVING COUNT(*) > 1
+        """,
+        params,
+    ).fetchall()
+    changed = 0
+    for group in groups:
+        keep_id = int(group["keep_id"])
+        cur = conn.execute(
+            """
+            UPDATE human_attention
+            SET status = 'superseded', superseded_by = ?
+            WHERE matter_scope = ? AND signature = ? AND status = 'open' AND attention_id != ?
+            """,
+            (str(keep_id), str(group["matter_scope"]), str(group["signature"]), keep_id),
+        )
+        changed += int(cur.rowcount if cur.rowcount is not None and cur.rowcount > 0 else 0)
+    if changed:
+        _ = emit_event(
+            conn,
+            "human_attention.deduped",
+            matter_scope=matter_scope or "global",
+            payload={
+                "deduped_count": changed,
+                "group_count": len(groups),
+                "resolution_source": resolution_source,
+            },
+        )
+    return changed
+
+
 def resolve_provider_control_plane_attention(
     conn: sqlite3.Connection,
     *,

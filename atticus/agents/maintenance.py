@@ -137,6 +137,18 @@ def maintenance_tick(
         diagnostics = _build_diagnostics(conn, matter_scope=matter_scope)
         resume_signal = _resume_signal(diagnostics)
         report_summary = _summary(diagnostics, actions, resume_signal)
+    duplicate_attention_closed = repo.dedupe_open_human_attention(conn, matter_scope=matter_scope, resolution_source="maintenance_tick")
+    if duplicate_attention_closed:
+        applied_actions.append(
+            {
+                "type": "dedupe_open_human_attention",
+                "changed": duplicate_attention_closed,
+                "reason": "older open attention rows share the same blocker signature",
+            }
+        )
+        diagnostics = _build_diagnostics(conn, matter_scope=matter_scope)
+        resume_signal = _resume_signal(diagnostics)
+        report_summary = _summary(diagnostics, actions, resume_signal)
     expired = _expire_leases_for_scope(conn, matter_scope=matter_scope)
     if expired:
         applied_actions.append({"type": "expire_stale_leases", "lease_ids": expired, "changed": len(expired)})

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from collections.abc import Mapping
 from typing import cast
 
 import pytest
@@ -470,6 +471,61 @@ def test_maintenance_tick_closes_stale_system_attention_for_requeued_tasks(tmp_p
     assert stale_quarantine["status"] == "closed"
     assert stale_cert["status"] == "closed"
     assert operator["status"] == "open"
+
+
+def test_maintenance_tick_dedupes_open_attention_by_signature(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="duplicate-attention-task",
+                title="Duplicate attention",
+                task_type="source_inventory",
+                matter_scope="alpha",
+                status=TaskStatus.BLOCKED,
+            ),
+        )
+        first = repo.record_human_attention(
+            conn,
+            matter_scope="alpha",
+            target_type="task",
+            target_id="duplicate-attention-task",
+            severity="blocker",
+            reason="same blocker older wording",
+            signature="blocker:duplicate",
+        )
+        second = repo.record_human_attention(
+            conn,
+            matter_scope="alpha",
+            target_type="task",
+            target_id="duplicate-attention-task",
+            severity="blocker",
+            reason="same blocker newer wording",
+            signature="blocker:duplicate",
+        )
+        beta = repo.record_human_attention(
+            conn,
+            matter_scope="beta",
+            target_type="matter",
+            target_id="beta",
+            severity="blocker",
+            reason="same signature different matter",
+            signature="blocker:duplicate",
+        )
+        request = request_maintenance(conn, matter_scope="alpha", reason="dedupe attention", write=True)
+
+        result = maintenance_tick(conn, matter_scope="alpha", maintenance_run_id=str(request["maintenance_run_id"]), write=True)
+        rows = {
+            int(row["attention_id"]): dict(cast(Mapping[str, object], row))
+            for row in conn.execute("SELECT attention_id, status, superseded_by FROM human_attention").fetchall()
+        }
+
+    assert any(action["type"] == "dedupe_open_human_attention" and action["changed"] == 1 for action in cast(list[dict[str, object]], result["applied_actions"]))
+    assert rows[first]["status"] == "superseded"
+    assert rows[first]["superseded_by"] == str(second)
+    assert rows[second]["status"] == "open"
+    assert rows[beta]["status"] == "open"
 
 
 def test_maintenance_can_expire_stale_leases_and_emit_resume_signal(tmp_path: Path):
