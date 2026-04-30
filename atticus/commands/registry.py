@@ -55,6 +55,7 @@ def _commands() -> tuple[CommandDef, ...]:
         CommandDef("reduce", "Reduce a candidate through reducer-only canonical path.", supports_dry_run=True, requires_write=True),
         CommandDef("reject-candidate", "Quarantine a candidate packet.", supports_dry_run=True),
         CommandDef("repairs", "List, show, and advance deterministic repair plans.", supports_dry_run=True),
+        CommandDef("reducer-review", "List, inspect, accept, or reject manual reducer reviews.", supports_dry_run=True),
         CommandDef("run-free-loop", "Run bounded autonomous supervisor ticks.", requires_live=False, requires_write=True),
         CommandDef("run-local", "Execute a leased task through local stub adapter.", requires_write=True),
         CommandDef("schedule", "Dependency-aware scheduling preview or write.", supports_dry_run=True),

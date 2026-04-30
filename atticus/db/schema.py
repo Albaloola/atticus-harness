@@ -8,7 +8,7 @@ the legal operating model.
 
 from __future__ import annotations
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 DDL = """
 PRAGMA foreign_keys = ON;
@@ -752,6 +752,22 @@ CREATE TABLE IF NOT EXISTS repair_attempts (
   created_at TEXT NOT NULL
 ) STRICT;
 
+CREATE TABLE IF NOT EXISTS reducer_review_queue (
+  reducer_review_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL,
+  candidate_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  stage TEXT NOT NULL,
+  task_type TEXT NOT NULL,
+  priority INTEGER NOT NULL DEFAULT 50,
+  status TEXT NOT NULL DEFAULT 'open',
+  reason TEXT NOT NULL,
+  recommended_action TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(candidate_id)
+) STRICT;
+
 CREATE TABLE IF NOT EXISTS external_action_blocks (
   block_id TEXT PRIMARY KEY,
   action_type TEXT NOT NULL,
@@ -777,6 +793,7 @@ CREATE INDEX IF NOT EXISTS artifacts_type_stage_idx ON artifacts(artifact_type, 
 CREATE INDEX IF NOT EXISTS sources_hash_idx ON sources(sha256);
 CREATE INDEX IF NOT EXISTS repair_plans_scope_status_idx ON repair_plans(matter_scope, status, severity, updated_at);
 CREATE INDEX IF NOT EXISTS repair_attempts_plan_idx ON repair_attempts(repair_plan_id, created_at);
+CREATE INDEX IF NOT EXISTS reducer_review_queue_scope_status_idx ON reducer_review_queue(matter_scope, status, priority, updated_at);
 CREATE INDEX IF NOT EXISTS certifications_subject_idx
 ON certifications(subject_type, subject_id, certification_type, status);
 CREATE INDEX IF NOT EXISTS provider_runs_task_idx ON provider_runs(task_id, created_at);

@@ -62,6 +62,13 @@ from atticus.providers.policy import (
     check_provider_policy,
     record_provider_policy_decision,
 )
+from atticus.reducer.review_queue import (
+    accept_reducer_review,
+    enqueue_open_reducer_reviews_for_matter,
+    list_reducer_reviews,
+    reject_reducer_review,
+    review_item_summary,
+)
 from atticus.reducer.reducer import reduce_candidate
 from atticus.retrieval.ask import answer_question
 from atticus.retrieval.index import DEFAULT_INDEX_NAME, rebuild_search_index
@@ -220,6 +227,16 @@ def build_parser() -> argparse.ArgumentParser:
     _ = repairs.add_argument("--repair-plan-id")
     _ = repairs.add_argument("--write", action="store_true")
     _ = repairs.add_argument("--json", dest="json_output", action="store_true")
+
+    reducer_review = sub.add_parser("reducer-review", help="list, inspect, accept, or reject manual reducer reviews")
+    _ = reducer_review.add_argument("action", choices=["list", "show", "accept", "reject"])
+    _ = reducer_review.add_argument("--db", required=True)
+    _ = reducer_review.add_argument("--matter", default="")
+    _ = reducer_review.add_argument("--candidate-id")
+    _ = reducer_review.add_argument("--lease-id", default="")
+    _ = reducer_review.add_argument("--reason", default="")
+    _ = reducer_review.add_argument("--write", action="store_true")
+    _ = reducer_review.add_argument("--json", dest="json_output", action="store_true")
 
     inspect = sub.add_parser("inspect", help="read-only record inspection")
     _ = inspect.add_argument("--db", required=True)
@@ -651,6 +668,36 @@ def _main(args: CliArgs) -> int:
                     result={"source": "cli.repairs.apply"},
                 )
                 payload = {"repair_plan": plan.as_dict()}
+        print_json(_materialize_resume_commands(payload, args.db))
+        return 0
+
+    if args.command == "reducer-review":
+        read_only = not args.write
+        with repo.db_connection(args.db, read_only=read_only) as conn:
+            schema_check = schema_check_json(conn, db_path=args.db)
+            if not schema_check["ok"]:
+                print_json(schema_check)
+                return 2
+            if args.action == "list":
+                if not args.matter:
+                    raise ValueError("reducer-review list requires --matter")
+                if args.write:
+                    _ = enqueue_open_reducer_reviews_for_matter(conn, matter_scope=args.matter)
+                payload = {"reviews": [item.as_dict() for item in list_reducer_reviews(conn, matter_scope=args.matter)]}
+            elif args.action == "show":
+                if not args.candidate_id:
+                    raise ValueError("reducer-review show requires --candidate-id")
+                payload = {"review": review_item_summary(conn, candidate_id=args.candidate_id)}
+            elif args.action == "accept":
+                if not args.candidate_id:
+                    raise ValueError("reducer-review accept requires --candidate-id")
+                if not args.lease_id:
+                    raise ValueError("reducer-review accept requires --lease-id")
+                payload = accept_reducer_review(conn, candidate_id=args.candidate_id, reducer_lease_id=args.lease_id, write=args.write)
+            else:
+                if not args.candidate_id:
+                    raise ValueError("reducer-review reject requires --candidate-id")
+                payload = reject_reducer_review(conn, candidate_id=args.candidate_id, reason=args.reason, write=args.write)
         print_json(_materialize_resume_commands(payload, args.db))
         return 0
 

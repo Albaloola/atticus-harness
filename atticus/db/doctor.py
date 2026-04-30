@@ -218,6 +218,22 @@ REQUIRED_COLUMNS: dict[str, frozenset[str]] = {
             "created_at",
         }
     ),
+    "reducer_review_queue": frozenset(
+        {
+            "reducer_review_id",
+            "matter_scope",
+            "candidate_id",
+            "task_id",
+            "stage",
+            "task_type",
+            "priority",
+            "status",
+            "reason",
+            "recommended_action",
+            "created_at",
+            "updated_at",
+        }
+    ),
 }
 
 

@@ -72,6 +72,7 @@ class MatterCompletionReport:
     failed_count: int
     blocked_count: int
     reducer_pending: tuple[dict[str, object], ...]
+    reducer_review_queue: tuple[dict[str, object], ...]
     missing_certifications: tuple[str, ...]
     stale_artifacts: tuple[str, ...]
     unresolved_human_attention: tuple[dict[str, object], ...]
@@ -89,6 +90,7 @@ def build_matter_completion_report(conn: sqlite3.Connection, matter_scope: str) 
     missing_certifications = tuple(cert for cert in required_certifications if cert not in active_certifications)
     runnable = _tasks_by_status(conn, matter_scope, ("queued", "ready"))
     reducer_pending = _tasks_by_status(conn, matter_scope, ("reducer_pending",))
+    reducer_review_queue = tuple(_open_reducer_review_queue(conn, matter_scope))
     failed = _tasks_by_status(conn, matter_scope, ("failed",))
     blocked_tasks = _tasks_by_status(conn, matter_scope, ("blocked",))
     stale_artifacts = tuple(_stale_artifact_ids(conn, matter_scope))
@@ -164,6 +166,7 @@ def build_matter_completion_report(conn: sqlite3.Connection, matter_scope: str) 
         failed_count=len(failed),
         blocked_count=len(blocked_tasks),
         reducer_pending=tuple(reducer_pending),
+        reducer_review_queue=reducer_review_queue,
         missing_certifications=missing_certifications,
         stale_artifacts=stale_artifacts,
         unresolved_human_attention=attention,
@@ -206,6 +209,21 @@ def next_resume_action(conn: sqlite3.Connection, matter_scope: str) -> dict[str,
             "owner": "none",
             "reason": "matter completion requirements are satisfied",
             "resume_command": "",
+        }
+
+    review_queue = _open_reducer_review_queue(conn, matter_scope)
+    if review_queue:
+        item = review_queue[0]
+        return {
+            "type": "manual_reducer_review",
+            "owner": "reducer",
+            "task_id": item["task_id"],
+            "candidate_id": item["candidate_id"],
+            "stage": item["stage"],
+            "task_type": item["task_type"],
+            "reason": item["reason"],
+            "after": _after_reducer_review(report),
+            "resume_command": f"python -m atticus.cli reducer-review show --db DB --candidate-id {item['candidate_id']} --json",
         }
 
     reducer_pending = _tasks_by_status(conn, matter_scope, ("reducer_pending",))
@@ -367,6 +385,24 @@ def _open_human_attention(conn: sqlite3.Connection, matter_scope: str) -> list[d
         """,
         (matter_scope,),
     ).fetchall()
+    return [_row_to_dict(row) for row in rows]
+
+
+def _open_reducer_review_queue(conn: sqlite3.Connection, matter_scope: str) -> list[dict[str, object]]:
+    try:
+        rows = conn.execute(
+            """
+            SELECT reducer_review_id, matter_scope, candidate_id, task_id, stage, task_type,
+                   priority, status, reason, recommended_action, created_at, updated_at
+            FROM reducer_review_queue
+            WHERE matter_scope = ? AND status = 'open'
+            ORDER BY priority ASC, updated_at ASC
+            LIMIT 25
+            """,
+            (matter_scope,),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
     return [_row_to_dict(row) for row in rows]
 
 

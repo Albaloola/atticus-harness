@@ -23,6 +23,7 @@ from atticus.agents.orchestrator import report_worker_failure_to_orchestrator
 from atticus.db import repo
 from atticus.providers.cache_observability import fingerprint_provider_policy
 from atticus.providers.live_readiness import probe_live_openrouter
+from atticus.reducer.review_queue import enqueue_reducer_review
 from atticus.reducer.reducer import ReductionBlocked, reduce_candidate
 from atticus.scheduler.capacity import MAX_PARALLEL_AGENT_CAPACITY, agent_capacity
 from atticus.scheduler.gates import LIVE_CODEX_NOT_ENABLED_BLOCKER, LIVE_OPENROUTER_NOT_ENABLED_BLOCKER
@@ -75,6 +76,12 @@ def run_free_loop_once(
         skip_reason = _auto_reduce_skip_reason(candidate)
         if skip_reason:
             skipped_reductions.append({"candidate_id": candidate_id, "task_id": task_id, "reason": skip_reason})
+            _ = enqueue_reducer_review(
+                conn,
+                candidate_id=candidate_id,
+                reason=skip_reason,
+                priority=_reducer_review_priority(candidate),
+            )
             _record_auto_reduce_skip_attention(
                 conn,
                 candidate_id=candidate_id,
@@ -700,6 +707,24 @@ def _record_auto_reduce_skip_attention(
         severity="blocker",
         reason=reason,
     )
+
+
+def _reducer_review_priority(candidate: Mapping[str, object]) -> int:
+    try:
+        task_type = str(candidate["task_type"] or "")
+    except (KeyError, IndexError):
+        task_type = ""
+    try:
+        stage = str(candidate["stage"] or "")
+    except (KeyError, IndexError):
+        stage = ""
+    if task_type in {"citation_repair", "citation_audit", "final_quality_gate"}:
+        return 10
+    if stage in {str(LegalStage.S9_FINAL_QUALITY_GATE), str(LegalStage.S8_DRAFT_PREPARATION)}:
+        return 20
+    if stage in {str(LegalStage.S7_HOSTILE_REVIEW), str(LegalStage.S6_AUTHORITY_LAW_MAP)}:
+        return 30
+    return 50
 
 
 def _short_id() -> str:
