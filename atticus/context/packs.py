@@ -12,6 +12,7 @@ import sqlite3
 from atticus.context.sections import build_default_sections, estimate_tokens as _estimate_tokens
 from atticus.context.token_budget import source_token_estimates_by_id
 from atticus.db import repo
+from atticus.retrieval.source_chunks import retrieve_source_chunks_for_task
 from atticus.skills.registry import skills_for_task
 
 
@@ -101,6 +102,7 @@ def build_context_pack(
         source_ids=source_ids,
         allowed_artifact_ids=explicit_artifact_ids,
         task_type=str(task["task_type"]),
+        query_text=_task_retrieval_query(task),
     )
     compact_source_context = _compact_source_context(task_type=str(task["task_type"]), source_count=len(source_ids))
     token_estimates = source_token_estimates_by_id(conn, matter_scope=matter_scope, source_ids=source_ids)
@@ -250,6 +252,7 @@ def _load_source_materials(
     source_ids: list[str],
     allowed_artifact_ids: list[str],
     task_type: str = "",
+    query_text: str = "",
 ) -> list[dict[str, object]]:
     if not source_ids:
         return []
@@ -323,13 +326,26 @@ def _load_source_materials(
     seen: set[str] = set()
     allowed_artifacts = set(allowed_artifact_ids)
     materials: list[dict[str, object]] = []
+    selected_chunks = retrieve_source_chunks_for_task(
+        conn,
+        matter_scope=matter_scope,
+        source_ids=source_ids,
+        query_text=query_text,
+        max_chunks_per_source=1 if compact else 2,
+        max_total_chunks=40 if compact else 24,
+    )
+    chunks_by_source: dict[str, list[dict[str, object]]] = {}
+    for chunk in selected_chunks:
+        chunks_by_source.setdefault(str(chunk["source_id"]), []).append(chunk)
     for row in rows:
         source_id = str(row["source_id"])
         if source_id in seen:
             continue
         seen.add(source_id)
         content = str(row["content"] or "")
-        excerpt = content[:per_source_chars]
+        source_chunks = chunks_by_source.get(source_id, [])
+        excerpt = _source_excerpt_from_chunks(source_chunks, per_source_chars=per_source_chars) or content[:per_source_chars]
+        omitted_chunks = sum(int(str(chunk.get("omitted_chunk_count_for_source") or 0)) for chunk in source_chunks[:1])
         extraction_metadata = _json_object(str(row["extraction_metadata_json"] or "{}"))
         ocr_metadata = _json_object(str(row["ocr_metadata_json"] or "{}"))
         artifact_id = str(row["artifact_id"])
@@ -344,6 +360,8 @@ def _load_source_materials(
                     "coverage_status": row["extraction_coverage_status"] or row["ocr_coverage_status"] or "available",
                     "confidence": row["confidence"] if row["confidence"] is not None else None,
                     "content_excerpt": excerpt,
+                    "selected_source_chunks": [_compact_chunk(chunk) for chunk in source_chunks],
+                    "omitted_source_material_summary": {"omitted_chunk_count": omitted_chunks},
                     "excerpt_truncated": len(content) > len(excerpt),
                 }
             )
@@ -382,6 +400,8 @@ def _load_source_materials(
                     "sha256": row["sha256"],
                     "title": row["title"],
                     "content_excerpt": excerpt,
+                    "selected_source_chunks": source_chunks,
+                    "omitted_source_material_summary": {"omitted_chunk_count": omitted_chunks},
                     "excerpt_chars": len(excerpt),
                     "available_chars": len(content),
                     "excerpt_truncated": len(content) > len(excerpt),
@@ -392,6 +412,37 @@ def _load_source_materials(
                 }
             )
     return materials
+
+
+def _task_retrieval_query(task: Mapping[str, object]) -> str:
+    parts: list[str] = []
+    for field in ("title", "task_type", "stage", "instructions"):
+        try:
+            parts.append(str(task[field] or ""))
+        except KeyError:
+            parts.append("")
+    return "\n".join(parts)
+
+
+def _source_excerpt_from_chunks(chunks: list[dict[str, object]], *, per_source_chars: int) -> str:
+    if not chunks:
+        return ""
+    text = "\n\n".join(str(chunk.get("text") or "").strip() for chunk in chunks if str(chunk.get("text") or "").strip())
+    return text[:per_source_chars]
+
+
+def _compact_chunk(chunk: Mapping[str, object]) -> dict[str, object]:
+    return {
+        "chunk_id": chunk["chunk_id"],
+        "source_id": chunk["source_id"],
+        "artifact_id": chunk.get("artifact_id") or "",
+        "start_offset": chunk.get("start_offset"),
+        "end_offset": chunk.get("end_offset"),
+        "text_hash": chunk.get("text_hash") or "",
+        "confidence": chunk.get("confidence"),
+        "retrieval_score": chunk.get("retrieval_score", 0),
+        "text": str(chunk.get("text") or "")[:200],
+    }
 
 
 def _compact_source_context(*, task_type: str, source_count: int) -> bool:

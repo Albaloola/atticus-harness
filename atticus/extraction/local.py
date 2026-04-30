@@ -27,6 +27,7 @@ from zipfile import BadZipFile, ZipFile
 from atticus.core.events import utc_now
 from atticus.core.policies import LegalStage, TrustStatus
 from atticus.db import repo
+from atticus.retrieval.source_chunks import chunk_extracted_artifact
 from atticus.workers.contracts import safe_path_component
 
 
@@ -224,6 +225,14 @@ def repair_source_extractions(
                     "output_path": str(output_path),
                     "text_sha256": content_hash,
                 },
+            )
+            _ = chunk_extracted_artifact(
+                conn,
+                matter_scope=matter_scope,
+                source_id=source_id,
+                artifact_id=artifact_id,
+                source_snapshot_id=_current_source_snapshot_id(conn, source_id=source_id, source_sha256=str(row["sha256"])),
+                confidence=_confidence_for_method(extracted.method),
             )
             if extracted.ocr_engine:
                 ocr_records_created += _ensure_ocr_record(
@@ -673,6 +682,20 @@ def _ensure_ocr_record(
         (f"ocr-{uuid4().hex}", source_id, artifact_id, engine, _json(metadata), utc_now()),
     )
     return 1
+
+
+def _current_source_snapshot_id(conn: sqlite3.Connection, *, source_id: str, source_sha256: str) -> str:
+    row = conn.execute(
+        """
+        SELECT snapshot_id
+        FROM source_snapshots
+        WHERE source_id = ? AND sha256 = ?
+        ORDER BY created_at DESC, snapshot_id DESC
+        LIMIT 1
+        """,
+        (source_id, source_sha256),
+    ).fetchone()
+    return str(row["snapshot_id"]) if row is not None else ""
 
 
 def _record_attention_once(conn: sqlite3.Connection, *, target_id: str, reason: str) -> int:

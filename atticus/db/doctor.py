@@ -252,6 +252,24 @@ REQUIRED_COLUMNS: dict[str, frozenset[str]] = {
             "created_at",
         }
     ),
+    "source_chunks": frozenset(
+        {
+            "chunk_id",
+            "matter_scope",
+            "source_id",
+            "source_snapshot_id",
+            "extraction_id",
+            "artifact_id",
+            "page_number",
+            "start_offset",
+            "end_offset",
+            "text_hash",
+            "text",
+            "confidence",
+            "metadata_json",
+            "created_at",
+        }
+    ),
 }
 
 

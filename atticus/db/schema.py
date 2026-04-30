@@ -8,7 +8,7 @@ the legal operating model.
 
 from __future__ import annotations
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 DDL = """
 PRAGMA foreign_keys = ON;
@@ -323,6 +323,23 @@ CREATE TABLE IF NOT EXISTS citation_support_results (
   support_status TEXT NOT NULL,
   support_level TEXT NOT NULL DEFAULT '',
   reason TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS source_chunks (
+  chunk_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  source_snapshot_id TEXT,
+  extraction_id TEXT,
+  artifact_id TEXT,
+  page_number INTEGER,
+  start_offset INTEGER,
+  end_offset INTEGER,
+  text_hash TEXT NOT NULL,
+  text TEXT NOT NULL,
+  confidence REAL,
+  metadata_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(metadata_json)),
   created_at TEXT NOT NULL
 ) STRICT;
 
@@ -831,6 +848,9 @@ CREATE INDEX IF NOT EXISTS citation_support_results_candidate_idx
 ON citation_support_results(matter_scope, candidate_id, created_at);
 CREATE INDEX IF NOT EXISTS citation_support_results_target_idx
 ON citation_support_results(target_type, target_id);
+CREATE INDEX IF NOT EXISTS source_chunks_source_idx
+ON source_chunks(matter_scope, source_id, source_snapshot_id);
+CREATE INDEX IF NOT EXISTS source_chunks_hash_idx ON source_chunks(text_hash);
 CREATE INDEX IF NOT EXISTS candidate_outputs_task_idx ON candidate_outputs(task_id, status);
 CREATE INDEX IF NOT EXISTS tracked_files_status_idx ON tracked_files(status, file_kind);
 CREATE INDEX IF NOT EXISTS search_index_entries_lookup_idx ON search_index_entries(index_name, record_type, record_id);

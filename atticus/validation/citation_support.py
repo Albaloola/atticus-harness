@@ -140,7 +140,7 @@ def normalize_quote_text(text: str) -> str:
 
 
 def quote_found_in_source_material(conn: sqlite3.Connection, *, source_id: str, quote: str) -> bool:
-    return _quote_found_in_rows(conn, quote=quote, query=_source_material_query(), params=(source_id, source_id, source_id, source_id))
+    return _quote_found_in_rows(conn, quote=quote, query=_source_material_query(), params=(source_id, source_id, source_id, source_id, source_id))
 
 
 def quote_found_in_artifact(conn: sqlite3.Connection, *, artifact_id: str, quote: str) -> bool:
@@ -436,6 +436,10 @@ def _source_material_query() -> str:
         FROM transcription_records tr
         JOIN artifacts a ON a.artifact_id = tr.artifact_id
         WHERE tr.source_id = ? AND a.stale = 0
+        UNION
+        SELECT text AS content
+        FROM source_chunks
+        WHERE source_id = ?
     """
 
 
