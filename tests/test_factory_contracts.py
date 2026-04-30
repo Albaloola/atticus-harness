@@ -424,6 +424,19 @@ def test_citation_support_integrity_checks_quote_hash_and_source_material(tmp_pa
 
     assert outcome.passed
     assert cast(list[object], outcome.details["checked_citations"])
+    with repo.db_connection(db_path, read_only=True) as conn:
+        rows = conn.execute(
+            """
+            SELECT finding_id, citation_id, target_type, target_id, quote_hash, support_status, support_level
+            FROM citation_support_results
+            WHERE candidate_id = ?
+            """,
+            (candidate_id,),
+        ).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["support_status"] == "verified_quote_in_source"
+    assert rows[0]["support_level"] == "quote"
+    assert rows[0]["quote_hash"] == quote_hash
 
 
 def test_citation_support_integrity_fails_hash_mismatch(tmp_path: Path):
@@ -464,6 +477,14 @@ def test_citation_support_integrity_fails_hash_mismatch(tmp_path: Path):
 
     assert not outcome.passed
     assert cast(list[object], outcome.details["hash_mismatch"])
+    with repo.db_connection(db_path, read_only=True) as conn:
+        row = conn.execute(
+            "SELECT support_status, reason FROM citation_support_results WHERE candidate_id = ?",
+            (candidate_id,),
+        ).fetchone()
+    assert row is not None
+    assert row["support_status"] == "quote_hash_mismatch"
+    assert "quoted_text_hash mismatch" in str(row["reason"])
 
 
 def test_citation_support_integrity_accepts_ordered_ellipsis_fragments(tmp_path: Path):
@@ -503,6 +524,53 @@ def test_citation_support_integrity_accepts_ordered_ellipsis_fragments(tmp_path:
         outcome = run_validation(conn, gate_name="citation_support_integrity", target_type="candidate", target_id=candidate_id)
 
     assert outcome.passed
+
+
+def test_citation_support_integrity_replaces_prior_support_results(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    quote = "The tenant must pay rent by 1 May."
+    with repo.db_connection(db_path) as conn:
+        source_id = repo.add_source(conn, path="/raw/lease.pdf", sha256="c" * 64)
+        repo.add_artifact(
+            conn,
+            path="/candidate/lease-extract.txt",
+            artifact_type="extracted_text",
+            content=quote,
+            source_ids=[source_id],
+        )
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="citation-support-replace",
+                title="Citation support replace",
+                task_type="draft",
+                stage=LegalStage.S8_DRAFT_PREPARATION,
+                source_dependencies=[source_id],
+            ),
+        )
+        packet = cited_fact_packet("citation-support-replace", source_id)
+        citation = cast(list[dict[str, object]], packet["citations"])[0]
+        citation["quote"] = quote
+        citation.pop("quoted_text_hash", None)
+        candidate_id = repo.record_candidate_output(
+            conn,
+            task_id="citation-support-replace",
+            lease_id=None,
+            worker_id="worker-1",
+            output_type="worker_result_packet",
+            payload=packet,
+        )
+        first = run_validation(conn, gate_name="citation_support_integrity", target_type="candidate", target_id=candidate_id)
+        second = run_validation(conn, gate_name="citation_support_integrity", target_type="candidate", target_id=candidate_id)
+        count = conn.execute(
+            "SELECT COUNT(*) AS n FROM citation_support_results WHERE candidate_id = ?",
+            (candidate_id,),
+        ).fetchone()
+
+    assert first.passed
+    assert second.passed
+    assert count is not None
+    assert count["n"] == 1
 
 
 def _authority_law_packet(task_id: str, authority_id: str) -> dict[str, object]:

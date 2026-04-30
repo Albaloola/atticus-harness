@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-import hashlib
 import json
 import re
 import sqlite3
 from typing import cast, Protocol
 
 from atticus.db import repo
+from atticus.validation.citation_support import validate_candidate_citation_support
 from atticus.workers.citation_context import allowed_citation_targets_for_task, proof_citation_targets_for_task
 from atticus.workers.result_parser import RESULT_PACKET_SCHEMA_VERSION, ResultPacketError, parse_result
 
@@ -457,164 +457,8 @@ def validate_citation_integrity(conn: sqlite3.Connection, *, target_type: str, t
 def validate_citation_support_integrity(conn: sqlite3.Connection, *, target_type: str, target_id: str) -> tuple[bool, dict[str, object]]:
     if target_type != "candidate":
         return False, {"error": "citation_support_integrity must target candidate"}
-    row = cast(
-        SqlRow | None,
-        conn.execute(
-            """
-            SELECT co.payload_json, co.task_id, t.stage, t.task_type
-            FROM candidate_outputs co
-            JOIN tasks t ON t.task_id = co.task_id
-            WHERE co.candidate_id = ?
-            """,
-            (target_id,),
-        ).fetchone(),
-    )
-    if row is None:
-        return False, {"error": "candidate output not found"}
-    try:
-        payload = json.loads(str(row["payload_json"]))
-        if not isinstance(payload, Mapping):
-            return False, {"error": "candidate output payload must be a JSON object"}
-        task_id = str(row["task_id"])
-        packet = parse_result(
-            {str(key): value for key, value in cast(Mapping[object, object], payload).items()},
-            allowed_citation_targets=allowed_citation_targets_for_task(conn, task_id=task_id),
-            proof_citation_targets=proof_citation_targets_for_task(conn, task_id=task_id),
-        )
-    except (json.JSONDecodeError, ResultPacketError) as exc:
-        return False, {"error": str(exc)}
-
-    stage = str(row["stage"] or "")
-    task_type = str(row["task_type"] or "")
-    required = stage in {"S6", "S7", "S8", "S9"} or task_type in {
-        "authority_map",
-        "authority_audit",
-        "citation_audit",
-        "citation_repair",
-        "draft",
-        "draft_preparation",
-        "final_quality_gate",
-        "hostile_opponent_review",
-        "hostile_review",
-    }
-    if not required:
-        return True, {
-            "required": False,
-            "quote_support_checked": False,
-            "reason": "quote support is not mandatory for this stage/task type",
-        }
-
-    citations_by_id = {str(citation["citation_id"]): citation for citation in packet.citations}
-    missing_quote: list[dict[str, str]] = []
-    hash_mismatch: list[dict[str, str]] = []
-    quote_not_found: list[dict[str, str]] = []
-    checked: list[dict[str, str]] = []
-    material_types = {"fact", "law", "procedure", "contradiction", "risk"}
-    material_statuses = {"supported", "inferred", "contradicted"}
-    for finding in packet.findings:
-        finding_id = str(finding.get("finding_id") or "")
-        finding_type = str(finding.get("finding_type") or "")
-        reasoning_status = str(finding.get("reasoning_status") or "")
-        if finding_type not in material_types or reasoning_status not in material_statuses:
-            continue
-        for citation_id in [str(item) for item in cast(list[object], finding.get("citation_ids") or []) if str(item)]:
-            citation = citations_by_id.get(citation_id)
-            if citation is None:
-                continue
-            quote = str(citation.get("quote") or citation.get("excerpt") or "").strip()
-            target_type_raw = str(citation.get("target_type") or "")
-            target_id_raw = str(citation.get("target_id") or "")
-            if not quote:
-                missing_quote.append({"finding_id": finding_id, "citation_id": citation_id, "target": f"{target_type_raw}:{target_id_raw}"})
-                continue
-            expected_hash = str(citation.get("quoted_text_hash") or "").strip().lower()
-            actual_hash = _normalized_quote_sha256(quote)
-            if expected_hash and expected_hash != actual_hash:
-                hash_mismatch.append({"finding_id": finding_id, "citation_id": citation_id, "expected": expected_hash, "actual": actual_hash})
-                continue
-            if target_type_raw == "source" and not _quote_found_in_source_material(conn, source_id=target_id_raw, quote=quote):
-                quote_not_found.append({"finding_id": finding_id, "citation_id": citation_id, "target": f"source:{target_id_raw}"})
-                continue
-            checked.append({"finding_id": finding_id, "citation_id": citation_id, "target": f"{target_type_raw}:{target_id_raw}"})
-
-    passed = not (missing_quote or hash_mismatch or quote_not_found)
-    return passed, {
-        "required": True,
-        "quote_support_checked": True,
-        "semantic_support_checked": False,
-        "checked_citations": checked,
-        "missing_quote": missing_quote,
-        "hash_mismatch": hash_mismatch,
-        "quote_not_found": quote_not_found,
-        "note": "This deterministic gate verifies quoted text/hash presence; it does not infer legal semantic support.",
-    }
-
-
-def _normalized_quote_sha256(text: str) -> str:
-    return hashlib.sha256(_normalize_quote_text(text).encode("utf-8")).hexdigest()
-
-
-def _normalize_quote_text(text: str) -> str:
-    return " ".join(text.split()).strip()
-
-
-def _quote_found_in_source_material(conn: sqlite3.Connection, *, source_id: str, quote: str) -> bool:
-    normalized_quote = _normalize_quote_text(quote).casefold()
-    if not normalized_quote:
-        return False
-    rows = cast(
-        list[SqlRow],
-        conn.execute(
-            """
-            SELECT a.content
-            FROM artifacts a
-            JOIN artifact_sources af ON af.artifact_id = a.artifact_id
-            WHERE af.source_id = ? AND a.stale = 0
-            UNION
-            SELECT a.content
-            FROM extraction_records er
-            JOIN artifacts a ON a.artifact_id = er.artifact_id
-            WHERE er.source_id = ? AND a.stale = 0
-            UNION
-            SELECT a.content
-            FROM ocr_records ocr
-            JOIN artifacts a ON a.artifact_id = ocr.artifact_id
-            WHERE ocr.source_id = ? AND a.stale = 0
-            UNION
-            SELECT a.content
-            FROM transcription_records tr
-            JOIN artifacts a ON a.artifact_id = tr.artifact_id
-            WHERE tr.source_id = ? AND a.stale = 0
-            """,
-            (source_id, source_id, source_id, source_id),
-        ).fetchall(),
-    )
-    for row in rows:
-        normalized_content = _normalize_quote_text(str(row["content"] or "")).casefold()
-        if _quote_matches_text(normalized_quote, normalized_content):
-            return True
-    return False
-
-
-def _quote_matches_text(normalized_quote: str, normalized_content: str) -> bool:
-    if normalized_quote in normalized_content:
-        return True
-    if "..." not in normalized_quote and "…" not in normalized_quote:
-        return False
-    fragments = [
-        fragment.strip()
-        for fragment in re.split(r"(?:\.{3,}|…)", normalized_quote)
-        if len(fragment.strip()) >= 3
-    ]
-    if not fragments:
-        return False
-    position = 0
-    for fragment in fragments:
-        index = normalized_content.find(fragment, position)
-        if index < 0:
-            return False
-        position = index + len(fragment)
-    return True
+    summary = validate_candidate_citation_support(conn, target_id)
+    return summary.passed, summary.details
 
 
 def validate_privacy_redaction(conn: sqlite3.Connection, *, target_type: str, target_id: str) -> tuple[bool, dict[str, object]]:

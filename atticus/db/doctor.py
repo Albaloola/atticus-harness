@@ -234,6 +234,24 @@ REQUIRED_COLUMNS: dict[str, frozenset[str]] = {
             "updated_at",
         }
     ),
+    "citation_support_results": frozenset(
+        {
+            "citation_support_result_id",
+            "matter_scope",
+            "candidate_id",
+            "artifact_id",
+            "finding_id",
+            "citation_id",
+            "target_type",
+            "target_id",
+            "quote_text",
+            "quote_hash",
+            "support_status",
+            "support_level",
+            "reason",
+            "created_at",
+        }
+    ),
 }
 
 

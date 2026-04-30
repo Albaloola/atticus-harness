@@ -8,7 +8,7 @@ the legal operating model.
 
 from __future__ import annotations
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 DDL = """
 PRAGMA foreign_keys = ON;
@@ -306,6 +306,23 @@ CREATE TABLE IF NOT EXISTS validation_results (
   passed INTEGER NOT NULL CHECK(passed IN (0, 1)),
   severity TEXT NOT NULL DEFAULT 'info',
   details_json TEXT NOT NULL CHECK(json_valid(details_json)),
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS citation_support_results (
+  citation_support_result_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL,
+  candidate_id TEXT,
+  artifact_id TEXT,
+  finding_id TEXT NOT NULL,
+  citation_id TEXT NOT NULL,
+  target_type TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  quote_text TEXT NOT NULL DEFAULT '',
+  quote_hash TEXT NOT NULL DEFAULT '',
+  support_status TEXT NOT NULL,
+  support_level TEXT NOT NULL DEFAULT '',
+  reason TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL
 ) STRICT;
 
@@ -810,6 +827,10 @@ CREATE INDEX IF NOT EXISTS budget_entries_budget_idx ON budget_entries(budget_id
 CREATE INDEX IF NOT EXISTS error_logs_target_idx ON error_logs(target_type, target_id, created_at);
 CREATE INDEX IF NOT EXISTS error_logs_signature_idx ON error_logs(error_signature, created_at);
 CREATE INDEX IF NOT EXISTS citation_spans_target_idx ON citation_spans(target_type, target_id);
+CREATE INDEX IF NOT EXISTS citation_support_results_candidate_idx
+ON citation_support_results(matter_scope, candidate_id, created_at);
+CREATE INDEX IF NOT EXISTS citation_support_results_target_idx
+ON citation_support_results(target_type, target_id);
 CREATE INDEX IF NOT EXISTS candidate_outputs_task_idx ON candidate_outputs(task_id, status);
 CREATE INDEX IF NOT EXISTS tracked_files_status_idx ON tracked_files(status, file_kind);
 CREATE INDEX IF NOT EXISTS search_index_entries_lookup_idx ON search_index_entries(index_name, record_type, record_id);
