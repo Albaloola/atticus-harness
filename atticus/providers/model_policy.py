@@ -453,6 +453,19 @@ def resolve_provider_policy_from_parent(
             task_type=str(proposed_task.get("task_type") or ""),
             task_id=str(proposed_task.get("task_id") or ""),
         )
+    if _parent_uses_smart_decision(parent_provider_policy):
+        return smart_provider_policy_for_route(
+            default_smart_model_policy(),
+            layer=layer,
+            stage=str(proposed_task.get("stage") or ""),
+            task_type=str(proposed_task.get("task_type") or ""),
+            task_id=str(proposed_task.get("task_id") or ""),
+            matter_scope=str(proposed_task.get("matter_scope") or "atticus"),
+            expected_value=_float_value(proposed_task.get("expected_value"), default=0.0),
+            source_count=_int_value(proposed_task.get("source_count"), default=0),
+            extracted_char_count=_int_value(proposed_task.get("extracted_char_count"), default=0),
+            requested_capabilities=_string_tuple_or_empty(proposed_task.get("validation_gates")),
+        )
     if _is_legacy_flat_provider_policy(parent_provider_policy):
         return dict(parent_provider_policy)
     return {}

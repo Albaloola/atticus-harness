@@ -8,6 +8,7 @@ import sqlite3
 from typing import cast
 
 ORIENTATION_ONLY_ARTIFACT_TYPES = {
+    "draft_complaint",
     "extracted_text",
     "extraction_record",
     "ocr_extract",
@@ -29,6 +30,36 @@ PROOF_ARTIFACT_TYPES = {
     "privacy_redaction_audit",
     "final_quality_gate",
 }
+REVIEW_OR_REPAIR_TASK_TYPES = {
+    "authority_audit",
+    "citation_audit",
+    "citation_fix",
+    "citation_repair",
+    "final_quality_gate",
+    "hostile_opponent_review",
+    "privacy_review",
+    "privacy_redaction_verification",
+    "privacy_redaction_application",
+    "privacy_redaction_audit",
+    "privacy_redaction_implementation",
+    "privacy_redaction_review",
+    "redaction_application",
+    "redaction_fix",
+    "redaction_implementation",
+    "redaction_repair",
+    "redaction_review",
+    "redaction_verification",
+}
+REVIEW_PROOF_ARTIFACT_TYPES = {
+    "citation_audit",
+    "draft",
+    "draft_complaint",
+    "final_quality_gate",
+    "hostile_review",
+    "privacy_redaction_audit",
+    "redacted_draft",
+    "redaction_annotation",
+}
 
 
 def allowed_citation_targets_for_task(conn: sqlite3.Connection, *, task_id: str) -> dict[str, set[str]]:
@@ -36,7 +67,7 @@ def allowed_citation_targets_for_task(conn: sqlite3.Connection, *, task_id: str)
     if task is None:
         return {}
     matter_scope = str(task["matter_scope"])
-    source_ids = _string_list_from_json(task["source_dependencies_json"])
+    source_ids = _source_dependency_ids_for_task(conn, task=task, matter_scope=matter_scope)
     artifact_ids = _artifact_dependency_ids_for_task(conn, task=task, matter_scope=matter_scope)
     return {
         "source": _ids_for_matter_subset(conn, "sources", "source_id", matter_scope, source_ids),
@@ -54,11 +85,12 @@ def proof_citation_targets_for_task(conn: sqlite3.Connection, *, task_id: str) -
     if task is None:
         return {}
     matter_scope = str(task["matter_scope"])
-    source_ids = _string_list_from_json(task["source_dependencies_json"])
+    source_ids = _source_dependency_ids_for_task(conn, task=task, matter_scope=matter_scope)
     artifact_ids = _artifact_dependency_ids_for_task(conn, task=task, matter_scope=matter_scope)
+    review_task = str(task["task_type"] or "") in REVIEW_OR_REPAIR_TASK_TYPES
     return {
         "source": _current_source_ids(conn, matter_scope=matter_scope, ids=source_ids),
-        "artifact": _proof_artifact_ids(conn, matter_scope=matter_scope, ids=artifact_ids),
+        "artifact": _proof_artifact_ids(conn, matter_scope=matter_scope, ids=artifact_ids, review_task=review_task),
         "authority": _proof_authority_ids(conn, matter_scope=matter_scope),
         "chronology_event": _ids_for_matter(conn, "chronology_events", "chronology_event_id", matter_scope),
         "claim": _ids_for_matter(conn, "claims", "claim_id", matter_scope),
@@ -83,7 +115,7 @@ def _artifact_dependency_ids_for_task(
     explicit = _string_list_from_json(task["artifact_dependencies_json"])
     task_dependency_ids = _string_list_from_json(task["task_dependencies_json"]) if "task_dependencies_json" in task.keys() else []
     if not task_dependency_ids:
-        return explicit
+        return _artifact_dependency_closure(conn, matter_scope=matter_scope, artifact_ids=explicit)
     rows = conn.execute(
         """
         SELECT artifact_id
@@ -95,7 +127,75 @@ def _artifact_dependency_ids_for_task(
         """ % ",".join("?" for _ in task_dependency_ids),
         (matter_scope, *task_dependency_ids),
     ).fetchall()
-    return list(dict.fromkeys([*explicit, *(str(row["artifact_id"]) for row in rows)]))
+    direct = list(dict.fromkeys([*explicit, *(str(row["artifact_id"]) for row in rows)]))
+    return _artifact_dependency_closure(conn, matter_scope=matter_scope, artifact_ids=direct)
+
+
+def _artifact_dependency_closure(
+    conn: sqlite3.Connection,
+    *,
+    matter_scope: str,
+    artifact_ids: list[str],
+) -> list[str]:
+    """Include same-matter artifact dependencies reachable from task artifacts.
+
+    Review tasks often depend on a draft artifact, and that draft artifact is
+    graph-linked to the evidence registry, authority map, or source bundle it
+    used. Those upstream artifacts are legitimate citation context for review,
+    while arbitrary same-matter artifacts remain excluded.
+    """
+
+    ordered = list(dict.fromkeys(artifact_ids))
+    seen = set(ordered)
+    frontier = list(ordered)
+    while frontier:
+        placeholders = ",".join("?" for _ in frontier)
+        rows = conn.execute(
+            f"""
+            SELECT DISTINCT ad.dependency_artifact_id
+            FROM artifact_dependencies ad
+            JOIN artifacts a ON a.artifact_id = ad.dependency_artifact_id
+            WHERE a.matter_scope = ?
+              AND a.stale = 0
+              AND ad.artifact_id IN ({placeholders})
+            ORDER BY ad.dependency_artifact_id
+            """,
+            (matter_scope, *frontier),
+        ).fetchall()
+        frontier = []
+        for row in rows:
+            artifact_id = str(row["dependency_artifact_id"])
+            if artifact_id in seen:
+                continue
+            seen.add(artifact_id)
+            ordered.append(artifact_id)
+            frontier.append(artifact_id)
+    return ordered
+
+
+def _source_dependency_ids_for_task(
+    conn: sqlite3.Connection,
+    *,
+    task: Mapping[str, object],
+    matter_scope: str,
+) -> list[str]:
+    explicit = _string_list_from_json(task["source_dependencies_json"])
+    artifact_ids = _artifact_dependency_ids_for_task(conn, task=task, matter_scope=matter_scope)
+    if not artifact_ids:
+        return explicit
+    rows = conn.execute(
+        """
+        SELECT DISTINCT s.source_id
+        FROM artifact_sources ars
+        JOIN sources s ON s.source_id = ars.source_id
+        WHERE s.matter_scope = ?
+          AND s.stale = 0
+          AND ars.artifact_id IN (%s)
+        ORDER BY s.source_id
+        """ % ",".join("?" for _ in artifact_ids),
+        (matter_scope, *artifact_ids),
+    ).fetchall()
+    return list(dict.fromkeys([*explicit, *(str(row["source_id"]) for row in rows)]))
 
 
 def _ids_for_matter(conn: sqlite3.Connection, table: str, column: str, matter_scope: str) -> set[str]:
@@ -125,7 +225,7 @@ def _current_source_ids(conn: sqlite3.Connection, *, matter_scope: str, ids: lis
     return {str(row["source_id"]) for row in rows}
 
 
-def _proof_artifact_ids(conn: sqlite3.Connection, *, matter_scope: str, ids: list[str]) -> set[str]:
+def _proof_artifact_ids(conn: sqlite3.Connection, *, matter_scope: str, ids: list[str], review_task: bool = False) -> set[str]:
     if not ids:
         return set()
     rows = conn.execute(
@@ -139,11 +239,12 @@ def _proof_artifact_ids(conn: sqlite3.Connection, *, matter_scope: str, ids: lis
     proof: set[str] = set()
     for row in rows:
         artifact_type = str(row["artifact_type"] or "")
+        review_proof_allowed = review_task and artifact_type in REVIEW_PROOF_ARTIFACT_TYPES
         if bool(row["stale"]):
             continue
-        if artifact_type in ORIENTATION_ONLY_ARTIFACT_TYPES:
+        if artifact_type in ORIENTATION_ONLY_ARTIFACT_TYPES and not review_proof_allowed:
             continue
-        if artifact_type not in PROOF_ARTIFACT_TYPES:
+        if artifact_type not in PROOF_ARTIFACT_TYPES and not review_proof_allowed:
             continue
         if str(row["trust_status"]) not in {"validated", "certified"}:
             continue

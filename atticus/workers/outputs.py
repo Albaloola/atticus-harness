@@ -13,7 +13,7 @@ from atticus.core.policies import TaskStatus
 from atticus.db import repo
 from atticus.scheduler.lease import LeaseError, complete_lease, require_active_lease
 from atticus.workers.citation_context import allowed_citation_targets_for_task, proof_citation_targets_for_task
-from atticus.workers.result_parser import ResultPacketError, parse_result
+from atticus.workers.result_parser import ResultPacketError, packet_as_dict, parse_result
 
 
 def record_worker_result(
@@ -40,6 +40,7 @@ def record_worker_result(
         )
         if packet.task_id != task_id:
             raise ResultPacketError(f"worker result task_id {packet.task_id!r} does not match leased task {task_id!r}")
+        payload = packet_as_dict(packet)
     except (LeaseError, ResultPacketError) as exc:
         status = "quarantined"
         quarantine_reason = _augment_quarantine_reason(conn, task_id=task_id, reason=str(exc))

@@ -56,6 +56,65 @@ def test_context_pack_sections_have_auditable_v2_metadata(tmp_path: Path):
     assert "preserve uncertainty" in str(task_content["instructions"])
 
 
+def test_work_order_instructions_prevent_uncited_supported_findings_and_absence_inference(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(conn, TaskSpec(task_id="ctx-instructions", title="Instructions", task_type="evidence_gathering", matter_scope="alpha"))
+        order = build_work_order(conn, task_id="ctx-instructions", persist_context=False)
+
+    assert "if citation_ids is empty" in order.instructions
+    assert "never label a fact, law, procedure, risk, or contradiction as supported" in order.instructions
+    assert "Supported law findings must cite at least one allowed target_type='authority'" in order.instructions
+    assert "cite the draft/review artifact that contains the defect" in order.instructions
+    assert "Negative or absence findings about a reviewed source must cite that reviewed source" in order.instructions
+    assert "redacted_draft artifacts must contain complete replacement text" in order.instructions
+    assert "original unredacted artifact as comparison evidence only" in order.instructions
+    assert "it is not proof that the matter has no records" in order.instructions
+
+
+def test_artifact_bundle_uses_full_proposed_text_for_draft_artifacts(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    full_text = "Redacted draft start. " + ("safe paragraph " * 260) + "Redacted draft tail."
+    content = json.dumps(
+        {
+            "candidate_id": "candidate-redacted",
+            "proposed_artifact": {
+                "artifact_type": "redacted_draft",
+                "content": full_text,
+            },
+        }
+    )
+    with repo.db_connection(db_path) as conn:
+        artifact_id = repo.add_artifact(
+            conn,
+            matter_scope="alpha",
+            path="candidate/redacted.md",
+            artifact_type="redacted_draft",
+            title="Redacted draft",
+            content=content,
+            trust_status="validated",
+        )
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="ctx-redacted-draft",
+                title="Verify redacted draft",
+                task_type="redaction_verification",
+                matter_scope="alpha",
+                artifact_dependencies=[artifact_id],
+            ),
+        )
+        order = build_work_order(conn, task_id="ctx-redacted-draft", persist_context=False)
+
+    sections = cast(list[Mapping[str, object]], order.context_pack["sections"])
+    artifact_bundle = next(section for section in sections if section["name"] == "artifact_bundle")
+    artifacts = cast(list[Mapping[str, object]], artifact_bundle["content"])
+
+    assert artifacts[0]["content_source"] == "proposed_artifact.content"
+    assert artifacts[0]["content_truncated"] is False
+    assert "Redacted draft tail." in str(artifacts[0]["content_excerpt"])
+
+
 def test_context_diagnostics_reports_stale_dependencies_and_counts(tmp_path: Path):
     db_path = init_db(tmp_path)
     with repo.db_connection(db_path) as conn:

@@ -652,6 +652,133 @@ def test_proposed_tasks_from_smart_parent_recompute_model_decision(tmp_path: Pat
     assert decision["model"] == followup_policy["model"]
 
 
+def test_proposed_tasks_from_smart_flat_parent_recompute_child_model_decision(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    parent_policy: dict[str, object] = {
+        "provider": "openrouter",
+        "model": "deepseek/deepseek-v4-pro",
+        "runtime": "openrouter",
+        "allow_fallback": False,
+        "estimated_cost_usd": 0.04,
+        "model_decision": {
+            "provider": "openrouter",
+            "model": "deepseek/deepseek-v4-pro",
+            "runtime": "openrouter",
+            "profile_id": "manual_pro",
+            "decision_reason": "manual parent route",
+            "decision_tier": "pro_orchestrator",
+            "fallback_allowed": False,
+            "required_human_review": False,
+            "policy_fingerprint": "",
+            "input_fingerprint": "",
+        },
+        "model_decision_reason": "manual parent route",
+    }
+    with repo.db_connection(db_path) as conn:
+        artifact_id = repo.add_artifact(
+            conn,
+            matter_scope="atticus",
+            path="candidate/redacted-draft.md",
+            artifact_type="redacted_draft",
+            title="Redacted draft",
+            content="draft",
+        )
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="smart-flat-parent",
+                title="Smart flat parent",
+                task_type="source_inventory",
+                stage=LegalStage.S0_SOURCE_INVENTORY,
+                provider_policy=parent_policy,
+            ),
+        )
+        lease_id = acquire_lease(conn, task_id="smart-flat-parent", worker_id="worker-01", dry_run=False)
+        candidate_id = record_worker_result(
+            conn,
+            task_id="smart-flat-parent",
+            lease_id=lease_id,
+            worker_id="worker-01",
+            payload=_v2_packet(
+                "smart-flat-parent",
+                proposed_tasks=[
+                    {
+                        "task_id": "redaction-fix-followup",
+                        "title": "Redaction fix followup",
+                        "task_type": "redaction_fix",
+                        "stage": "S9",
+                        "matter_scope": "atticus",
+                        "instructions": "Repair a scoped redaction defect.",
+                        "artifact_dependencies": [artifact_id],
+                    },
+                ],
+            ),
+        )
+
+        result = run_free_loop_once(conn, output_dir=tmp_path / "out", capacity=0, execute_workers=False)
+        followup_policy = _json_mapping(_text_value(conn, "SELECT provider_policy_json FROM tasks WHERE task_id = 'redaction-fix-followup'"))
+
+    decision = _mapping_value(followup_policy["model_decision"])
+    assert result["reduced_candidates"] == [candidate_id]
+    assert followup_policy["model"] == "deepseek/deepseek-v4-pro"
+    assert decision["decision_tier"] == "pro_orchestrator"
+    assert decision["required_human_review"] is True
+    assert decision["decision_reason"] != "manual parent route"
+
+
+def test_proposed_tasks_normalize_cost_limit_below_policy_estimate(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    parent_policy = smart_provider_policy_for_route(
+        default_smart_model_policy(),
+        layer="worker",
+        stage="S0",
+        task_type="source_inventory",
+        task_id="smart-parent-cost",
+    )
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="smart-parent-cost",
+                title="Smart parent cost",
+                task_type="source_inventory",
+                stage=LegalStage.S0_SOURCE_INVENTORY,
+                provider_policy=parent_policy,
+            ),
+        )
+        lease_id = acquire_lease(conn, task_id="smart-parent-cost", worker_id="worker-01", dry_run=False)
+        candidate_id = record_worker_result(
+            conn,
+            task_id="smart-parent-cost",
+            lease_id=lease_id,
+            worker_id="worker-01",
+            payload=_v2_packet(
+                "smart-parent-cost",
+                proposed_tasks=[
+                    {
+                        "task_id": "zero-limit-followup",
+                        "title": "Zero limit followup",
+                        "task_type": "extraction_qa",
+                        "stage": "S1",
+                        "matter_scope": "atticus",
+                        "instructions": "Follow up extraction quality.",
+                        "cost_limit_usd": 0.0,
+                    },
+                ],
+            ),
+        )
+
+        result = run_free_loop_once(conn, output_dir=tmp_path / "out", capacity=0, execute_workers=False)
+        row = conn.execute("SELECT cost_limit_usd, provider_policy_json FROM tasks WHERE task_id = 'zero-limit-followup'").fetchone()
+        event_count = _scalar_int(conn, "SELECT COUNT(*) FROM events WHERE event_type = 'proposed_task.cost_limit_normalized'")
+
+    assert result["reduced_candidates"] == [candidate_id]
+    assert row is not None
+    assert float(str(row["cost_limit_usd"])) == pytest.approx(0.01)
+    assert _json_mapping(str(row["provider_policy_json"]))["estimated_cost_usd"] == pytest.approx(0.01)
+    assert event_count == 1
+
+
 def test_proposed_tasks_from_smart_parent_preserve_blocked_explicit_routes(tmp_path: Path):
     db_path = init_db(tmp_path)
     raw_policy = default_smart_model_policy().as_dict()

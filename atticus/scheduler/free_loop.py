@@ -30,6 +30,16 @@ from atticus.scheduler.planner import select_runnable_tasks
 from atticus.workers.proposed_tasks import import_proposed_tasks_from_candidate
 from atticus.workers.runtime import execute_codex_work_order, execute_local_work_order, execute_openrouter_work_order
 
+
+OPENROUTER_TRANSIENT_BLOCKER_PREFIXES = (
+    "OpenRouter provider call failed after dispatch: OpenRouter response did not contain a JSON message",
+    "OpenRouter provider call failed after dispatch: OpenRouter returned invalid JSON",
+    "OpenRouter provider call failed after dispatch: OpenRouter network error",
+    "OpenRouter provider call failed after dispatch: OpenRouter request failed",
+    "OpenRouter provider call failed after dispatch: OpenRouter HTTP 5",
+)
+
+
 def run_free_loop_once(
     conn: sqlite3.Connection,
     *,
@@ -250,7 +260,7 @@ def _resolved_transient_blocker_prefixes(
         return ()
     effective_env = env if env is not None else os.environ
     if runtime == "openrouter" and effective_env.get("ATTICUS_ENABLE_LIVE_OPENROUTER") == "1":
-        return (LIVE_OPENROUTER_NOT_ENABLED_BLOCKER,)
+        return (LIVE_OPENROUTER_NOT_ENABLED_BLOCKER, *OPENROUTER_TRANSIENT_BLOCKER_PREFIXES)
     if runtime == "codex" and effective_env.get("ATTICUS_ENABLE_LIVE_CODEX") == "1":
         return (LIVE_CODEX_NOT_ENABLED_BLOCKER,)
     return ()
@@ -276,6 +286,12 @@ def _openrouter_preflight_error(
         return {"task_id": task_id, "error": "OpenRouter preflight provider policy must be a JSON object"}
     probe = probe_live_openrouter(provider_policy, env=env if env is not None else os.environ)
     if probe.get("ok") is True:
+        _ = repo.resolve_provider_control_plane_attention(
+            conn,
+            matter_scope=matter_scope,
+            provider="openrouter",
+            resolution_source="provider.preflight_ok",
+        )
         return None
     reason = str(probe.get("reason") or "OpenRouter preflight failed")
     message = f"OpenRouter preflight failed before leasing {len(runnable_tasks)} runnable task(s): {reason}"

@@ -39,7 +39,12 @@ FOUNDATION_ARTIFACT_TYPES_BY_TASK_TYPE = {
     "draft_preparation": "draft",
     "citation_audit": "citation_audit",
     "hostile_opponent_review": "hostile_review",
+    "privacy_review": "privacy_redaction_audit",
     "privacy_redaction_audit": "privacy_redaction_audit",
+    "privacy_redaction_review": "privacy_redaction_audit",
+    "privacy_redaction_verification": "privacy_redaction_audit",
+    "redaction_review": "privacy_redaction_audit",
+    "redaction_verification": "privacy_redaction_audit",
     "final_quality_gate": "final_quality_gate",
 }
 
@@ -54,7 +59,12 @@ MATTER_CERTIFICATIONS_BY_TASK_TYPE = {
     "draft_preparation": "draft_preparation",
     "citation_audit": "citation_audit",
     "hostile_opponent_review": "hostile_review",
+    "privacy_review": "privacy_redaction_audit",
     "privacy_redaction_audit": "privacy_redaction_audit",
+    "privacy_redaction_review": "privacy_redaction_audit",
+    "privacy_redaction_verification": "privacy_redaction_audit",
+    "redaction_review": "privacy_redaction_audit",
+    "redaction_verification": "privacy_redaction_audit",
     "final_quality_gate": "final_quality_gate",
 }
 
@@ -533,6 +543,18 @@ def _certification_blocker(*, certification_type: str, packet: Mapping[str, obje
         return "authority map contains no cited legal or procedural findings"
     if certification_type == "chronology_citations" and not _has_cited_finding_type(packet, {"fact", "procedure", "inference", "contradiction"}):
         return "chronology contains no cited event findings"
+    if certification_type == "citation_audit" and (
+        _packet_items(packet, "contradictions") or _packet_items(packet, "risk_flags") or _audit_artifact_reports_failure(packet)
+    ):
+        return "citation audit found defects requiring repair before certification"
+    if certification_type == "privacy_redaction_audit" and (
+        _packet_items(packet, "redaction_flags") or _packet_items(packet, "risk_flags") or _audit_artifact_reports_failure(packet)
+    ):
+        return "privacy audit found redaction defects requiring repair before certification"
+    if certification_type == "final_quality_gate" and (
+        _packet_items(packet, "contradictions") or _packet_items(packet, "risk_flags") or _audit_artifact_reports_failure(packet)
+    ):
+        return "final quality gate found unresolved defects"
     return ""
 
 
@@ -569,6 +591,14 @@ def _is_evidence_citation(citation: Mapping[str, object]) -> bool:
 
 def _evidence_citation_count(packet: Mapping[str, object]) -> int:
     return sum(1 for citation in _packet_items(packet, "citations") if _is_evidence_citation(citation))
+
+
+def _audit_artifact_reports_failure(packet: Mapping[str, object]) -> bool:
+    for artifact in _packet_items(packet, "proposed_artifacts"):
+        content = str(artifact.get("content") or "").lower()
+        if "overall result: fail" in content or "overall result: failed" in content:
+            return True
+    return False
 
 
 def _has_cited_finding_type(packet: Mapping[str, object], finding_types: set[str]) -> bool:

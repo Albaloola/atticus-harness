@@ -120,6 +120,83 @@ def test_free_loop_once_reduces_pending_candidates_and_imports_proposed_tasks(tm
     assert provider_runs == 0
 
 
+def test_free_loop_requeues_transient_openrouter_json_failure_when_live_enabled(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    reason = (
+        "OpenRouter provider call failed after dispatch: "
+        "OpenRouter response did not contain a JSON message: Unterminated string"
+    )
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="json-transient",
+                title="JSON transient",
+                task_type="source_inventory",
+                provider_policy={
+                    "provider": "openrouter",
+                    "model": "deepseek/deepseek-v4-flash",
+                    "allow_fallback": False,
+                    "estimated_cost_usd": 0.01,
+                },
+                status=TaskStatus.BLOCKED,
+            ),
+        )
+        repo.update_task_blocked(conn, "json-transient", [reason])
+
+        result = run_free_loop_once(
+            conn,
+            output_dir=tmp_path / "out",
+            capacity=1,
+            execute_workers=False,
+            runtime="openrouter",
+            allow_live=True,
+            env={"ATTICUS_ENABLE_LIVE_OPENROUTER": "1"},
+        )
+        task = cast(Mapping[str, object], conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'json-transient'").fetchone())
+
+    assert result["leased_tasks"] == ["json-transient"]
+    assert task["status"] == str(TaskStatus.LEASED)
+    assert json.loads(str(task["blocked_reasons_json"])) == []
+
+
+def test_free_loop_does_not_requeue_openrouter_auth_failure_as_transient(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    reason = "OpenRouter provider call failed after dispatch: OpenRouter HTTP 401: unauthorized"
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="auth-terminal",
+                title="Auth terminal",
+                task_type="source_inventory",
+                provider_policy={
+                    "provider": "openrouter",
+                    "model": "deepseek/deepseek-v4-flash",
+                    "allow_fallback": False,
+                    "estimated_cost_usd": 0.01,
+                },
+                status=TaskStatus.BLOCKED,
+            ),
+        )
+        repo.update_task_blocked(conn, "auth-terminal", [reason])
+
+        result = run_free_loop_once(
+            conn,
+            output_dir=tmp_path / "out",
+            capacity=1,
+            execute_workers=False,
+            runtime="openrouter",
+            allow_live=True,
+            env={"ATTICUS_ENABLE_LIVE_OPENROUTER": "1"},
+        )
+        task = cast(Mapping[str, object], conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'auth-terminal'").fetchone())
+
+    assert result["leased_tasks"] == []
+    assert task["status"] == str(TaskStatus.BLOCKED)
+    assert json.loads(str(task["blocked_reasons_json"])) == [reason]
+
+
 def test_free_loop_once_skips_high_stage_auto_reduction(tmp_path: Path):
     db_path = init_db(tmp_path)
     with repo.db_connection(db_path) as conn:

@@ -41,6 +41,17 @@ CITATION_REQUIRED_KEYS = frozenset({"citation_id", "target_type", "target_id", "
 CITATION_ALLOWED_KEYS = CITATION_REQUIRED_KEYS | frozenset({"quoted_text_hash", "quote", "excerpt"})
 PROPOSED_ARTIFACT_REQUIRED_KEYS = frozenset({"path", "artifact_type", "stage", "title", "content"})
 PROPOSED_ARTIFACT_ALLOWED_KEYS = PROPOSED_ARTIFACT_REQUIRED_KEYS
+FULL_TEXT_ARTIFACT_TYPES = frozenset({"complaint_draft", "draft", "draft_complaint", "redacted_draft"})
+INCOMPLETE_DRAFT_MARKERS = (
+    "[remaining",
+    "[conclusion unchanged",
+    "[remaining complaint content",
+    "remaining legal arguments unchanged",
+    "remaining complaint content",
+    "conclusion unchanged",
+    "content omitted",
+    "not reproduced",
+)
 PROPOSED_TASK_REQUIRED_KEYS = frozenset({"task_id", "title", "task_type", "stage", "matter_scope", "instructions"})
 PROPOSED_TASK_ALLOWED_KEYS = PROPOSED_TASK_REQUIRED_KEYS | frozenset(
     {
@@ -105,10 +116,26 @@ def parse_result(
     )
     proposed_artifacts = _validate_proposed_artifacts(_list_value(payload, "proposed_artifacts"))
     proposed_tasks = _validate_proposed_tasks(_list_value(payload, "proposed_tasks"))
-    uncertainties = _mapping_list("uncertainties", _list_value(payload, "uncertainties"))
-    contradictions = _mapping_list("contradictions", _list_value(payload, "contradictions"))
-    risk_flags = _mapping_list("risk_flags", _list_value(payload, "risk_flags"))
-    redaction_flags = _mapping_list("redaction_flags", _list_value(payload, "redaction_flags"))
+    uncertainties = _validate_auxiliary_citation_references(
+        "uncertainties",
+        _list_value(payload, "uncertainties"),
+        citations_by_id=citations_by_id,
+    )
+    contradictions = _validate_auxiliary_citation_references(
+        "contradictions",
+        _list_value(payload, "contradictions"),
+        citations_by_id=citations_by_id,
+    )
+    risk_flags = _validate_auxiliary_citation_references(
+        "risk_flags",
+        _list_value(payload, "risk_flags"),
+        citations_by_id=citations_by_id,
+    )
+    redaction_flags = _validate_auxiliary_citation_references(
+        "redaction_flags",
+        _list_value(payload, "redaction_flags"),
+        citations_by_id=citations_by_id,
+    )
     external_action_requests = _mapping_list("external_action_requests", _list_value(payload, "external_action_requests"))
     if external_action_requests:
         raise ResultPacketError("external action requests are blocked")
@@ -185,7 +212,11 @@ def result_packet_json_schema() -> dict[str, object]:
                     "additionalProperties": False,
                     "required": sorted(PROPOSED_ARTIFACT_REQUIRED_KEYS),
                     "properties": {
-                        "path": {"type": "string", "minLength": 1},
+                        "path": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": "Relative candidate artifact path. Use candidate/<task_id>/<filename>; never use /home, /tmp, or another absolute filesystem path.",
+                        },
                         "artifact_type": {"type": "string", "minLength": 1},
                         "stage": {"type": "string"},
                         "title": {"type": "string"},
@@ -298,11 +329,37 @@ def _validate_findings(
                 if proof_citation_targets is not None and target_id not in proof_citation_targets.get(target_type, set()):
                     continue
                 proof_targets.add(target_type)
+            if finding_type == "law" and "authority" not in proof_targets:
+                raise ResultPacketError(
+                    f"findings[{index}] supported law findings require at least one proof-allowed authority citation; sources may establish case facts but not legal-rule support"
+                )
             if not proof_targets.intersection(EVIDENCE_CITATION_TARGET_TYPES):
                 raise ResultPacketError(
                     f"findings[{index}] {finding_type} findings require proof-allowed source, artifact, authority, chronology_event, or claim evidence citations; memory, validation_result, derivative extraction artifacts, stale artifacts, and rough drafts are orientation only"
                 )
     return findings
+
+
+def _validate_auxiliary_citation_references(
+    field: str,
+    value: list[object],
+    *,
+    citations_by_id: Mapping[str, Mapping[str, object]],
+) -> list[dict[str, object]]:
+    items = _mapping_list(field, value)
+    for index, item in enumerate(items):
+        if "citation_ids" not in item:
+            continue
+        citation_list = item["citation_ids"]
+        if not isinstance(citation_list, list):
+            raise ResultPacketError(f"{field}[{index}].citation_ids must be an array of non-empty strings")
+        citation_items = cast(list[object], citation_list)
+        if not all(isinstance(citation_id, str) and citation_id for citation_id in citation_items):
+            raise ResultPacketError(f"{field}[{index}].citation_ids must be an array of non-empty strings")
+        missing = sorted(set(cast(list[str], citation_items)) - set(citations_by_id))
+        if missing:
+            raise ResultPacketError(f"{field}[{index}] references undefined citation ids: {', '.join(missing)}")
+    return items
 
 
 def _validate_citations(value: list[object], *, allowed_citation_targets: Mapping[str, set[str]] | None) -> list[dict[str, object]]:
@@ -338,13 +395,58 @@ def _validate_proposed_artifacts(value: list[object]) -> list[dict[str, object]]
             required=PROPOSED_ARTIFACT_REQUIRED_KEYS,
         )
         path = _required_item_string(f"proposed_artifacts[{index}]", artifact, "path")
-        if path.startswith("/") or ".." in path.split("/"):
+        normalized_path = _normalize_proposed_artifact_path(path)
+        first_part = normalized_path.split("/", 1)[0]
+        if (
+            not normalized_path
+            or "\x00" in normalized_path
+            or ".." in normalized_path.split("/")
+            or normalized_path.startswith(("/", "~/", "~\\"))
+            or first_part.endswith(":")
+        ):
             raise ResultPacketError(f"proposed_artifacts[{index}].path must be a relative safe path")
-        _ = _required_item_string(f"proposed_artifacts[{index}]", artifact, "artifact_type")
+        artifact["path"] = normalized_path
+        artifact_type = _required_item_string(f"proposed_artifacts[{index}]", artifact, "artifact_type")
         _ = _required_item_string(f"proposed_artifacts[{index}]", artifact, "stage", allow_empty=True)
         _ = _required_item_string(f"proposed_artifacts[{index}]", artifact, "title", allow_empty=True)
-        _ = _required_item_string(f"proposed_artifacts[{index}]", artifact, "content", allow_empty=True)
+        content = _required_item_string(f"proposed_artifacts[{index}]", artifact, "content", allow_empty=True)
+        if artifact_type in FULL_TEXT_ARTIFACT_TYPES and _looks_like_incomplete_draft(content):
+            raise ResultPacketError(
+                f"proposed_artifacts[{index}].content for {artifact_type} must be complete replacement text, not placeholder or omitted sections"
+            )
     return artifacts
+
+
+def _looks_like_incomplete_draft(content: str) -> bool:
+    lowered = content.lower()
+    return any(marker in lowered for marker in INCOMPLETE_DRAFT_MARKERS)
+
+
+def _normalize_proposed_artifact_path(path: str) -> str:
+    """Return a safe relative candidate path or leave validation to the caller.
+
+    Live workers sometimes echo the repository path from the work order
+    examples, for example ``/home/.../matters/<matter>/03-working/foo.md``.
+    That is not a write target, but it is unambiguous Atticus-local candidate
+    material. Normalize only those known Atticus working/candidate prefixes and
+    keep arbitrary absolute paths fail-closed.
+    """
+
+    normalized = path.strip().replace("\\", "/")
+    if not normalized:
+        return ""
+    if normalized.startswith("/"):
+        looks_atticus_local = "/atticus-harness/" in normalized or "/matters/" in normalized
+        if normalized.startswith("/candidate/"):
+            normalized = f"candidate/{normalized.split('/candidate/', 1)[1]}"
+        elif "/03-working/" in normalized and looks_atticus_local:
+            normalized = f"candidate/{normalized.split('/03-working/', 1)[1]}"
+        elif "/candidate/" in normalized and looks_atticus_local:
+            normalized = f"candidate/{normalized.split('/candidate/', 1)[1]}"
+        else:
+            return normalized
+    parts = [part for part in normalized.split("/") if part and part != "."]
+    return "/".join(parts)
 
 
 def _validate_proposed_tasks(value: list[object]) -> list[dict[str, object]]:

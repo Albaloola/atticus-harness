@@ -647,6 +647,114 @@ def test_reducer_rejects_proposed_cloud_ocr_tasks_as_unconfigured_external_tools
     assert "external/cloud OCR is not a configured Atticus execution capability" in str(attention["reason"])
 
 
+def test_reducer_rejects_unscoped_search_followup_tasks(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="parent-search-reduce",
+                title="Parent search reduce",
+                task_type="evidence_search",
+                matter_scope="beta",
+                provider_policy={"provider": "openrouter", "model": "deepseek/deepseek-v4-flash", "allow_fallback": False, "estimated_cost_usd": 0.0},
+            ),
+        )
+        packet = valid_packet("parent-search-reduce")
+        packet["proposed_tasks"] = [
+            {
+                "task_id": "unscoped-search-followup",
+                "title": "Unscoped search follow-up",
+                "task_type": "evidence_search",
+                "matter_scope": "beta",
+                "stage": "S2",
+                "instructions": "Search the matter emails and case notes for related records.",
+                "source_dependencies": [],
+                "artifact_dependencies": [],
+                "task_dependencies": [],
+            },
+            {
+                "task_id": "unscoped-privacy-followup",
+                "title": "Unscoped privacy follow-up",
+                "task_type": "privacy_review",
+                "matter_scope": "beta",
+                "stage": "S9",
+                "instructions": "Review all original documents for indirect identifiers.",
+                "source_dependencies": [],
+                "artifact_dependencies": [],
+                "task_dependencies": [],
+            },
+            {
+                "task_id": "unscoped-redaction-fix",
+                "title": "Unscoped redaction fix",
+                "task_type": "redaction_fix",
+                "matter_scope": "beta",
+                "stage": "S9",
+                "instructions": "Fix any remaining redaction problems in the bundle.",
+                "source_dependencies": [],
+                "artifact_dependencies": [],
+                "task_dependencies": [],
+            }
+        ]
+        worker_lease = acquire_lease(conn, task_id="parent-search-reduce", worker_id="worker-1")
+        candidate_id = record_worker_result(
+            conn,
+            task_id="parent-search-reduce",
+            lease_id=worker_lease,
+            worker_id="worker-1",
+            payload=packet,
+        )
+        reducer_lease = acquire_lease(conn, task_id="parent-search-reduce", worker_id="reducer-1", lease_role="reducer")
+        result = reduce_candidate(conn, candidate_id=candidate_id, reducer_lease_id=reducer_lease, dry_run=False)
+        imported = conn.execute("SELECT 1 FROM tasks WHERE task_id = 'unscoped-search-followup'").fetchone()
+        privacy_imported = conn.execute("SELECT 1 FROM tasks WHERE task_id = 'unscoped-privacy-followup'").fetchone()
+        redaction_fix_imported = conn.execute("SELECT 1 FROM tasks WHERE task_id = 'unscoped-redaction-fix'").fetchone()
+        attention = cast(
+            Mapping[str, object],
+            conn.execute(
+                """
+                SELECT reason
+                FROM human_attention
+                WHERE target_type = 'proposed_task' AND target_id = 'unscoped-search-followup'
+                ORDER BY attention_id DESC
+                LIMIT 1
+                """
+            ).fetchone(),
+        )
+        privacy_attention = cast(
+            Mapping[str, object],
+            conn.execute(
+                """
+                SELECT reason
+                FROM human_attention
+                WHERE target_type = 'proposed_task' AND target_id = 'unscoped-privacy-followup'
+                ORDER BY attention_id DESC
+                LIMIT 1
+                """
+            ).fetchone(),
+        )
+        redaction_fix_attention = cast(
+            Mapping[str, object],
+            conn.execute(
+                """
+                SELECT reason
+                FROM human_attention
+                WHERE target_type = 'proposed_task' AND target_id = 'unscoped-redaction-fix'
+                ORDER BY attention_id DESC
+                LIMIT 1
+                """
+            ).fetchone(),
+        )
+
+    assert result["imported_tasks"] == []
+    assert imported is None
+    assert privacy_imported is None
+    assert redaction_fix_imported is None
+    assert "proposed source/evidence search or review has no source, artifact, or task scope" in str(attention["reason"])
+    assert "proposed source/evidence search or review has no source, artifact, or task scope" in str(privacy_attention["reason"])
+    assert "proposed source/evidence search or review has no source, artifact, or task scope" in str(redaction_fix_attention["reason"])
+
+
 def test_reducer_rejects_cross_matter_proposed_tasks_and_task_id_collisions(tmp_path: Path):
     db_path = init_db(tmp_path)
     with repo.db_connection(db_path) as conn:

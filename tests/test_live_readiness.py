@@ -353,6 +353,33 @@ def test_live_openrouter_probe_allows_paid_deepseek_endpoint_provider_provenance
     assert result["provider_policy_result"] == "openrouter_endpoint_provenance"
 
 
+def test_live_openrouter_probe_allows_versioned_deepseek_endpoint_model():
+    requested_model = "deepseek/deepseek-v4-flash"
+
+    class VersionedEndpointProbeClient:
+        def chat_json(self, *, model: str, messages: list[dict[str, str]], max_tokens: int, temperature: float) -> dict[str, object]:
+            del messages, max_tokens, temperature
+            assert model == requested_model
+            return {
+                "provider": "DeepInfra",
+                "model": f"{model}-20260423",
+                "requested_model": model,
+                "content": {"ok": True, "probe": "atticus-live-openrouter"},
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            }
+
+    result = probe_live_openrouter(
+        {"provider": "openrouter", "model": requested_model, "allow_fallback": False},
+        client=VersionedEndpointProbeClient(),
+        env={"OPENROUTER_API_KEY": "sk-test", "ATTICUS_ENABLE_LIVE_OPENROUTER": "1"},
+    )
+
+    assert result["ok"] is True
+    assert result["provider"] == "DeepInfra"
+    assert result["model"] == "deepseek/deepseek-v4-flash-20260423"
+    assert result["provider_policy_result"] == "openrouter_endpoint_provenance"
+
+
 def test_openrouter_runtime_requires_explicit_live_enable(tmp_path: Path):
     db_path = init_db(tmp_path)
     with repo.db_connection(db_path) as conn:
@@ -1615,6 +1642,80 @@ def test_run_free_loop_treats_post_dispatch_provider_auth_failure_as_user_interv
     assert provider_error["severity"] == "blocker"
     assert int(str(provider_error["terminal"])) == 1
     assert _json_mapping(str(provider_error["payload_json"]))["requires_user_intervention"] is True
+
+
+def test_run_free_loop_successful_preflight_closes_provider_user_intervention_attention(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    db_path = init_db(tmp_path)
+    env = {"OPENROUTER_API_KEY": "sk-test", "ATTICUS_ENABLE_LIVE_OPENROUTER": "1"}
+    policy = {
+        "provider": "openrouter",
+        "model": "deepseek/deepseek-v4-flash",
+        "runtime": "openrouter",
+        "allow_fallback": False,
+        "estimated_cost_usd": 0.01,
+    }
+
+    def fake_probe(provider_policy: Mapping[str, object], *, client: object | None = None, env: Mapping[str, str] | None = None) -> dict[str, object]:
+        del provider_policy, client, env
+        return {"ok": True, "reason": "probe passed", "provider_policy_result": "openrouter_endpoint_provenance"}
+
+    def fake_execute_openrouter(
+        conn: sqlite3.Connection,
+        *,
+        task_id: str,
+        lease_id: str,
+        worker_id: str,
+        output_dir: str | Path,
+        env: Mapping[str, str],
+        allow_live: bool,
+    ) -> object:
+        del worker_id, output_dir, env, allow_live
+        _ = conn.execute("UPDATE leases SET status = 'completed' WHERE lease_id = ?", (lease_id,))
+        repo.update_task_status(conn, task_id, TaskStatus.COMPLETE, "fake provider success")
+        return {"ok": True}
+
+    monkeypatch.setattr(free_loop_module, "probe_live_openrouter", fake_probe)
+    monkeypatch.setattr(free_loop_module, "execute_openrouter_work_order", fake_execute_openrouter)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="provider-fixed-task",
+                title="Provider fixed task",
+                task_type="source_inventory",
+                matter_scope="alpha",
+                stage=LegalStage.S0_SOURCE_INVENTORY,
+                provider_policy=policy,
+                status=TaskStatus.QUEUED,
+            ),
+        )
+        _ = repo.record_provider_preflight_failure(
+            conn,
+            matter_scope="alpha",
+            task_id="provider-fixed-task",
+            provider="openrouter",
+            message="OpenRouter preflight failed before leasing 1 runnable task(s): OpenRouter probe failed: OpenRouter HTTP 401",
+            runnable_task_count=1,
+            provider_policy_result="probe_failed",
+        )
+        tick = run_free_loop_once(
+            conn,
+            output_dir=tmp_path,
+            capacity=1,
+            execute_workers=True,
+            runtime="openrouter",
+            allow_live=True,
+            env=env,
+        )
+        provider_attention = _count(conn, "SELECT COUNT(*) AS n FROM human_attention WHERE target_type = 'matter' AND status = 'open' AND reason LIKE 'provider preflight requires user intervention:%'")
+        resolved_event_count = _count(conn, "SELECT COUNT(*) AS n FROM events WHERE event_type = 'provider.control_plane_attention_resolved'")
+        orchestrator = cast(Mapping[str, object], conn.execute("SELECT status FROM matter_orchestrators WHERE matter_scope = 'alpha'").fetchone())
+
+    assert tick["ok"] is True
+    assert tick["leased_tasks"] == ["provider-fixed-task"]
+    assert provider_attention == 0
+    assert resolved_event_count == 1
+    assert orchestrator["status"] == "repair_required"
 
 
 def test_run_free_loop_executes_leased_workers_in_parallel_when_capacity_allows(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

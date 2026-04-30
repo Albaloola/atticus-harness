@@ -338,7 +338,7 @@ def context_task_instructions(task: Mapping[str, object]) -> str:
             instructions
             + " Broad task output cap: at most 4 findings, 6 citations, 3 uncertainties, 3 risk_flags, "
             "3 redaction_flags, and 1 proposed_task. Keep summary under 600 characters, citation quotes under "
-            "180 characters, finding text under 280 characters, and proposed_artifacts[0].content under 1200 "
+            "180 characters, finding text under 280 characters, and non-draft proposed_artifacts[0].content under 1200 "
             "characters. Propose follow-up tasks for expansion instead of overfilling this packet."
         )
     if len(artifact_ids) > 25:

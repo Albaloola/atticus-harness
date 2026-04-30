@@ -14,6 +14,23 @@ from atticus.db import repo
 from atticus.providers.model_policy import validate_proposed_task_provider_policy
 from atticus.providers.policy import canonical_provider_policy
 
+SCOPED_SEARCH_TASK_TYPES = {
+    "evidence_acquisition",
+    "evidence_collection",
+    "evidence_gathering",
+    "evidence_search",
+    "privacy_review",
+    "privacy_redaction_review",
+    "privacy_redaction_verification",
+    "redaction_fix",
+    "redaction_review",
+    "redaction_verification",
+    "source_acquisition",
+    "source_discovery",
+    "source_search",
+    "source_verification",
+}
+
 
 def import_proposed_tasks_from_candidate(conn: sqlite3.Connection, candidate: Mapping[str, object]) -> list[str]:
     payload = json.loads(str(candidate["payload_json"]))
@@ -66,6 +83,15 @@ def import_proposed_tasks_from_candidate(conn: sqlite3.Connection, candidate: Ma
         if dependency_error:
             _record_rejected_proposed_task(conn, task_id=task_id, matter_scope=matter_scope, reason=dependency_error)
             continue
+        scope_error = _scope_required_error(
+            task_map,
+            source_dependencies=source_dependencies,
+            artifact_dependencies=artifact_dependencies,
+            task_dependencies=task_dependencies,
+        )
+        if scope_error:
+            _record_rejected_proposed_task(conn, task_id=task_id, matter_scope=matter_scope, reason=scope_error)
+            continue
         if _task_exists(conn, task_id):
             if _existing_task_is_same_import(conn, task_id=task_id, matter_scope=matter_scope, candidate_id=candidate_id):
                 imported.append(task_id)
@@ -85,6 +111,23 @@ def import_proposed_tasks_from_candidate(conn: sqlite3.Connection, candidate: Ma
                 matter_scope=matter_scope,
             )
             continue
+        raw_cost_limit_usd = _optional_float(task_map.get("cost_limit_usd"))
+        cost_limit_usd = _normalized_cost_limit(raw_cost_limit_usd, provider_policy=provider_policy)
+        if raw_cost_limit_usd is not None and cost_limit_usd != raw_cost_limit_usd:
+            _ = repo.emit_event(
+                conn,
+                "proposed_task.cost_limit_normalized",
+                matter_scope=matter_scope,
+                payload={
+                    "task_id": task_id,
+                    "parent_task_id": parent_task_id,
+                    "imported_from_candidate_id": candidate_id,
+                    "raw_cost_limit_usd": raw_cost_limit_usd,
+                    "normalized_cost_limit_usd": cost_limit_usd,
+                    "estimated_cost_usd": _optional_float(provider_policy.get("estimated_cost_usd")) or 0.0,
+                    "reason": "worker-proposed cost limit was below provider policy estimate",
+                },
+            )
         repo.add_task(
             conn,
             TaskSpec(
@@ -102,7 +145,7 @@ def import_proposed_tasks_from_candidate(conn: sqlite3.Connection, candidate: Ma
                 validation_gates=_string_list(task_map.get("validation_gates")),
                 staleness_rules=_dict(task_map.get("staleness_rules")),
                 provider_policy=provider_policy,
-                cost_limit_usd=_optional_float(task_map.get("cost_limit_usd")),
+                cost_limit_usd=cost_limit_usd,
                 expected_value=_optional_float(task_map.get("expected_value")) or 0.0,
             ),
         )
@@ -240,6 +283,24 @@ def _dependency_error(
     return ""
 
 
+def _scope_required_error(
+    task_map: Mapping[object, object],
+    *,
+    source_dependencies: list[str],
+    artifact_dependencies: list[str],
+    task_dependencies: list[str],
+) -> str:
+    task_type = str(task_map.get("task_type") or "").strip().lower()
+    if task_type not in SCOPED_SEARCH_TASK_TYPES:
+        return ""
+    if source_dependencies or artifact_dependencies or task_dependencies:
+        return ""
+    return (
+        "proposed source/evidence search or review has no source, artifact, or task scope; "
+        "name the specific matter sources/artifacts to inspect or request human source identification"
+    )
+
+
 def _ids_not_in_matter(
     conn: sqlite3.Connection,
     *,
@@ -315,3 +376,10 @@ def _optional_float(value: object) -> float | None:
         return float(str(value))
     except (TypeError, ValueError):
         return None
+
+
+def _normalized_cost_limit(value: float | None, *, provider_policy: Mapping[str, object]) -> float | None:
+    if value is None:
+        return None
+    estimated = _optional_float(provider_policy.get("estimated_cost_usd")) or 0.0
+    return max(value, estimated)

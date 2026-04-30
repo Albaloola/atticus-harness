@@ -67,6 +67,12 @@ PROVIDER_USER_INTERVENTION_PATTERNS = (
     "forbidden",
     "insufficient credits",
 )
+PROVIDER_CONTROL_PLANE_ATTENTION_PREFIXES = (
+    "provider preflight requires user intervention:",
+    "provider preflight failed:",
+    "provider runtime requires user intervention:",
+    "provider runtime failed:",
+)
 
 
 def connect(db_path: str | Path, *, read_only: bool = False) -> sqlite3.Connection:
@@ -1523,6 +1529,66 @@ def record_human_attention_once(
         status=status,
         matter_scope=resolved_matter_scope,
     )
+
+
+def resolve_provider_control_plane_attention(
+    conn: sqlite3.Connection,
+    *,
+    matter_scope: str,
+    provider: str,
+    resolution_source: str = "provider.control_plane_ok",
+) -> int:
+    """Close stale provider user-intervention attention after a provider probe succeeds."""
+
+    params: list[object] = [matter_scope, matter_scope]
+    clauses = [f"reason LIKE ? ESCAPE '\\'" for _ in PROVIDER_CONTROL_PLANE_ATTENTION_PREFIXES]
+    params.extend(_like_prefix(prefix) for prefix in PROVIDER_CONTROL_PLANE_ATTENTION_PREFIXES)
+    cur = conn.execute(
+        f"""
+        UPDATE human_attention
+        SET status = 'closed'
+        WHERE matter_scope = ?
+          AND target_type = 'matter'
+          AND target_id = ?
+          AND status = 'open'
+          AND ({' OR '.join(clauses)})
+        """,
+        tuple(params),
+    )
+    changed = int(cur.rowcount if cur.rowcount is not None and cur.rowcount > 0 else 0)
+    if not changed:
+        return 0
+    _ = emit_event(
+        conn,
+        "provider.control_plane_attention_resolved",
+        matter_scope=matter_scope,
+        payload={
+            "provider": provider,
+            "resolved_count": changed,
+            "resolution_source": resolution_source,
+        },
+    )
+    still_requires_user = conn.execute(
+        """
+        SELECT 1
+        FROM human_attention
+        WHERE matter_scope = ? AND target_type = 'matter' AND target_id = ?
+          AND severity = 'blocker' AND status = 'open'
+          AND reason LIKE '%requires user intervention%'
+        LIMIT 1
+        """,
+        (matter_scope, matter_scope),
+    ).fetchone()
+    if still_requires_user is None:
+        _ = conn.execute(
+            """
+            UPDATE matter_orchestrators
+            SET status = 'repair_required', updated_at = ?
+            WHERE matter_scope = ? AND status = ?
+            """,
+            (utc_now(), matter_scope, ORCHESTRATOR_TERMINAL_STATUS),
+        )
+    return changed
 
 
 def resolve_system_task_attention(

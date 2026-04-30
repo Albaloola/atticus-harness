@@ -112,6 +112,7 @@ PRO_TASK_TYPES = {
     "hostile_review",
     "final_quality_gate",
     "draft_preparation",
+    "redaction_fix",
     "reducer_decision_support",
     "high_risk_procedural_analysis",
 }

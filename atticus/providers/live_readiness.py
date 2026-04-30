@@ -218,10 +218,11 @@ def probe_live_openrouter(
     exact_decision = check_provider_policy(request, actual=actual)
     if exact_decision.allowed:
         decision = exact_decision
-    elif requested_model in configured_models and actual.model == requested_model:
+    elif requested_model in configured_models and _openrouter_model_was_honored(requested_model, actual.model):
         # OpenRouter can report the concrete endpoint provider name while still
-        # honoring the exact requested model. Preserve that endpoint provenance
-        # without treating it as an unauthorized model fallback.
+        # honoring the requested model. It may also report a versioned model
+        # such as deepseek/deepseek-v4-flash-20260423; preserve that endpoint
+        # provenance without treating it as unauthorized fallback.
         decision = ProviderDecision(True, "openrouter_endpoint_provenance", "requested OpenRouter model was honored; endpoint provider recorded as provenance")
     else:
         decision = exact_decision
@@ -371,6 +372,12 @@ def parse_estimated_cost_usd(provider_policy: Mapping[str, object], *, task_id: 
 
 def _mapping_to_dict(value: Mapping[object, object]) -> dict[str, object]:
     return {str(key): item for key, item in value.items()}
+
+
+def _openrouter_model_was_honored(requested_model: str, actual_model: str) -> bool:
+    """Return true when OpenRouter reports the requested model or a versioned variant."""
+
+    return actual_model == requested_model or actual_model.startswith(f"{requested_model}-")
 
 
 def _blocked_reasons_for_report(task: sqlite3.Row) -> list[str]:

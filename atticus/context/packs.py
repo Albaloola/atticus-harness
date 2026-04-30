@@ -22,6 +22,9 @@ SOURCE_MATERIAL_COMPACT_THRESHOLD = 25
 BULK_SOURCE_CONTEXT_THRESHOLD = 40
 BULK_SOURCE_MATERIAL_TOTAL_CHARS = 8_000
 BULK_SOURCE_MATERIAL_MIN_CHARS = 80
+ARTIFACT_CONTEXT_EXCERPT_CHARS = 2_000
+FULL_TEXT_ARTIFACT_CONTEXT_CHARS = 16_000
+FULL_TEXT_ARTIFACT_TYPES = {"complaint_draft", "draft", "draft_complaint", "redacted_draft"}
 BULK_SOURCE_CONTEXT_TASK_TYPES = {
     "evidence_issue_map",
     "evidence_organization_plan",
@@ -121,18 +124,7 @@ def build_context_pack(
             """ % ",".join("?" for _ in artifact_ids),
             (*artifact_ids, matter_scope),
         ).fetchall()) if artifact_ids else []
-    artifacts = [
-        {
-            "artifact_id": row["artifact_id"],
-            "path": row["path"],
-            "artifact_type": row["artifact_type"],
-            "trust_status": row["trust_status"],
-            "stale": row["stale"],
-            "title": row["title"],
-            "content_excerpt": str(row["content"] or "")[:2_000],
-        }
-        for row in artifact_rows
-    ]
+    artifacts = [_artifact_context_row(row) for row in artifact_rows]
     _require_all_dependencies_present(
         requested=artifact_ids,
         found=[str(row["artifact_id"]) for row in artifacts],
@@ -456,6 +448,41 @@ def _ocr_provenance(row: Mapping[str, object], metadata: Mapping[str, object]) -
         "coverage_status": row["ocr_coverage_status"] or "",
         "created_at": row["ocr_created_at"] or "",
     }
+
+
+def _artifact_context_row(row: Mapping[str, object]) -> dict[str, object]:
+    artifact_type = str(row["artifact_type"] or "")
+    raw_content = str(row["content"] or "")
+    content, content_source = _artifact_primary_text(raw_content)
+    limit = FULL_TEXT_ARTIFACT_CONTEXT_CHARS if artifact_type in FULL_TEXT_ARTIFACT_TYPES else ARTIFACT_CONTEXT_EXCERPT_CHARS
+    excerpt = content[:limit]
+    return {
+        "artifact_id": row["artifact_id"],
+        "path": row["path"],
+        "artifact_type": row["artifact_type"],
+        "trust_status": row["trust_status"],
+        "stale": row["stale"],
+        "title": row["title"],
+        "content_excerpt": excerpt,
+        "content_chars": len(content),
+        "content_truncated": len(content) > len(excerpt),
+        "content_source": content_source,
+    }
+
+
+def _artifact_primary_text(raw_content: str) -> tuple[str, str]:
+    try:
+        payload = json.loads(raw_content)
+    except (json.JSONDecodeError, TypeError):
+        return raw_content, "artifact.content"
+    if not isinstance(payload, Mapping):
+        return raw_content, "artifact.content"
+    proposed = payload.get("proposed_artifact")
+    if isinstance(proposed, Mapping):
+        proposed_content = proposed.get("content")
+        if isinstance(proposed_content, str):
+            return proposed_content, "proposed_artifact.content"
+    return raw_content, "artifact.content"
 
 
 def _section_priority(section: Mapping[str, object]) -> int:
