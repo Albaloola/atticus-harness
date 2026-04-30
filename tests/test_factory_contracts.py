@@ -650,6 +650,68 @@ def test_verified_current_authority_is_proof_allowed(tmp_path: Path):
     assert outcome.passed
 
 
+def test_authority_status_without_current_verification_is_orientation_only(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO legal_authorities(authority_id, matter_scope, jurisdiction, citation, authority_type, title, status, source_url, created_at, updated_at)
+            VALUES ('auth-status-only', 'atticus', 'Scotland', 'Example v University [2024] CSOH 1', 'case', 'Example', 'verified', '', 'now', 'now')
+            """
+        )
+        repo.add_task(conn, TaskSpec(task_id="law-status-authority", title="Law", task_type="authority_map", stage=LegalStage.S6_AUTHORITY_LAW_MAP))
+        candidate_id = repo.record_candidate_output(
+            conn,
+            task_id="law-status-authority",
+            lease_id=None,
+            worker_id="worker-1",
+            output_type="worker_result_packet",
+            payload=_authority_law_packet("law-status-authority", "auth-status-only"),
+        )
+        outcome = run_validation(conn, gate_name="citation_integrity", target_type="candidate", target_id=candidate_id)
+
+    assert not outcome.passed
+    assert "supported law findings require at least one proof-allowed authority citation" in str(outcome.details["error"])
+
+
+def test_citation_support_integrity_checks_verified_authority_text_hash(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    quote = "A tenant may rely on a proved contractual defence."
+    quote_hash = hashlib.sha256(" ".join(quote.split()).encode("utf-8")).hexdigest()
+    with repo.db_connection(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO legal_authorities(authority_id, matter_scope, jurisdiction, citation, authority_type, title, status, source_url, created_at, updated_at)
+            VALUES ('auth-text', 'atticus', 'Scotland', 'Example v University [2024] CSOH 1', 'case', 'Example', 'candidate', '', 'now', 'now')
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO authority_verifications(authority_verification_id, matter_scope, authority_id, jurisdiction, binding_status,
+              currentness_status, proposition_supported, checked_by, checked_at, details_json)
+            VALUES ('auth-ver-text', 'atticus', 'auth-text', 'Scotland', 'persuasive', 'current', 1, 'test', 'now', ?)
+            """,
+            (json.dumps({"authority_text": quote, "authority_text_hash": quote_hash}),),
+        )
+        repo.add_task(conn, TaskSpec(task_id="law-authority-text", title="Law", task_type="authority_map", stage=LegalStage.S6_AUTHORITY_LAW_MAP))
+        packet = _authority_law_packet("law-authority-text", "auth-text")
+        citation = cast(list[dict[str, object]], packet["citations"])[0]
+        citation["quote"] = quote
+        citation["quoted_text_hash"] = quote_hash
+        candidate_id = repo.record_candidate_output(
+            conn,
+            task_id="law-authority-text",
+            lease_id=None,
+            worker_id="worker-1",
+            output_type="worker_result_packet",
+            payload=packet,
+        )
+        outcome = run_validation(conn, gate_name="citation_support_integrity", target_type="candidate", target_id=candidate_id)
+
+    assert outcome.passed
+    assert cast(list[dict[str, object]], outcome.details["support_statuses"])[0]["support_status"] == "verified_quote_in_authority"
+
+
 def test_expired_worker_lease_quarantines_late_output(tmp_path: Path):
     db_path = init_db(tmp_path)
     with repo.db_connection(db_path) as conn:
@@ -767,6 +829,108 @@ def test_reducer_creates_decision_packet_task_when_final_certification_is_withhe
     assert provider_policy["model_decision"]["decision_tier"] == "pro_orchestrator"
     assert attention_count == 1
     assert event_count == 1
+
+
+def _add_final_prerequisite_certifications(conn: sqlite3.Connection) -> None:
+    validation_id = repo.record_validation(
+        conn,
+        target_type="matter",
+        target_id="atticus",
+        gate_name="test-final-prerequisites",
+        passed=True,
+        matter_scope="atticus",
+    )
+    for certification_type in ("draft_preparation", "hostile_review"):
+        repo.add_certification(
+            conn,
+            subject_type="matter",
+            subject_id="atticus",
+            certification_type=certification_type,
+            validator="test",
+            validation_result_id=validation_id,
+        )
+
+
+def test_reducer_withholds_final_certification_without_quote_support(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        source_id = repo.add_source(conn, path="/raw/final-source.pdf", sha256="8" * 64)
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="final-gate-no-quote",
+                title="Final quality gate",
+                task_type="final_quality_gate",
+                stage=LegalStage.S9_FINAL_QUALITY_GATE,
+                source_dependencies=[source_id],
+            ),
+        )
+        _add_final_prerequisite_certifications(conn)
+        worker_lease = acquire_lease(conn, task_id="final-gate-no-quote", worker_id="worker-1")
+        packet = cited_fact_packet("final-gate-no-quote", source_id)
+        candidate_id = record_worker_result(
+            conn,
+            task_id="final-gate-no-quote",
+            lease_id=worker_lease,
+            worker_id="worker-1",
+            payload=packet,
+        )
+        reducer_lease = acquire_lease(conn, task_id="final-gate-no-quote", worker_id="reducer-1", lease_role="reducer")
+        result = reduce_candidate(conn, candidate_id=candidate_id, reducer_lease_id=reducer_lease, dry_run=False)
+        certifications = cast(list[dict[str, object]], result["certifications"])
+        validation = conn.execute(
+            "SELECT gate_name, passed FROM validation_results WHERE validation_result_id = ?",
+            (certifications[0]["validation_result_id"],),
+        ).fetchone()
+
+    assert certifications[0]["withheld"] is True
+    assert certifications[0]["reason"] == "final quality gate citation support/currentness validation failed"
+    assert validation["gate_name"] == "citation_support_integrity"
+    assert validation["passed"] == 0
+
+
+def test_reducer_issues_final_certification_with_quote_support(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    quote = "Final proof supports the certified fact."
+    quote_hash = hashlib.sha256(" ".join(quote.split()).encode("utf-8")).hexdigest()
+    with repo.db_connection(db_path) as conn:
+        source_id = repo.add_source(conn, path="/raw/final-source.pdf", sha256="8" * 64)
+        repo.add_artifact(
+            conn,
+            path="/candidate/final-extract.txt",
+            artifact_type="extracted_text",
+            content=quote,
+            source_ids=[source_id],
+        )
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="final-gate-supported",
+                title="Final quality gate",
+                task_type="final_quality_gate",
+                stage=LegalStage.S9_FINAL_QUALITY_GATE,
+                source_dependencies=[source_id],
+            ),
+        )
+        _add_final_prerequisite_certifications(conn)
+        worker_lease = acquire_lease(conn, task_id="final-gate-supported", worker_id="worker-1")
+        packet = cited_fact_packet("final-gate-supported", source_id)
+        citation = cast(list[dict[str, object]], packet["citations"])[0]
+        citation["quote"] = quote
+        citation["quoted_text_hash"] = quote_hash
+        candidate_id = record_worker_result(
+            conn,
+            task_id="final-gate-supported",
+            lease_id=worker_lease,
+            worker_id="worker-1",
+            payload=packet,
+        )
+        reducer_lease = acquire_lease(conn, task_id="final-gate-supported", worker_id="reducer-1", lease_role="reducer")
+        result = reduce_candidate(conn, candidate_id=candidate_id, reducer_lease_id=reducer_lease, dry_run=False)
+        certifications = cast(list[dict[str, object]], result["certifications"])
+
+    assert certifications[0]["certification_type"] == "final_quality_gate"
+    assert "withheld" not in certifications[0]
 
 
 def test_reducer_surfaces_operator_decision_point_without_new_loop(tmp_path: Path):

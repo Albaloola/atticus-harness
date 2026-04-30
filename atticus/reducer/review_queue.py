@@ -230,6 +230,12 @@ def review_item_summary(conn: sqlite3.Connection, *, candidate_id: str) -> dict[
         "risk_flags_count": len(risk_flags) if isinstance(risk_flags, list) else 0,
         "redaction_flags_count": len(redaction_flags) if isinstance(redaction_flags, list) else 0,
         "could_unblock": _could_unblock(item.task_type),
+        "accept_consequence": (
+            "accepting with --write runs reducer validations and, if they pass, writes the candidate to canonical artifacts/certifications"
+        ),
+        "reject_consequence": (
+            "rejecting with --write quarantines the candidate and creates a repair plan; it does not certify or canonicalize the candidate"
+        ),
     }
 
 

@@ -41,6 +41,10 @@ def test_fixture_catalog_keeps_live_failure_categories_visible() -> None:
         "context_budget",
         "reuse_staleness",
         "reducer_review",
+        "synthetic_matter_final_gate",
+        "no_silent_idle",
+        "human_decision_resume",
+        "stale_schema_readonly",
         "worker_packet",
         "proposed_task",
     }.issubset(categories)

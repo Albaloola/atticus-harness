@@ -211,13 +211,13 @@ def build_parser() -> argparse.ArgumentParser:
     _ = status.add_argument("--db", required=True)
     _ = status.add_argument("--matter")
 
-    matter_health = sub.add_parser("matter-health", help="authoritative matter completion and blocker report")
+    matter_health = sub.add_parser("matter-health", help="authoritative matter completion, blocker owners, and next action")
     _ = matter_health.add_argument("--db", required=True)
     _ = matter_health.add_argument("--matter", required=True)
     _ = matter_health.add_argument("--json", dest="json_output", action="store_true")
     _ = matter_health.add_argument("--why-not-done", action="store_true")
 
-    next_action = sub.add_parser("next-action", help="show the next safe action for an incomplete matter")
+    next_action = sub.add_parser("next-action", help="show the exact next safe action for an incomplete matter")
     _ = next_action.add_argument("--db", required=True)
     _ = next_action.add_argument("--matter", required=True)
     _ = next_action.add_argument("--json", dest="json_output", action="store_true")
@@ -247,12 +247,16 @@ def build_parser() -> argparse.ArgumentParser:
     _ = final_gate.add_argument("--write", action="store_true")
     _ = final_gate.add_argument("--json", dest="json_output", action="store_true")
 
-    runbook = sub.add_parser("runbook", help="export a matter operator runbook")
+    runbook = sub.add_parser(
+        "runbook",
+        help="export operator runbook with exact next action, blockers, provider taxonomy, reducer queue, and stale warnings",
+        description="Export a matter operator runbook for handoff and no-silent-idle triage.",
+    )
     _ = runbook.add_argument("action", choices=["export"])
-    _ = runbook.add_argument("--db", required=True)
-    _ = runbook.add_argument("--matter", required=True)
-    _ = runbook.add_argument("--out", required=True)
-    _ = runbook.add_argument("--json", dest="json_output", action="store_true")
+    _ = runbook.add_argument("--db", required=True, help="SQLite matter ledger to inspect")
+    _ = runbook.add_argument("--matter", required=True, help="matter scope to export")
+    _ = runbook.add_argument("--out", required=True, help="markdown destination path")
+    _ = runbook.add_argument("--json", dest="json_output", action="store_true", help="also print JSON export metadata")
 
     inspect = sub.add_parser("inspect", help="read-only record inspection")
     _ = inspect.add_argument("--db", required=True)

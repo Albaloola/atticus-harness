@@ -13,10 +13,6 @@ from atticus.providers.anthropic import (
     ANTHROPIC_OAUTH_PROVIDER,
     ANTHROPIC_PROVIDER,
     ANTHROPIC_RUNTIME,
-    ENV_ANTHROPIC_API_KEY,
-    ENV_ANTHROPIC_OAUTH_TOKEN,
-    ENV_ENABLE_LIVE_ANTHROPIC,
-    resolve_anthropic_model,
 )
 from atticus.providers.deepseek import known_model
 from atticus.providers.policy import canonical_provider_policy
@@ -582,15 +578,7 @@ def _parse_profile(profile_id: str, raw: object) -> ModelProfile:
         if not known_model(provider, model):
             raise ModelPolicyError(f"unknown or unsupported model: {provider}/{model}")
         if not reserved and enabled:
-            concrete_model = resolve_anthropic_model(model)
-            if not concrete_model:
-                raise ModelPolicyError("enabled Anthropic profile requires a concrete configured model id")
-            import os
-
-            if os.environ.get(ENV_ENABLE_LIVE_ANTHROPIC) != "1":
-                raise ModelPolicyError(f"enabled Anthropic profile requires {ENV_ENABLE_LIVE_ANTHROPIC}=1")
-            if not (os.environ.get(ENV_ANTHROPIC_API_KEY) or os.environ.get(ENV_ANTHROPIC_OAUTH_TOKEN)):
-                raise ModelPolicyError("enabled Anthropic profile requires an API key or OAuth token")
+            raise ModelPolicyError("enabled Anthropic profiles are scaffolded only; mark the profile reserved/disabled until a live runtime is implemented")
         return ModelProfile(
             profile_id=profile_id,
             provider=provider,

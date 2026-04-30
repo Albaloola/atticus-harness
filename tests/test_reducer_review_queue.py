@@ -124,6 +124,8 @@ def test_reducer_review_cli_lists_and_shows_items(tmp_path: Path, capsys) -> Non
     assert list_payload["reviews"][0]["candidate_id"] == candidate_id
     assert show_payload["review"]["candidate_id"] == candidate_id
     assert show_payload["review"]["could_unblock"] == "citation_audit or final_quality_gate"
+    assert "canonical" in show_payload["review"]["accept_consequence"]
+    assert "quarantines" in show_payload["review"]["reject_consequence"]
 
 
 def test_reducer_review_list_write_backfills_existing_reducer_pending_candidates(tmp_path: Path, capsys) -> None:

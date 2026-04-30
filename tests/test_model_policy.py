@@ -25,6 +25,7 @@ from atticus.providers.live_readiness import check_live_provider_policy
 from atticus.reducer import reducer as reducer_module
 from atticus.reducer.reducer import reduce_candidate
 from atticus.scheduler.free_loop import run_free_loop_once
+from atticus.scheduler import free_loop as free_loop_module
 from atticus.scheduler.lease import acquire_lease
 from atticus.workers.outputs import record_worker_result
 from atticus.workers.result_parser import RESULT_PACKET_SCHEMA_VERSION
@@ -263,6 +264,80 @@ def test_model_policy_rejects_unknown_direct_deepseek_and_unsafe_cross_provider_
             pass
         else:
             raise AssertionError("invalid model policy should fail closed")
+
+
+def test_model_policy_rejects_enabled_anthropic_scaffold_even_with_env(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("ATTICUS_ENABLE_LIVE_ANTHROPIC", "1")
+    monkeypatch.setenv("ATTICUS_ANTHROPIC_API_KEY", "sk-test")
+    monkeypatch.setenv("ATTICUS_ANTHROPIC_OPUS_MODEL", "claude-opus-test")
+
+    with pytest.raises(ModelPolicyError, match="scaffolded"):
+        _ = load_model_routing_policy(
+            {
+                "version": 1,
+                "profiles": {
+                    "anthropic_live_scaffold": {
+                        "provider": "anthropic",
+                        "model": "opus",
+                        "runtime": "anthropic",
+                        "enabled": True,
+                        "reserved": False,
+                    }
+                },
+                "routes": {"default": "anthropic_live_scaffold"},
+            }
+        )
+
+
+def test_openrouter_preflight_bad_group_does_not_block_good_group(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="good-openrouter-group",
+                title="Good OpenRouter group",
+                task_type="source_inventory",
+                matter_scope="napier",
+                stage=LegalStage.S0_SOURCE_INVENTORY,
+                provider_policy={"provider": "openrouter", "model": "deepseek/deepseek-v4-flash", "allow_fallback": False, "estimated_cost_usd": 0.01},
+            ),
+        )
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="bad-openrouter-group",
+                title="Bad OpenRouter group",
+                task_type="source_inventory",
+                matter_scope="napier",
+                stage=LegalStage.S0_SOURCE_INVENTORY,
+                provider_policy={"provider": "openrouter", "model": "deepseek/deepseek-v4-pro", "allow_fallback": False, "estimated_cost_usd": 0.02},
+            ),
+        )
+        rows = cast(list[Mapping[str, object]], conn.execute("SELECT * FROM tasks ORDER BY task_id").fetchall())
+
+        def fake_probe(provider_policy: Mapping[str, object], *, env: Mapping[str, str] | None = None) -> dict[str, object]:
+            del env
+            if provider_policy.get("model") == "deepseek/deepseek-v4-flash":
+                return {"ok": True, "reason": "probe passed", "provider_policy_result": "not_needed"}
+            return {"ok": False, "reason": "OpenRouter HTTP 402", "provider_policy_result": "probe_failed"}
+
+        monkeypatch.setattr(free_loop_module, "probe_live_openrouter", fake_probe)
+
+        preflight = free_loop_module._openrouter_preflight(
+            conn,
+            runnable_tasks=rows,
+            env={"ATTICUS_ENABLE_LIVE_OPENROUTER": "1", "OPENROUTER_API_KEY": "test-key"},
+            allow_live=True,
+        )
+        attention_rows = cast(list[Mapping[str, object]], conn.execute("SELECT target_type, target_id, reason FROM human_attention ORDER BY attention_id").fetchall())
+
+    allowed_ids = [str(task["task_id"]) for task in cast(list[Mapping[str, object]], preflight["runnable_tasks"])]
+    assert allowed_ids == ["good-openrouter-group"]
+    assert len(cast(list[dict[str, str]], preflight["errors"])) == 1
+    assert any(group["ok"] is True and group["task_ids"] == ["good-openrouter-group"] for group in cast(list[dict[str, object]], preflight["preflight_groups"]))
+    assert any(group["ok"] is False and group["task_ids"] == ["bad-openrouter-group"] for group in cast(list[dict[str, object]], preflight["preflight_groups"]))
+    assert any(row["target_type"] == "matter" and row["target_id"] == "napier" and "provider preflight" in str(row["reason"]) for row in attention_rows)
 
 
 def test_set_provider_policy_policy_file_dry_run_write_and_work_order_audit(tmp_path: Path):

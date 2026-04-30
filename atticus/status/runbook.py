@@ -22,6 +22,7 @@ def build_runbook(conn: sqlite3.Connection, *, matter_scope: str, db_path: str =
     next_repair = next_repair_plan(conn, matter_scope=matter_scope)
     reducer_reviews = [review.as_dict() for review in list_reducer_reviews(conn, matter_scope=matter_scope)]
     provider_failures = _provider_failure_groups(conn, matter_scope=matter_scope)
+    provider_taxonomy = _provider_taxonomy(conn, matter_scope=matter_scope)
     error_logs = _recent_error_logs(conn, matter_scope=matter_scope)
     human_attention = _human_attention(conn, matter_scope=matter_scope)
     task_counts = _task_status_counts(conn, matter_scope=matter_scope)
@@ -33,19 +34,24 @@ def build_runbook(conn: sqlite3.Connection, *, matter_scope: str, db_path: str =
         "matter_scope": matter_scope,
         "completion": completion,
         "next_action": next_action,
+        "exact_next_action": next_action,
         "certifications": certifications,
         "task_status_counts": task_counts,
         "blocked_tasks": _tasks_by_status(conn, matter_scope=matter_scope, statuses=("blocked",)),
         "failed_tasks": _tasks_by_status(conn, matter_scope=matter_scope, statuses=("failed",)),
         "reducer_pending_tasks": completion.get("reducer_pending", []) if isinstance(completion, Mapping) else [],
         "reducer_review_queue": reducer_reviews,
+        "reducer_review_commands": _reducer_review_commands(reducer_reviews, db_path),
         "repair_plans": repairs,
         "next_repair_plan": next_repair.as_dict() if next_repair is not None else None,
+        "blocker_ownership": _blocker_ownership(completion),
         "provider_failure_groups": provider_failures,
+        "provider_taxonomy": provider_taxonomy,
         "error_logs": error_logs,
         "human_attention_summary": human_attention["summary"],
         "open_human_attention": human_attention["open"],
         "stale_dependencies": stale_dependencies,
+        "stale_warnings": _stale_warnings(completion, stale_dependencies),
         "final_gate": final_gate,
         "final_gate_repairs": final_gate_repairs["repairs"] if isinstance(final_gate_repairs, Mapping) else [],
         "exact_resume_command": str(cast(Mapping[str, object], next_action).get("resume_command") or ""),
@@ -70,10 +76,14 @@ def render_runbook_markdown(runbook: Mapping[str, object]) -> str:
         f"- Blocked tasks: {completion.get('blocked_count')}",
         "",
         "## Next Action",
+        f"- Exact next action: {next_action.get('type') or 'none'}",
         f"- Type: {next_action.get('type')}",
         f"- Owner: {next_action.get('owner')}",
         f"- Reason: {next_action.get('reason')}",
         f"- Resume command: `{next_action.get('resume_command') or ''}`",
+        "",
+        "## Blocker Ownership",
+        *_table(["requirement_id", "status", "owner", "repair_action", "blocking_reason", "resume_command"], cast(list[Mapping[str, object]], runbook["blocker_ownership"])),
         "",
         "## Certifications",
         *_table(["certification_type", "status", "created_at"], cast(list[Mapping[str, object]], runbook["certifications"])),
@@ -82,16 +92,28 @@ def render_runbook_markdown(runbook: Mapping[str, object]) -> str:
         *_key_value_table(cast(Mapping[str, object], runbook["task_status_counts"])),
         "",
         "## Reducer Review Queue",
-        *_table(["candidate_id", "task_id", "stage", "task_type", "status", "reason"], cast(list[Mapping[str, object]], runbook["reducer_review_queue"])),
+        *_table(["candidate_id", "task_id", "stage", "task_type", "priority", "status", "reason", "recommended_action"], cast(list[Mapping[str, object]], runbook["reducer_review_queue"])),
+        "",
+        "## Reducer Review Commands",
+        *_table(["candidate_id", "show_command", "accept_template", "reject_template"], cast(list[Mapping[str, object]], runbook["reducer_review_commands"])),
         "",
         "## Repair Plans",
         *_table(["repair_plan_id", "target_type", "target_id", "blocker_type", "status", "severity"], cast(list[Mapping[str, object]], runbook["repair_plans"])),
         "",
+        "## Provider Taxonomy",
+        *_table(["route_class", "requested_provider", "requested_model", "actual_provider", "actual_model", "fallback_allowed", "fallback_policy_result", "runs", "input_tokens", "output_tokens", "cache_hit_tokens", "latest_at"], cast(list[Mapping[str, object]], runbook["provider_taxonomy"])),
+        "",
         "## Provider Failure Groups",
         *_table(["error_type", "severity", "terminal", "occurrences", "latest_message"], cast(list[Mapping[str, object]], runbook["provider_failure_groups"])),
         "",
+        "## Human Attention Summary",
+        *_table(["severity", "owner", "signature", "reason", "count"], cast(list[Mapping[str, object]], runbook["human_attention_summary"])),
+        "",
         "## Open Human Attention",
-        *_table(["attention_id", "target_type", "target_id", "severity", "reason"], cast(list[Mapping[str, object]], runbook["open_human_attention"])),
+        *_table(["attention_id", "target_type", "target_id", "severity", "owner", "signature", "reason"], cast(list[Mapping[str, object]], runbook["open_human_attention"])),
+        "",
+        "## Stale Warnings",
+        *_table(["target_type", "target_id", "warning"], cast(list[Mapping[str, object]], runbook["stale_warnings"])),
         "",
         "## Stale Dependencies",
         *_table(["target_type", "target_id", "reason"], cast(list[Mapping[str, object]], runbook["stale_dependencies"])),
@@ -202,6 +224,80 @@ def _provider_failure_groups(conn: sqlite3.Connection, *, matter_scope: str) -> 
     return result
 
 
+def _provider_taxonomy(conn: sqlite3.Connection, *, matter_scope: str) -> list[dict[str, object]]:
+    rows = conn.execute(
+        """
+        SELECT pr.requested_provider, pr.requested_model, pr.actual_provider, pr.actual_model,
+               pr.fallback_allowed, pr.fallback_policy_result,
+               COUNT(*) AS runs,
+               SUM(pr.input_tokens) AS input_tokens,
+               SUM(pr.output_tokens) AS output_tokens,
+               SUM(pr.cache_hit_tokens) AS cache_hit_tokens,
+               MAX(pr.created_at) AS latest_at
+        FROM provider_runs pr
+        JOIN tasks t ON t.task_id = pr.task_id
+        WHERE t.matter_scope = ?
+        GROUP BY pr.requested_provider, pr.requested_model, pr.actual_provider, pr.actual_model,
+                 pr.fallback_allowed, pr.fallback_policy_result
+        ORDER BY latest_at DESC
+        LIMIT 50
+        """,
+        (matter_scope,),
+    ).fetchall()
+    return [
+        {
+            "route_class": _provider_route_class(
+                requested_provider=str(row["requested_provider"]),
+                requested_model=str(row["requested_model"]),
+                actual_provider=str(row["actual_provider"]),
+                actual_model=str(row["actual_model"]),
+                fallback_allowed=bool(row["fallback_allowed"]),
+                fallback_policy_result=str(row["fallback_policy_result"]),
+            ),
+            "requested_provider": row["requested_provider"],
+            "requested_model": row["requested_model"],
+            "actual_provider": row["actual_provider"],
+            "actual_model": row["actual_model"],
+            "fallback_allowed": bool(row["fallback_allowed"]),
+            "fallback_policy_result": row["fallback_policy_result"],
+            "runs": int(row["runs"] or 0),
+            "input_tokens": int(row["input_tokens"] or 0),
+            "output_tokens": int(row["output_tokens"] or 0),
+            "cache_hit_tokens": int(row["cache_hit_tokens"] or 0),
+            "latest_at": row["latest_at"],
+        }
+        for row in rows
+    ]
+
+
+def _provider_route_class(
+    *,
+    requested_provider: str,
+    requested_model: str,
+    actual_provider: str,
+    actual_model: str,
+    fallback_allowed: bool,
+    fallback_policy_result: str,
+) -> str:
+    if actual_provider in {"", "missing"} or actual_model in {"", "missing"}:
+        return "provider_failure"
+    if requested_provider == actual_provider and requested_model == actual_model:
+        return "exact_route"
+    if requested_provider == "openrouter" and _openrouter_versioned_model_match(requested_model, actual_model):
+        return "openrouter_endpoint_provenance"
+    if fallback_allowed:
+        return "explicit_fallback_route"
+    if fallback_policy_result and fallback_policy_result not in {"not_needed", "exact_match"}:
+        return str(fallback_policy_result)
+    return "provider_model_drift"
+
+
+def _openrouter_versioned_model_match(requested_model: str, actual_model: str) -> bool:
+    if not requested_model or not actual_model:
+        return False
+    return actual_model == requested_model or actual_model.startswith(f"{requested_model}-")
+
+
 def _recent_error_logs(conn: sqlite3.Connection, *, matter_scope: str) -> list[dict[str, object]]:
     rows = conn.execute(
         """
@@ -233,10 +329,14 @@ def _human_attention(conn: sqlite3.Connection, *, matter_scope: str) -> dict[str
             (matter_scope,),
         ).fetchall()
     ]
-    grouped = Counter((str(row["severity"]), str(row["reason"])) for row in rows if str(row["status"]) == "open")
+    grouped = Counter(
+        (str(row["severity"]), str(row["owner"]), str(row["signature"]), str(row["reason"]))
+        for row in rows
+        if str(row["status"]) == "open"
+    )
     summary = [
-        {"severity": severity, "reason": reason, "count": count}
-        for (severity, reason), count in grouped.most_common(25)
+        {"severity": severity, "owner": owner, "signature": signature, "reason": reason, "count": count}
+        for (severity, owner, signature, reason), count in grouped.most_common(25)
     ]
     return {"open": [row for row in rows if str(row["status"]) == "open"], "summary": summary}
 
@@ -284,6 +384,64 @@ def _join(value: object) -> str:
     if isinstance(value, list | tuple):
         return ", ".join(str(item) for item in value) or "none"
     return str(value or "none")
+
+
+def _blocker_ownership(completion: Mapping[str, object]) -> list[dict[str, object]]:
+    requirements = completion.get("requirements")
+    if not isinstance(requirements, list):
+        return []
+    return [
+        {
+            "requirement_id": item.get("requirement_id", ""),
+            "status": item.get("status", ""),
+            "owner": item.get("owner", ""),
+            "repair_action": item.get("repair_action", ""),
+            "blocking_reason": item.get("blocking_reason", ""),
+            "resume_command": item.get("resume_command", ""),
+        }
+        for item in requirements
+        if isinstance(item, Mapping) and item.get("status") != "satisfied"
+    ]
+
+
+def _reducer_review_commands(reviews: list[Mapping[str, object]], db_path: str) -> list[dict[str, object]]:
+    commands: list[dict[str, object]] = []
+    for review in reviews:
+        candidate_id = str(review.get("candidate_id", ""))
+        if not candidate_id:
+            continue
+        commands.append(
+            {
+                "candidate_id": candidate_id,
+                "show_command": f"python -m atticus.cli reducer-review show --db {db_path} --candidate-id {candidate_id} --json",
+                "accept_template": f"python -m atticus.cli reducer-review accept --db {db_path} --candidate-id {candidate_id} --lease-id LEASE_ID --write --json",
+                "reject_template": f"python -m atticus.cli reducer-review reject --db {db_path} --candidate-id {candidate_id} --reason \"REASON\" --write --json",
+            }
+        )
+    return commands
+
+
+def _stale_warnings(completion: Mapping[str, object], stale_dependencies: list[Mapping[str, object]]) -> list[dict[str, object]]:
+    warnings: list[dict[str, object]] = []
+    stale_artifacts = completion.get("stale_artifacts")
+    if isinstance(stale_artifacts, list | tuple):
+        warnings.extend(
+            {
+                "target_type": "artifact",
+                "target_id": str(artifact_id),
+                "warning": "stale artifact blocks finalization until rebuilt, replaced, or deliberately superseded",
+            }
+            for artifact_id in stale_artifacts
+        )
+    warnings.extend(
+        {
+            "target_type": str(item.get("target_type", "")),
+            "target_id": str(item.get("target_id", "")),
+            "warning": f"{item.get('reason', 'stale dependency')} blocks proof reuse until repaired or superseded",
+        }
+        for item in stale_dependencies
+    )
+    return warnings
 
 
 def _cell(value: object) -> str:

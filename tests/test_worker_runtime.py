@@ -13,10 +13,11 @@ from atticus.core.policies import LegalStage, TaskStatus
 from atticus.core.tasks import TaskSpec
 from atticus.db import repo
 from atticus.providers.budget import BudgetExceeded
+from atticus.providers.openrouter import OpenRouterError
 from atticus.reducer.reducer import reduce_candidate
 from atticus.scheduler.lease import acquire_lease
 from atticus.workers.outputs import record_worker_result
-from atticus.workers.runtime import WorkerExecutionBlocked, execute_codex_work_order, execute_local_work_order
+from atticus.workers.runtime import WorkerExecutionBlocked, execute_codex_work_order, execute_local_work_order, execute_openrouter_work_order
 from atticus.workers.result_parser import RESULT_PACKET_SCHEMA_VERSION
 
 
@@ -100,6 +101,29 @@ class FakeCodexAdapter:
             raise self.error
         assert self.payload is not None
         return self.payload
+
+
+class FailingOpenRouterClient:
+    timeout: float = 1.0
+
+    def chat_json(self, *, model: str, messages: list[dict[str, str]], max_tokens: int = 4096, temperature: float = 0.1) -> dict[str, object]:
+        del model, messages, max_tokens, temperature
+        raise OpenRouterError("OpenRouter HTTP 503: overloaded", status_code=503, body="overloaded")
+
+
+class ProvenanceOpenRouterClient:
+    timeout: float = 1.0
+
+    def chat_json(self, *, model: str, messages: list[dict[str, str]], max_tokens: int = 4096, temperature: float = 0.1) -> dict[str, object]:
+        del messages, max_tokens, temperature
+        return {
+            "provider": "deepseek",
+            "model": f"{model}-20260423",
+            "requested_model": model,
+            "content": valid_packet("openrouter-provenance"),
+            "usage": {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5},
+            "raw": {"provider": "deepseek", "model": f"{model}-20260423"},
+        }
 
 
 def test_execute_local_work_order_happy_path_records_candidate_only(tmp_path: Path):
@@ -496,6 +520,96 @@ def test_execute_codex_work_order_happy_path_records_candidate_and_provider_run(
     assert adapter.calls[0]["timeout_seconds"] == 77.0
     assert adapter.calls[0]["reasoning_effort"] == "medium"
     assert canonical_count == 0
+
+
+def test_execute_openrouter_provider_failure_records_control_plane_attention_not_candidate(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="openrouter-provider-down",
+                title="OpenRouter provider down",
+                task_type="extract",
+                matter_scope="napier",
+                provider_policy={
+                    "provider": "openrouter",
+                    "model": "deepseek/deepseek-v4-flash",
+                    "allow_fallback": False,
+                    "estimated_cost_usd": 0.01,
+                },
+            ),
+        )
+        lease_id = acquire_lease(conn, task_id="openrouter-provider-down", worker_id="worker-openrouter")
+
+        with pytest.raises(WorkerExecutionBlocked, match="OpenRouter provider call failed after dispatch"):
+            _ = execute_openrouter_work_order(
+                conn,
+                task_id="openrouter-provider-down",
+                lease_id=lease_id,
+                worker_id="worker-openrouter",
+                output_dir=tmp_path / "out",
+                client=FailingOpenRouterClient(),
+                env={"ATTICUS_ENABLE_LIVE_OPENROUTER": "1", "OPENROUTER_API_KEY": "test-key"},
+                allow_live=True,
+            )
+
+        task = cast(Mapping[str, object], conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'openrouter-provider-down'").fetchone())
+        lease = cast(Mapping[str, object], conn.execute("SELECT status FROM leases WHERE lease_id = ?", (lease_id,)).fetchone())
+        provider_run = cast(Mapping[str, object], conn.execute("SELECT fallback_policy_result FROM provider_runs WHERE task_id = 'openrouter-provider-down'").fetchone())
+        candidate_count = _count(conn, "SELECT COUNT(*) AS n FROM candidate_outputs WHERE task_id = 'openrouter-provider-down'")
+        attention = cast(Mapping[str, object], conn.execute("SELECT target_type, target_id, reason FROM human_attention WHERE target_type = 'matter' ORDER BY attention_id DESC LIMIT 1").fetchone())
+
+    assert task["status"] == TaskStatus.BLOCKED
+    assert "OpenRouter provider call failed after dispatch" in str(task["blocked_reasons_json"])
+    assert lease["status"] == "failed"
+    assert provider_run["fallback_policy_result"] == "provider_error"
+    assert candidate_count == 0
+    assert attention["target_id"] == "napier"
+    assert "provider runtime failed" in str(attention["reason"])
+
+
+def test_execute_openrouter_records_endpoint_provenance_for_honored_model_variant(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="openrouter-provenance",
+                title="OpenRouter provenance",
+                task_type="extract",
+                matter_scope="napier",
+                provider_policy={
+                    "provider": "openrouter",
+                    "model": "deepseek/deepseek-v4-flash",
+                    "allow_fallback": False,
+                    "estimated_cost_usd": 0.01,
+                },
+            ),
+        )
+        lease_id = acquire_lease(conn, task_id="openrouter-provenance", worker_id="worker-openrouter")
+
+        result = execute_openrouter_work_order(
+            conn,
+            task_id="openrouter-provenance",
+            lease_id=lease_id,
+            worker_id="worker-openrouter",
+            output_dir=tmp_path / "out",
+            client=ProvenanceOpenRouterClient(),
+            env={"ATTICUS_ENABLE_LIVE_OPENROUTER": "1", "OPENROUTER_API_KEY": "test-key"},
+            allow_live=True,
+        )
+
+        provider_run = cast(Mapping[str, object], conn.execute("SELECT actual_provider, actual_model, fallback_policy_result, raw_usage_json FROM provider_runs WHERE provider_run_id = ?", (result.provider_run_id,)).fetchone())
+        raw_usage = _json_mapping(str(provider_run["raw_usage_json"]))
+        provenance = cast(Mapping[str, object], raw_usage["openrouter_endpoint_provenance"])
+
+    assert provider_run["actual_provider"] == "deepseek"
+    assert provider_run["actual_model"] == "deepseek/deepseek-v4-flash-20260423"
+    assert provider_run["fallback_policy_result"] == "openrouter_endpoint_provenance"
+    assert provenance["requested_model"] == "deepseek/deepseek-v4-flash"
+    assert provenance["actual_provider"] == "deepseek"
+    assert provenance["honored_requested_model"] is True
 
 
 def test_execute_codex_work_order_malformed_packet_quarantines_after_dispatch(tmp_path: Path):

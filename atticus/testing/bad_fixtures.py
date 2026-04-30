@@ -98,6 +98,52 @@ def provider_control_plane_fixtures() -> tuple[BadFixture, ...]:
             reason="S6-S9 reducer-pending work must appear in reducer review and matter-health next action.",
             payload={"stage": "S9", "candidate_status": "reducer_pending", "review_queue_item": None},
         ),
+        BadFixture(
+            fixture_id="synthetic-matter-final-gate-without-final-certification",
+            category="synthetic_matter_final_gate",
+            expected_outcome="repair",
+            reason="A synthetic matter with final work complete is not done until final_quality_gate certification is active.",
+            payload={
+                "matter_scope": "synthetic-final-matter",
+                "final_task_status": "complete",
+                "missing_certifications": ["final_quality_gate"],
+                "expected_next_action": "create_missing_certification_work",
+            },
+        ),
+        BadFixture(
+            fixture_id="supervisor-zero-progress-incomplete-matter",
+            category="no_silent_idle",
+            expected_outcome="operator_attention",
+            reason="A zero-progress supervisor tick must emit a next action, repair visibility, and human attention instead of idling silently.",
+            payload={
+                "tick_result": {"leased_tasks": [], "executed_tasks": [], "worker_errors": [], "blocked_repairs": []},
+                "matter_done": False,
+                "expected_event_type": "supervisor.no_progress_detected",
+            },
+        ),
+        BadFixture(
+            fixture_id="human-decision-blocks-final-resume",
+            category="human_decision_resume",
+            expected_outcome="operator_attention",
+            reason="Open human legal decisions must produce a human-attention resume action even when certifications are otherwise complete.",
+            payload={
+                "attention_status": "open",
+                "attention_reason": "operator must choose whether to file final draft",
+                "expected_next_action": "human_attention",
+            },
+        ),
+        BadFixture(
+            fixture_id="readonly-command-on-stale-schema",
+            category="stale_schema_readonly",
+            expected_outcome="operator_attention",
+            reason="Read-only CLI views must report schema_mismatch for stale control tables without repairing or mutating the database.",
+            payload={
+                "schema_meta_version": "6",
+                "missing_table": "error_logs",
+                "expected_reason": "schema_mismatch",
+                "read_only": True,
+            },
+        ),
     )
 
 

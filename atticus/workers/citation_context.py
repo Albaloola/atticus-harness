@@ -253,14 +253,7 @@ def _proof_artifact_ids(conn: sqlite3.Connection, *, matter_scope: str, ids: lis
 
 
 def _proof_authority_ids(conn: sqlite3.Connection, *, matter_scope: str) -> set[str]:
-    validated = {
-        str(row["authority_id"])
-        for row in conn.execute(
-            "SELECT authority_id FROM legal_authorities WHERE matter_scope = ? AND status IN ('verified', 'validated', 'certified')",
-            (matter_scope,),
-        ).fetchall()
-    }
-    verified = {
+    return {
         str(row["authority_id"])
         for row in conn.execute(
             """
@@ -276,7 +269,6 @@ def _proof_authority_ids(conn: sqlite3.Connection, *, matter_scope: str) -> set[
             (matter_scope, matter_scope),
         ).fetchall()
     }
-    return validated | verified
 
 
 def _ids_for_matter_if_exists(conn: sqlite3.Connection, table: str, column: str, matter_scope: str) -> set[str]:

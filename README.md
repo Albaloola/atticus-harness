@@ -22,6 +22,7 @@ Atticus is not a solicitor, does not perform external legal actions, and treats 
 
 - [Abstract](#abstract)
 - [Human Installation](#human-installation)
+- [Production Operator Quickstart](#production-operator-quickstart)
 - [AI Agent Installation And Handoff](#ai-agent-installation-and-handoff)
 - [What Atticus Is](#what-atticus-is)
 - [What It Does](#what-it-does)
@@ -32,12 +33,14 @@ Atticus is not a solicitor, does not perform external legal actions, and treats 
 - [Legal Control Structure](#legal-control-structure)
 - [Smart Model Routing](#smart-model-routing)
 - [Provider Surfaces](#provider-surfaces)
+- [Provider Routing, Provenance, And No-Silent-Idle Guarantees](#provider-routing-provenance-and-no-silent-idle-guarantees)
 - [Adaptive Matters And Orchestrators](#adaptive-matters-and-orchestrators)
 - [Work Runs And Reuse](#work-runs-and-reuse)
 - [Cache And Context Observability](#cache-and-context-observability)
 - [Durable Data Model](#durable-data-model)
 - [Command Playbook](#command-playbook)
 - [Operator Runbooks](#operator-runbooks)
+- [Security And Operational Limits](#security-and-operational-limits)
 - [Troubleshooting And Known Weaknesses](#troubleshooting-and-known-weaknesses)
 - [Development And Verification](#development-and-verification)
 - [Project Design Notes](#project-design-notes)
@@ -196,6 +199,102 @@ export ATTICUS_ENABLE_LIVE_ANTHROPIC=1
 export ATTICUS_ANTHROPIC_OPUS_MODEL="concrete-provider-model-id"
 export ATTICUS_ANTHROPIC_API_KEY="..."
 ```
+
+## Production Operator Quickstart
+
+Use this path when you need a predictable production run. Commands with
+`MATTER`, `SOURCE_ID`, `TASK_ID`, `CANDIDATE_ID`, or `LEASE_ID` are templates;
+the CLI shape is documented and the live commands must not be run without valid
+secrets, a bounded matter scope, and explicit operator approval.
+
+### Minimal Safe Lifecycle
+
+```mermaid
+flowchart TD
+    Install["install + doctor"] --> Seed["seed matter inventory"]
+    Seed --> Extract["local extraction / OCR"]
+    Extract --> Validate["foundation validation"]
+    Validate --> Plan["coordinator creates queued work"]
+    Plan --> Route["smart provider policy"]
+    Route --> Schedule["schedule dry-run"]
+    Schedule --> Tick["one bounded supervisor tick"]
+    Tick --> Review["validate / verifier / reducer review"]
+    Review --> Reduce["reducer-only canonical write"]
+    Reduce --> Runbook["runbook export + exact next action"]
+    Runbook --> Done{"final certifications present?"}
+    Done -->|no| Schedule
+    Done -->|yes| Final["safe to finalize"]
+```
+
+### Provider Setup Examples
+
+OpenRouter DeepSeek direct provider route, bounded to one matter and one tick:
+
+```bash
+export OPENROUTER_API_KEY="sk-or-..."
+export ATTICUS_ENABLE_LIVE_OPENROUTER=1
+
+python -m atticus.cli provider-probe \
+  --provider openrouter \
+  --model deepseek/deepseek-v4-pro
+
+python -m atticus.cli run-free-loop \
+  --db data/MATTER.sqlite \
+  --matter MATTER \
+  --output-dir matters/MATTER/05-candidates \
+  --capacity 1 \
+  --max-ticks 1 \
+  --runtime openrouter \
+  --allow-live
+```
+
+Codex direct route for code/schema harness work, not general legal drafting:
+
+```bash
+export ATTICUS_ENABLE_LIVE_CODEX=1
+
+python -m atticus.cli run-free-loop \
+  --db data/MATTER.sqlite \
+  --matter MATTER \
+  --output-dir matters/MATTER/05-candidates \
+  --capacity 1 \
+  --max-ticks 1 \
+  --runtime codex \
+  --allow-live \
+  --codex-timeout-seconds 180 \
+  --codex-reasoning-effort low
+```
+
+Anthropic is a reserved direct adapter surface. Policy and redaction tests exist,
+but the default runtime refuses Anthropic routes. Do not treat Anthropic as an
+available production route unless a future release explicitly wires and approves
+that runtime.
+
+### Runbook-First Operations
+
+Every production pause should end with a runbook export. The runbook contains the
+exact next action, blocker owners and signatures, reducer queue commands,
+provider taxonomy, stale warnings, and final-gate state.
+
+```bash
+python -m atticus.cli matter-health \
+  --db data/MATTER.sqlite \
+  --matter MATTER \
+  --why-not-done \
+  --json
+
+python -m atticus.cli runbook export \
+  --db data/MATTER.sqlite \
+  --matter MATTER \
+  --out matters/MATTER/runbook.md \
+  --json
+```
+
+If the runbook says the next owner is `operator`, resolve the named
+`human_attention.signature` first. If the owner is `reducer`, use the listed
+`reducer-review show` command before accepting or rejecting the candidate. If the
+owner is `maintenance`, run maintenance diagnostics; do not rerun the same live
+tick blindly.
 
 ---
 
@@ -674,7 +773,7 @@ no hidden fallback to free models, local stubs, Codex, or Anthropic.
 ```bash
 ATTICUS_OPENROUTER_FAILOVER_ENABLED=1 \
 ATTICUS_OPENROUTER_FAILOVER_MODELS="deepseek/deepseek-v4-flash,deepseek/deepseek-v4-pro" \
-python -m atticus.cli live-resume --db data/atticus.sqlite3 --probe --write-leases
+python -m atticus.cli live-resume --db data/atticus.sqlite3 --matter MATTER --probe --write-leases
 ```
 
 ### Held OpenRouter Free Bundle
@@ -727,6 +826,62 @@ not select them. Live Anthropic execution is disabled by default and requires:
 - either `ATTICUS_ANTHROPIC_API_KEY` or `ATTICUS_ANTHROPIC_OAUTH_TOKEN`
 
 OAuth tokens are never logged. Raw provider errors are redacted.
+
+## Provider Routing, Provenance, And No-Silent-Idle Guarantees
+
+Atticus separates the requested route from the actual provider endpoint that
+served a request. OpenRouter may return endpoint-level provenance such as
+`DeepInfra` or `DeepSeek` plus a versioned model ID. That provenance is recorded
+in `provider_runs`; it is not silently treated as a safe fallback unless policy
+allows it.
+
+```mermaid
+flowchart LR
+    Policy["task provider_policy"] --> Preflight["budget + live gate + provider probe"]
+    Preflight --> Request["requested_provider/requested_model"]
+    Request --> Endpoint["provider endpoint"]
+    Endpoint --> Actual["actual_provider/actual_model"]
+    Actual --> Classify{"route class"}
+    Classify --> Exact["exact_route"]
+    Classify --> Provenance["openrouter_endpoint_provenance"]
+    Classify --> Fallback["explicit_fallback_route"]
+    Classify --> Drift["blocked provider_model_drift"]
+    Exact --> Ledger["provider_runs + cache observations"]
+    Provenance --> Ledger
+    Fallback --> Ledger
+    Drift --> Attention["human_attention + error_logs"]
+```
+
+Runbook provider taxonomy uses these route classes:
+
+| Route Class | Meaning | Operator Response |
+| --- | --- | --- |
+| `exact_route` | Requested provider/model exactly matched the recorded actual provider/model. | Normal audit. |
+| `openrouter_endpoint_provenance` | OpenRouter served the requested family through a versioned endpoint/provider. | Accept as provenance if policy result agrees. |
+| `explicit_fallback_route` | Fallback was allowed and recorded. | Verify the fallback pool was approved for this matter. |
+| `provider_failure` | No usable actual provider/model was recorded. | Fix credentials, credits, outage, or timeout before leasing more work. |
+| `provider_model_drift` | Actual route did not match and fallback was not allowed. | Treat as blocked; do not reduce outputs from that route. |
+
+No-silent-idle rule: a matter may be incomplete with zero runnable tasks only if
+the ledger says why. `matter-health`, `next-action`, and `runbook export` are the
+operator-facing proof.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Inspect
+    Inspect --> Runnable: schedule finds safe tasks
+    Runnable --> BoundedTick: max_ticks/capacity applied
+    BoundedTick --> Inspect: candidate or failure recorded
+    Inspect --> ReducerQueue: reducer_pending or review queue
+    Inspect --> HumanAttention: human_attention open
+    Inspect --> Maintenance: terminal loop guard / stale lease / schema drift
+    Inspect --> StaleWarning: stale source or artifact
+    ReducerQueue --> Inspect: accept/reject creates ledger state
+    HumanAttention --> Inspect: operator resolves by signature
+    Maintenance --> Inspect: report and resume signal
+    StaleWarning --> Inspect: rebuild, replace, or supersede
+    Inspect --> Complete: final certifications + no blockers
+```
 
 ## Adaptive Matters And Orchestrators
 
@@ -1343,10 +1498,10 @@ LIMIT 20;"
 
 sqlite3 "$DB" "
 SELECT error_type, target_type, target_id, occurrence_count, consecutive_count,
-       escalation_level, terminal, last_message
+       escalation_level, terminal, message, created_at
 FROM error_logs
 WHERE matter_scope = '$MATTER'
-ORDER BY last_seen_at DESC
+ORDER BY created_at DESC
 LIMIT 20;"
 ```
 
@@ -1381,6 +1536,9 @@ python -m atticus.cli maintenance report \
 | `init` | setup | yes | Create or initialize a SQLite ledger. |
 | `doctor` | diagnostic | optional | Check/repair schema drift and safety state. |
 | `status` | diagnostic | no | Summarize run, blockers, leases, failures, attention. |
+| `matter-health` | diagnostic | no | Authoritative completion, blocker ownership, and next action. |
+| `next-action` | diagnostic | no | Print the single next safe transition for an incomplete matter. |
+| `runbook` | handoff | no | Export operator runbook with exact next action, provider taxonomy, reducer queue, and stale warnings. |
 | `inspect` | diagnostic | no | Inspect one source, task, candidate, artifact, context pack, certification, or run. |
 | `seed-matter` | setup | with `--write` | Register sources and snapshots from an inventory. |
 | `extract-sources` | setup/repair | with `--write` | Create local extraction/OCR derivatives. |
@@ -1398,6 +1556,9 @@ python -m atticus.cli maintenance report \
 | `validate` | validation | yes | Record a validation result for a gate. |
 | `verifier` | validation | optional | Run independent verifier checks. |
 | `reduce` | canonical boundary | with `--write` | Reduce candidate through the canonical writer. |
+| `reducer-review` | canonical boundary | optional | List, inspect, accept, or reject manual reducer reviews. |
+| `repairs` | recovery | optional | List, show, and advance deterministic repair plans. |
+| `final-gate` | recovery | optional | Inspect and repair final-gate readiness. |
 | `reject-candidate` | canonical boundary | with `--write` | Quarantine a valid but unsuitable candidate. |
 | `orchestrator` | recovery | optional | Inspect/tick/failures/signals for matter orchestrators. |
 | `maintenance` | recovery | optional | Isolated maintenance diagnostics and reports. |
@@ -1406,6 +1567,33 @@ python -m atticus.cli maintenance report \
 | `ask` | retrieval | no | Query memory/context as orientation. |
 | `session` | retrieval | no | Inspect/resume/export sensitive sessions. |
 | `human-attention` | operator loop | optional | List or add operator-visible attention items. |
+
+## Security And Operational Limits
+
+Atticus is designed for legal evidence work, so its safe operating boundary is
+part of the product contract.
+
+- **No live calls by default.** Provider execution requires an explicit runtime,
+  provider secret, harness enable flag, `--allow-live`, budget checks, and a
+  bounded matter scope.
+- **No live data mutation outside the ledger.** Atticus does not file, serve,
+  email, upload, contact third parties, or perform external legal actions.
+- **Secrets stay outside Git.** Keep API keys and OAuth tokens in environment or
+  a secret manager. Redaction helpers suppress provider secrets in errors, but
+  operators still must not paste secrets into prompts, docs, tickets, or logs.
+- **OCR is not primary proof.** OCR/extracted text is a readable derivative of a
+  source. Cite the source ID for facts unless a work order explicitly permits a
+  derivative artifact as the reviewed object. Low-confidence or partial OCR
+  should create human review, not a confident legal finding.
+- **Reducer is the canonical boundary.** Workers, provider adapters, sessions,
+  memory extraction, and cache hits produce orientation or candidates only.
+  Canonical artifacts require reducer acceptance and validation context.
+- **Cache is telemetry, not evidence.** Cache hit/write/miss data helps diagnose
+  costs and prompt stability. It never proves a quote, fact, authority, or
+  procedural claim.
+- **Known limits.** The harness still needs stronger deterministic quote/span
+  checking, richer OCR confidence policy, and more automated repair creation for
+  some citation-audit and stale-dependency blockers.
 
 ## Troubleshooting And Known Weaknesses
 

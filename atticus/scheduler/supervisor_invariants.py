@@ -45,7 +45,37 @@ def evaluate_no_silent_idle(
     if _has_any_items(tick_result, PROGRESS_KEYS):
         return {"ok": True, "matter_scope": resolved_matter, "reason": "progress_made"}
     if _has_any_items(tick_result, EXPLANATION_KEYS):
-        return {"ok": True, "matter_scope": resolved_matter, "reason": "tick_reported_blocker_or_error"}
+        report = build_matter_completion_report(conn, resolved_matter)
+        if report.done:
+            return {
+                "ok": True,
+                "matter_scope": resolved_matter,
+                "reason": "tick_reported_blocker_or_error_matter_complete",
+                "next_action": {"type": "complete", "resume_command": ""},
+            }
+        next_action = next_resume_action(conn, resolved_matter)
+        repair_plans = [plan.as_dict() for plan in ensure_repair_plans_for_matter(conn, matter_scope=resolved_matter)] if write else []
+        decision = _blocker_decision(next_action)
+        if write:
+            _ = repo.emit_event(
+                conn,
+                "supervisor.zero_progress_explained",
+                matter_scope=resolved_matter,
+                payload={
+                    "reason": "tick_reported_blocker_or_error",
+                    "next_action": next_action,
+                    "blocker_decision": decision,
+                    "repair_plan_ids": [str(plan["repair_plan_id"]) for plan in repair_plans],
+                },
+            )
+        return {
+            "ok": True,
+            "matter_scope": resolved_matter,
+            "reason": "tick_reported_blocker_or_error",
+            "next_action": next_action,
+            "blocker_decision": decision,
+            "repair_plans": repair_plans,
+        }
 
     report = build_matter_completion_report(conn, resolved_matter)
     if report.done:
@@ -62,6 +92,18 @@ def evaluate_no_silent_idle(
     if write:
         repair_plans = [plan.as_dict() for plan in ensure_repair_plans_for_matter(conn, matter_scope=resolved_matter)]
         reason = f"supervisor made no progress while matter remains incomplete: {next_action.get('reason') or next_action.get('type')}"
+        escalation = repo.record_loop_guard_failure(
+            conn,
+            matter_scope=resolved_matter,
+            target_type="matter",
+            target_id=resolved_matter,
+            error_type="supervisor_no_progress",
+            message=reason,
+            source="supervisor.no_progress_detected",
+            payload={"next_action": next_action},
+        )
+        if bool(escalation.get("terminal")):
+            reason = f"supervisor no-progress repair limit reached; user intervention required: {next_action.get('reason') or next_action.get('type')}"
         attention_id = repo.record_human_attention_once(
             conn,
             matter_scope=resolved_matter,
@@ -83,6 +125,8 @@ def evaluate_no_silent_idle(
                 "blocked_count": report.blocked_count,
                 "repair_plan_ids": [str(plan["repair_plan_id"]) for plan in repair_plans],
                 "attention_id": attention_id or "",
+                "blocker_decision": _blocker_decision(next_action),
+                "escalation": escalation,
             },
         )
 
@@ -91,6 +135,7 @@ def evaluate_no_silent_idle(
         "matter_scope": resolved_matter,
         "reason": "no_progress_with_incomplete_matter",
         "next_action": next_action,
+        "blocker_decision": _blocker_decision(next_action),
         "missing_certifications": report.missing_certifications,
         "runnable_count": report.runnable_count,
         "reducer_pending_count": report.reducer_pending_count,
@@ -124,3 +169,22 @@ def _single_active_matter(conn: sqlite3.Connection) -> str:
     if len(rows) != 1:
         return ""
     return str(cast(Mapping[str, object], rows[0])["matter_scope"])
+
+
+def _blocker_decision(next_action: Mapping[str, object]) -> dict[str, object]:
+    action_type = str(next_action.get("type") or "unknown")
+    owner = str(next_action.get("owner") or "maintenance")
+    if owner in {"provider", "operator"}:
+        decision = "human_decision"
+    elif action_type in {"blocked_task", "failed_task", "unknown_incomplete"}:
+        decision = "repair"
+    elif action_type in {"manual_reducer_review", "missing_certification", "supervisor_tick"}:
+        decision = "next_action"
+    else:
+        decision = "blocker"
+    return {
+        "decision": decision,
+        "owner": owner,
+        "type": action_type,
+        "resume_command": str(next_action.get("resume_command") or ""),
+    }

@@ -9,9 +9,6 @@ from typing import Protocol
 from atticus.providers.anthropic import (
     ANTHROPIC_PROVIDER,
     ANTHROPIC_RUNTIME,
-    ENV_ANTHROPIC_API_KEY,
-    ENV_ANTHROPIC_OAUTH_TOKEN,
-    ENV_ENABLE_LIVE_ANTHROPIC,
     resolve_anthropic_model,
 )
 from atticus.providers.live_readiness import check_live_provider_policy, probe_live_openrouter
@@ -89,19 +86,11 @@ class AnthropicRuntime:
     runtime = ANTHROPIC_RUNTIME
 
     def validate_policy(self, policy: Mapping[str, object]) -> ProviderDecision:
-        if bool(policy.get("reserved") or not bool(policy.get("enabled", True))):
-            return ProviderDecision(False, "reserved", "Anthropic profile is reserved and non-executable")
-        import os
-
         model = str(policy.get("model") or "")
         concrete = resolve_anthropic_model(model)
         if not concrete:
-            return ProviderDecision(False, "blocked", "Anthropic live profile requires a concrete configured model id")
-        if os.environ.get(ENV_ENABLE_LIVE_ANTHROPIC) != "1":
-            return ProviderDecision(False, "blocked", f"{ENV_ENABLE_LIVE_ANTHROPIC}=1 is required before Anthropic live use")
-        if not (os.environ.get(ENV_ANTHROPIC_API_KEY) or os.environ.get(ENV_ANTHROPIC_OAUTH_TOKEN)):
-            return ProviderDecision(False, "blocked", "Anthropic live profile requires an API key or OAuth token")
-        return ProviderDecision(True, "validated_live_profile", "Anthropic policy validated; execution still requires explicit adapter dispatch")
+            return ProviderDecision(False, "reserved", "Anthropic provider profiles are reserved and require a concrete configured model before any future adapter can execute")
+        return ProviderDecision(False, "reserved", "Anthropic provider profiles are scaffolded only and non-executable in this harness")
 
     def probe(self, policy: Mapping[str, object], env: Mapping[str, str]) -> ProbeResult:
         del env

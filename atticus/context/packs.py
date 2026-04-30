@@ -330,6 +330,14 @@ def _load_source_materials(
           s.size_bytes AS source_size_bytes,
           s.trust_status AS source_trust_status,
           s.imported_from AS source_imported_from,
+          s.stale AS source_stale,
+          (
+            SELECT ss.snapshot_id
+            FROM source_snapshots ss
+            WHERE ss.source_id = s.source_id AND ss.sha256 = s.sha256
+            ORDER BY ss.created_at DESC, ss.snapshot_id DESC
+            LIMIT 1
+          ) AS current_source_snapshot_id,
           a.artifact_id,
           a.path,
           a.artifact_type,
@@ -337,6 +345,7 @@ def _load_source_materials(
           a.sha256,
           a.title,
           a.content,
+          a.stale AS artifact_stale,
           er.extraction_id,
           er.method AS extraction_method,
           er.coverage_status AS extraction_coverage_status,
@@ -412,6 +421,17 @@ def _load_source_materials(
         extraction_metadata = _json_object(str(row["extraction_metadata_json"] or "{}"))
         ocr_metadata = _json_object(str(row["ocr_metadata_json"] or "{}"))
         artifact_id = str(row["artifact_id"])
+        current, stale_reasons = _source_material_currentness(
+            source_stale=bool(row["source_stale"]),
+            artifact_stale=bool(row["artifact_stale"]),
+            source_sha256=str(row["source_sha256"] or ""),
+            extraction_source_sha256=str(extraction_metadata.get("source_sha256") or ""),
+            ocr_source_sha256=str(ocr_metadata.get("source_sha256") or ""),
+            extraction_coverage=str(row["extraction_coverage_status"] or ""),
+            ocr_coverage=str(row["ocr_coverage_status"] or ""),
+            has_ocr=bool(row["ocr_id"] or row["ocr_engine"]),
+        )
+        source_material_state = "current" if current else "stale"
         if compact:
             materials.append(
                 {
@@ -420,6 +440,10 @@ def _load_source_materials(
                     "citation_target": {"target_type": "source", "target_id": source_id},
                     "artifact_citation_allowed": artifact_id in allowed_artifacts,
                     "artifact_type": row["artifact_type"],
+                    "source_material_state": source_material_state,
+                    "current": current,
+                    "stale_reasons": stale_reasons,
+                    "source_snapshot_id": row["current_source_snapshot_id"] or "",
                     "coverage_status": row["extraction_coverage_status"] or row["ocr_coverage_status"] or "available",
                     "confidence": row["confidence"] if row["confidence"] is not None else None,
                     "content_excerpt": excerpt,
@@ -435,6 +459,9 @@ def _load_source_materials(
                     "artifact_id": artifact_id,
                     "citation_target": {"target_type": "source", "target_id": source_id},
                     "artifact_citation_allowed": artifact_id in allowed_artifacts,
+                    "source_material_state": source_material_state,
+                    "current": current,
+                    "stale_reasons": stale_reasons,
                     "source_provenance": {
                         "source_id": source_id,
                         "path": row["source_path"],
@@ -443,6 +470,8 @@ def _load_source_materials(
                         "size_bytes": row["source_size_bytes"],
                         "trust_status": row["source_trust_status"],
                         "imported_from": row["source_imported_from"] or "",
+                        "stale": bool(row["source_stale"]),
+                        "current_snapshot_id": row["current_source_snapshot_id"] or "",
                     },
                     "extraction_provenance": {
                         "extraction_id": row["extraction_id"] or "",
@@ -460,6 +489,7 @@ def _load_source_materials(
                     "path": row["path"],
                     "artifact_type": row["artifact_type"],
                     "trust_status": row["trust_status"],
+                    "stale": bool(row["artifact_stale"]),
                     "sha256": row["sha256"],
                     "title": row["title"],
                     "content_excerpt": excerpt,
@@ -504,8 +534,36 @@ def _compact_chunk(chunk: Mapping[str, object]) -> dict[str, object]:
         "text_hash": chunk.get("text_hash") or "",
         "confidence": chunk.get("confidence"),
         "retrieval_score": chunk.get("retrieval_score", 0),
+        "estimated_tokens": chunk.get("estimated_tokens", 0),
+        "offset_basis": chunk.get("offset_basis", "artifact_content_utf8_codepoints"),
         "text": str(chunk.get("text") or "")[:200],
     }
+
+
+def _source_material_currentness(
+    *,
+    source_stale: bool,
+    artifact_stale: bool,
+    source_sha256: str,
+    extraction_source_sha256: str,
+    ocr_source_sha256: str,
+    extraction_coverage: str,
+    ocr_coverage: str,
+    has_ocr: bool,
+) -> tuple[bool, list[str]]:
+    reasons: list[str] = []
+    if source_stale:
+        reasons.append("source_stale")
+    if artifact_stale:
+        reasons.append("artifact_stale")
+    if extraction_coverage and extraction_coverage != "complete":
+        reasons.append(f"extraction_coverage_{extraction_coverage}")
+    if has_ocr and ocr_coverage and ocr_coverage != "complete":
+        reasons.append(f"ocr_coverage_{ocr_coverage}")
+    provenance_hashes = [value for value in (extraction_source_sha256, ocr_source_sha256) if value]
+    if source_sha256 and provenance_hashes and all(value != source_sha256 for value in provenance_hashes):
+        reasons.append("source_sha256_mismatch")
+    return not reasons, reasons
 
 
 def _compact_source_context(*, task_type: str, source_count: int) -> bool:

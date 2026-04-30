@@ -139,3 +139,51 @@ def test_final_gate_create_missing_creates_final_only_after_prerequisites(tmp_pa
     assert task is not None
     assert task["task_type"] == "final_quality_gate"
     assert task["stage"] == "S9"
+
+
+def test_final_gate_blockers_include_owner_signature_and_resume_command(tmp_path: Path) -> None:
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        _certify_all_except(conn, "citation_audit", "final_quality_gate")
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="citation-repair-owned",
+                title="Repair citations",
+                task_type="citation_repair",
+                stage=LegalStage.S7_HOSTILE_REVIEW,
+                matter_scope="napier",
+                status=TaskStatus.REDUCER_PENDING,
+            ),
+        )
+        candidate_id = repo.record_candidate_output(
+            conn,
+            task_id="citation-repair-owned",
+            lease_id=None,
+            worker_id="worker",
+            output_type="worker_result_packet",
+            payload={"summary": "needs review"},
+        )
+        from atticus.reducer.review_queue import enqueue_reducer_review
+
+        enqueue_reducer_review(conn, candidate_id=candidate_id, reason="manual reducer review required")
+        attention_id = repo.record_human_attention_once(
+            conn,
+            matter_scope="napier",
+            target_type="matter",
+            target_id="napier",
+            severity="blocker",
+            reason="operator decision required",
+            owner="operator",
+        )
+
+        readiness = final_gate_readiness(conn, "napier")
+
+    blockers = readiness["blocked_reasons"]
+    assert blockers
+    assert all(blocker.get("owner") for blocker in blockers)
+    assert all(blocker.get("signature") for blocker in blockers)
+    assert all(blocker.get("resume_command") for blocker in blockers)
+    assert any(blocker["type"] == "reducer_review_required" and blocker["owner"] == "reducer" for blocker in blockers)
+    assert any(blocker["type"] == "open_human_attention" and blocker["attention_id"] == attention_id for blocker in blockers)
+    assert readiness["next_action"]["resume_command"]

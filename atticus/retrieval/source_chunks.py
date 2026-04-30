@@ -98,7 +98,14 @@ def chunk_extracted_artifact(
             text_hash=normalized_text_hash(chunk_text),
             text=chunk_text,
             confidence=confidence,
-            metadata={"strategy": "paragraph_window", "target_tokens": TARGET_CHUNK_TOKENS},
+            metadata={
+                "strategy": "paragraph_window",
+                "target_tokens": TARGET_CHUNK_TOKENS,
+                "estimated_tokens": estimate_chunk_tokens(chunk_text),
+                "offset_basis": "artifact_content_utf8_codepoints",
+                "normalized_text_hash": normalized_text_hash(chunk_text),
+                "source_snapshot_id": resolved_snapshot_id,
+            },
         )
         for start, end, page_number, chunk_text in _chunk_windows(text)
     ]
@@ -127,12 +134,28 @@ def retrieve_source_chunks_for_task(
         list[SqlRow],
         conn.execute(
             """
-            SELECT chunk_id, matter_scope, source_id, source_snapshot_id, extraction_id, artifact_id,
-              page_number, start_offset, end_offset, text_hash, text, confidence, metadata_json
-            FROM source_chunks
-            WHERE matter_scope = ?
-              AND source_id IN (%s)
-            ORDER BY source_id, start_offset, chunk_id
+            SELECT sc.chunk_id, sc.matter_scope, sc.source_id, sc.source_snapshot_id, sc.extraction_id, sc.artifact_id,
+              sc.page_number, sc.start_offset, sc.end_offset, sc.text_hash, sc.text, sc.confidence, sc.metadata_json,
+              s.sha256 AS current_source_sha256, s.stale AS source_stale, a.stale AS artifact_stale
+            FROM source_chunks sc
+            JOIN sources s ON s.source_id = sc.source_id AND s.matter_scope = sc.matter_scope
+            LEFT JOIN artifacts a ON a.artifact_id = sc.artifact_id AND a.matter_scope = sc.matter_scope
+            WHERE sc.matter_scope = ?
+              AND sc.source_id IN (%s)
+              AND s.stale = 0
+              AND COALESCE(a.stale, 0) = 0
+              AND (
+                sc.source_snapshot_id IS NULL
+                OR sc.source_snapshot_id = ''
+                OR sc.source_snapshot_id = (
+                  SELECT ss.snapshot_id
+                  FROM source_snapshots ss
+                  WHERE ss.source_id = sc.source_id AND ss.sha256 = s.sha256
+                  ORDER BY ss.created_at DESC, ss.snapshot_id DESC
+                  LIMIT 1
+                )
+              )
+            ORDER BY sc.source_id, sc.start_offset, sc.chunk_id
             """ % ",".join("?" for _ in source_ids),
             (matter_scope, *source_ids),
         ).fetchall(),
@@ -144,6 +167,7 @@ def retrieve_source_chunks_for_task(
     for row in rows:
         item = _row_to_context(row)
         item["retrieval_score"] = _score_chunk(str(row["text"] or ""), terms)
+        item["retrieval_query_terms"] = sorted(terms)[:25]
         grouped.setdefault(str(row["source_id"]), []).append(item)
     selected: list[dict[str, object]] = []
     for source_id in source_ids:
@@ -162,6 +186,10 @@ def retrieve_source_chunks_for_task(
 
 def normalized_text_hash(text: str) -> str:
     return hashlib.sha256(_normalize_text(text).encode("utf-8")).hexdigest()
+
+
+def estimate_chunk_tokens(text: str) -> int:
+    return max(1, (len(_normalize_text(text)) + APPROX_CHARS_PER_TOKEN - 1) // APPROX_CHARS_PER_TOKEN) if text.strip() else 0
 
 
 def _insert_chunk(conn: sqlite3.Connection, chunk: SourceChunk) -> None:
@@ -283,6 +311,7 @@ def _chunk_id(*, source_id: str, artifact_id: str, start_offset: int, end_offset
 
 
 def _row_to_context(row: SqlRow) -> dict[str, object]:
+    metadata = _json_metadata(row["metadata_json"])
     return {
         "chunk_id": row["chunk_id"],
         "source_id": row["source_id"],
@@ -295,7 +324,20 @@ def _row_to_context(row: SqlRow) -> dict[str, object]:
         "text_hash": row["text_hash"],
         "text": row["text"],
         "confidence": row["confidence"],
+        "estimated_tokens": metadata.get("estimated_tokens") or estimate_chunk_tokens(str(row["text"] or "")),
+        "offset_basis": metadata.get("offset_basis") or "artifact_content_utf8_codepoints",
+        "metadata": metadata,
     }
+
+
+def _json_metadata(value: object) -> dict[str, object]:
+    try:
+        parsed = json.loads(str(value or "{}"))
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    if not isinstance(parsed, Mapping):
+        return {}
+    return {str(key): item for key, item in cast(Mapping[object, object], parsed).items()}
 
 
 def _query_terms(text: str) -> set[str]:

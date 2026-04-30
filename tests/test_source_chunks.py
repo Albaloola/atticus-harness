@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
 import hashlib
+import json
 
 from atticus.core.policies import LegalStage
 from atticus.core.tasks import TaskSpec
@@ -41,7 +42,7 @@ def test_chunk_extracted_artifact_creates_offsets_and_hashes(tmp_path: Path):
             confidence=0.91,
         )
         rows = conn.execute(
-            "SELECT source_id, artifact_id, start_offset, end_offset, text_hash, confidence FROM source_chunks WHERE source_id = ?",
+            "SELECT source_id, artifact_id, start_offset, end_offset, text_hash, confidence, metadata_json FROM source_chunks WHERE source_id = ?",
             (source_id,),
         ).fetchall()
 
@@ -52,6 +53,10 @@ def test_chunk_extracted_artifact_creates_offsets_and_hashes(tmp_path: Path):
     assert int(str(rows[0]["end_offset"])) > int(str(rows[0]["start_offset"]))
     assert len(str(rows[0]["text_hash"])) == 64
     assert rows[0]["confidence"] == 0.91
+    metadata = cast(Mapping[str, object], json.loads(str(rows[0]["metadata_json"])))
+    assert metadata["estimated_tokens"]
+    assert metadata["offset_basis"] == "artifact_content_utf8_codepoints"
+    assert metadata["normalized_text_hash"] == rows[0]["text_hash"]
 
 
 def test_context_retrieves_late_relevant_chunk_not_prefix_only(tmp_path: Path):
@@ -99,6 +104,85 @@ def test_context_retrieves_late_relevant_chunk_not_prefix_only(tmp_path: Path):
     assert late_clause in str(materials[0]["content_excerpt"])
     assert chunks
     assert any(late_clause in str(chunk["text"]) for chunk in chunks)
+
+
+def test_stale_derivative_chunk_cannot_support_source_quote(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    quote = "Stale OCR says a payment was waived."
+    quote_hash = hashlib.sha256(" ".join(quote.split()).encode("utf-8")).hexdigest()
+    with repo.db_connection(db_path) as conn:
+        source_id = repo.add_source(conn, matter_scope="alpha", path="/alpha/source.txt", sha256="e" * 64)
+        artifact_id = repo.add_artifact(
+            conn,
+            matter_scope="alpha",
+            path="/alpha/extracted/source.txt",
+            artifact_type="extracted_text",
+            content="Current artifact does not contain the stale quote.",
+            source_ids=[source_id],
+            stale=True,
+        )
+        _ = conn.execute(
+            """
+            INSERT INTO source_chunks(chunk_id, matter_scope, source_id, source_snapshot_id, extraction_id,
+              artifact_id, page_number, start_offset, end_offset, text_hash, text, confidence, metadata_json, created_at)
+            VALUES ('chunk-stale-quote', 'alpha', ?, '', 'extract-stale', ?, NULL, 5000, 5040, ?, ?, 0.95, '{}', '2026-04-30T00:00:00+00:00')
+            """,
+            (source_id, artifact_id, quote_hash, quote),
+        )
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="support-from-stale-chunk",
+                title="Support from stale chunk",
+                task_type="draft",
+                stage=LegalStage.S8_DRAFT_PREPARATION,
+                matter_scope="alpha",
+                source_dependencies=[source_id],
+            ),
+        )
+        candidate_id = repo.record_candidate_output(
+            conn,
+            task_id="support-from-stale-chunk",
+            lease_id=None,
+            worker_id="worker-1",
+            output_type="worker_result_packet",
+            payload={
+                "schema_version": RESULT_PACKET_SCHEMA_VERSION,
+                "task_id": "support-from-stale-chunk",
+                "summary": "Stale chunk-supported fact.",
+                "findings": [
+                    {
+                        "finding_id": "finding-1",
+                        "text": "Payment was waived.",
+                        "finding_type": "fact",
+                        "citation_ids": ["cite-1"],
+                        "confidence": 0.8,
+                        "reasoning_status": "supported",
+                    }
+                ],
+                "citations": [
+                    {
+                        "citation_id": "cite-1",
+                        "target_type": "source",
+                        "target_id": source_id,
+                        "locator": "chunk-stale-quote",
+                        "quote": quote,
+                        "quoted_text_hash": quote_hash,
+                    }
+                ],
+                "proposed_artifacts": [],
+                "proposed_tasks": [],
+                "uncertainties": [],
+                "contradictions": [],
+                "risk_flags": [],
+                "redaction_flags": [],
+                "external_action_requests": [],
+            },
+        )
+        outcome = run_validation(conn, gate_name="citation_support_integrity", target_type="candidate", target_id=candidate_id)
+
+    assert not outcome.passed
+    assert cast(list[object], outcome.details["quote_not_found"])
 
 
 def test_quote_support_uses_source_chunk_text(tmp_path: Path):
@@ -177,3 +261,161 @@ def test_quote_support_uses_source_chunk_text(tmp_path: Path):
 
     assert outcome.passed
     assert cast(list[object], outcome.details["checked_citations"])
+
+
+def test_quote_support_rejects_source_chunk_with_bad_text_hash(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    quote = "Late evidence says collections were paused."
+    quote_hash = hashlib.sha256(" ".join(quote.split()).encode("utf-8")).hexdigest()
+    with repo.db_connection(db_path) as conn:
+        source_id = repo.add_source(conn, matter_scope="alpha", path="/alpha/source.txt", sha256="c" * 64)
+        artifact_id = repo.add_artifact(
+            conn,
+            matter_scope="alpha",
+            path="/alpha/extracted/source.txt",
+            artifact_type="extracted_text",
+            content="This artifact excerpt does not contain the later quote.",
+            source_ids=[source_id],
+        )
+        _ = conn.execute(
+            """
+            INSERT INTO source_chunks(chunk_id, matter_scope, source_id, source_snapshot_id, extraction_id,
+              artifact_id, page_number, start_offset, end_offset, text_hash, text, confidence, metadata_json, created_at)
+            VALUES ('chunk-bad-hash', 'alpha', ?, '', 'extract-manual', ?, NULL, 5000, 5040, ?, ?, 0.95, '{}', '2026-04-30T00:00:00+00:00')
+            """,
+            (source_id, artifact_id, "0" * 64, quote),
+        )
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="support-from-bad-chunk",
+                title="Support from bad chunk",
+                task_type="draft",
+                stage=LegalStage.S8_DRAFT_PREPARATION,
+                matter_scope="alpha",
+                source_dependencies=[source_id],
+            ),
+        )
+        packet = {
+            "schema_version": RESULT_PACKET_SCHEMA_VERSION,
+            "task_id": "support-from-bad-chunk",
+            "summary": "Chunk-supported fact.",
+            "findings": [
+                {
+                    "finding_id": "finding-1",
+                    "text": "Collections were paused.",
+                    "finding_type": "fact",
+                    "citation_ids": ["cite-1"],
+                    "confidence": 0.8,
+                    "reasoning_status": "supported",
+                }
+            ],
+            "citations": [
+                {
+                    "citation_id": "cite-1",
+                    "target_type": "source",
+                    "target_id": source_id,
+                    "locator": "chunk-bad-hash",
+                    "quote": quote,
+                    "quoted_text_hash": quote_hash,
+                }
+            ],
+            "proposed_artifacts": [],
+            "proposed_tasks": [],
+            "uncertainties": [],
+            "contradictions": [],
+            "risk_flags": [],
+            "redaction_flags": [],
+            "external_action_requests": [],
+        }
+        candidate_id = repo.record_candidate_output(
+            conn,
+            task_id="support-from-bad-chunk",
+            lease_id=None,
+            worker_id="worker-1",
+            output_type="worker_result_packet",
+            payload=packet,
+        )
+        outcome = run_validation(conn, gate_name="citation_support_integrity", target_type="candidate", target_id=candidate_id)
+
+    assert not outcome.passed
+    assert cast(list[object], outcome.details["quote_not_found"])
+
+
+def test_derivative_artifact_cannot_directly_prove_material_fact(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    quote = "OCR derivative text cannot stand alone."
+    quote_hash = hashlib.sha256(" ".join(quote.split()).encode("utf-8")).hexdigest()
+    with repo.db_connection(db_path) as conn:
+        source_id = repo.add_source(conn, matter_scope="alpha", path="/alpha/scan.pdf", sha256="f" * 64)
+        artifact_id = repo.add_artifact(
+            conn,
+            matter_scope="alpha",
+            path="/alpha/ocr-index.md",
+            artifact_type="citation_audit",
+            trust_status="validated",
+            content=quote,
+            source_ids=[source_id],
+        )
+        _ = conn.execute(
+            """
+            INSERT INTO extraction_records(extraction_id, source_id, artifact_id, method,
+              coverage_status, confidence, metadata_json, created_at)
+            VALUES ('extract-artifact-proof', ?, ?, 'ocr_text', 'complete', 0.8, ?, '2026-04-30T00:00:00+00:00')
+            """,
+            (source_id, artifact_id, json.dumps({"source_sha256": "f" * 64})),
+        )
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="artifact-derivative-proof",
+                title="Derivative artifact proof",
+                task_type="citation_audit",
+                stage=LegalStage.S8_DRAFT_PREPARATION,
+                matter_scope="alpha",
+                artifact_dependencies=[artifact_id],
+            ),
+        )
+        candidate_id = repo.record_candidate_output(
+            conn,
+            task_id="artifact-derivative-proof",
+            lease_id=None,
+            worker_id="worker-1",
+            output_type="worker_result_packet",
+            payload={
+                "schema_version": RESULT_PACKET_SCHEMA_VERSION,
+                "task_id": "artifact-derivative-proof",
+                "summary": "Derivative artifact direct proof.",
+                "findings": [
+                    {
+                        "finding_id": "finding-1",
+                        "text": "Derivative artifact stands alone.",
+                        "finding_type": "fact",
+                        "citation_ids": ["cite-1"],
+                        "confidence": 0.8,
+                        "reasoning_status": "supported",
+                    }
+                ],
+                "citations": [
+                    {
+                        "citation_id": "cite-1",
+                        "target_type": "artifact",
+                        "target_id": artifact_id,
+                        "locator": "p1",
+                        "quote": quote,
+                        "quoted_text_hash": quote_hash,
+                    }
+                ],
+                "proposed_artifacts": [],
+                "proposed_tasks": [],
+                "uncertainties": [],
+                "contradictions": [],
+                "risk_flags": [],
+                "redaction_flags": [],
+                "external_action_requests": [],
+            },
+        )
+        outcome = run_validation(conn, gate_name="citation_support_integrity", target_type="candidate", target_id=candidate_id)
+
+    assert not outcome.passed
+    assert cast(list[object], outcome.details["derivative_artifact_not_independent_evidence"])

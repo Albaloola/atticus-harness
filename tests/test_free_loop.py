@@ -815,3 +815,92 @@ def test_worker_failure_signal_self_migrates_already_open_stale_connection(tmp_p
     assert schema_version is not None and schema_version["value"] == str(SCHEMA_VERSION)
     assert error_logs == 1
     assert orchestrator_events == 1
+
+
+def test_no_progress_with_reported_worker_error_still_surfaces_resume_decision(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    matter_scope = "napier-accommodation-arrears"
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="napier-final-quality-error",
+                title="Napier final quality",
+                task_type="final_quality_gate",
+                stage=LegalStage.S9_FINAL_QUALITY_GATE,
+                matter_scope=matter_scope,
+                status=TaskStatus.COMPLETE,
+            ),
+        )
+        for certification_type in FINAL_LEGAL_DRAFT_CERTIFICATIONS:
+            if certification_type != "final_quality_gate":
+                _certify_matter(conn, matter_scope, certification_type)
+
+        from atticus.scheduler.supervisor_invariants import evaluate_no_silent_idle
+
+        invariant = evaluate_no_silent_idle(
+            conn,
+            matter_scope,
+            {"worker_errors": [{"task_id": "worker-error", "error": "simulated deterministic failure"}]},
+            write=True,
+        )
+
+    assert invariant["reason"] == "tick_reported_blocker_or_error"
+    assert cast(Mapping[str, object], invariant["next_action"])["type"] == "missing_certification"
+    decision = cast(Mapping[str, object], invariant["blocker_decision"])
+    assert decision["decision"] == "next_action"
+    assert decision["owner"] == "orchestrator"
+    assert decision["resume_command"]
+
+
+def test_repeated_no_progress_identical_incomplete_ticks_escalate_to_human(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    matter_scope = "napier-accommodation-arrears"
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="napier-final-quality-loop",
+                title="Napier final quality",
+                task_type="final_quality_gate",
+                stage=LegalStage.S9_FINAL_QUALITY_GATE,
+                matter_scope=matter_scope,
+                status=TaskStatus.COMPLETE,
+            ),
+        )
+        for certification_type in FINAL_LEGAL_DRAFT_CERTIFICATIONS:
+            if certification_type != "final_quality_gate":
+                _certify_matter(conn, matter_scope, certification_type)
+
+        from atticus.scheduler.supervisor_invariants import evaluate_no_silent_idle
+
+        invariant = {}
+        for _ in range(15):
+            invariant = evaluate_no_silent_idle(conn, matter_scope, {}, write=True)
+        terminal_log = conn.execute(
+            """
+            SELECT terminal, payload_json
+            FROM error_logs
+            WHERE matter_scope = ? AND target_type = 'matter' AND target_id = ?
+              AND error_type = 'supervisor_no_progress'
+            ORDER BY created_at DESC, rowid DESC
+            LIMIT 1
+            """,
+            (matter_scope, matter_scope),
+        ).fetchone()
+        attention = conn.execute(
+            """
+            SELECT reason
+            FROM human_attention
+            WHERE matter_scope = ? AND target_type = 'matter' AND target_id = ?
+              AND status = 'open' AND reason LIKE 'supervisor no-progress repair limit reached%'
+            LIMIT 1
+            """,
+            (matter_scope, matter_scope),
+        ).fetchone()
+
+    assert invariant["reason"] == "no_progress_with_incomplete_matter"
+    assert terminal_log is not None
+    assert int(terminal_log["terminal"]) == 1
+    assert json.loads(str(terminal_log["payload_json"]))["requires_user_intervention"] is True
+    assert attention is not None

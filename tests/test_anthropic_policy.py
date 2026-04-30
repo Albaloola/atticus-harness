@@ -19,6 +19,18 @@ def test_anthropic_runtime_reserved_policy_is_not_allowed():
     assert decision.result == "reserved"
 
 
+def test_anthropic_runtime_stays_blocked_even_with_live_env(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv(ENV_ENABLE_LIVE_ANTHROPIC, "1")
+    monkeypatch.setenv(ENV_ANTHROPIC_API_KEY, "sk-test")
+    monkeypatch.setenv(ENV_ANTHROPIC_OPUS_MODEL, "claude-opus-test")
+
+    decision = AnthropicRuntime().validate_policy({"provider": "anthropic", "model": "opus", "enabled": True})
+
+    assert not decision.allowed
+    assert decision.result == "reserved"
+    assert "scaffolded" in decision.reason
+
+
 def test_direct_anthropic_adapter_redacts_injected_env_secret_and_suppresses_cause():
     secret = "sk-test-anthropic-secret"
 

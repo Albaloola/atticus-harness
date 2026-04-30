@@ -119,9 +119,53 @@ def test_source_tools_surface_ocr_derivative_without_promoting_it_to_evidence(tm
     assert derivative["derivative_role"] == "ocr_text"
     assert derivative["evidence_role"] == "source_attached_text_derivative_not_independent_evidence"
     assert derivative["citation_target"] == {"target_type": "source", "target_id": source_id}
+    assert derivative["source_material_state"] == "current"
+    assert derivative["current"] is True
+    assert derivative["stale_reasons"] == []
     assert derivative["ocr"]["engine"] == "existing_text"
     assert inspect_derivative["path"].endswith("SRC-OCR.txt")
     assert cli_derivative["artifact_id"] == artifact_id
+
+
+def test_source_inspect_surfaces_stale_derivative_currentness(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        source_id = repo.add_source(conn, source_id="SRC-STALE-OCR", matter_scope="alpha", path="/alpha/scan.pdf", sha256="a" * 64)
+        artifact_id = repo.add_artifact(
+            conn,
+            artifact_id="art-stale-SRC-STALE-OCR",
+            matter_scope="alpha",
+            path="/alpha/03-working/extracted-text/SRC-STALE-OCR.txt",
+            artifact_type="extracted_text",
+            trust_status=TrustStatus.CANDIDATE,
+            sha256="b" * 64,
+            title="stale OCR",
+            content="old OCR text",
+            source_ids=[source_id],
+        )
+        _ = conn.execute(
+            """
+            INSERT INTO extraction_records(extraction_id, source_id, artifact_id, method,
+              coverage_status, confidence, metadata_json, created_at)
+            VALUES ('extract-stale-ocr', ?, ?, 'existing_ocr_text', 'complete', 0.75, ?, 'now')
+            """,
+            (
+                source_id,
+                artifact_id,
+                json.dumps(
+                    {
+                        "source_sha256": "9" * 64,
+                        "text_sha256": "b" * 64,
+                    }
+                ),
+            ),
+        )
+
+    inspected = inspect_record(str(db_path), record_type="source", record_id=source_id)
+    derivative = cast(list[dict[str, object]], inspected["source_material_derivatives"])[0]
+    assert derivative["source_material_state"] == "stale"
+    assert derivative["current"] is False
+    assert "source_sha256_mismatch" in cast(list[str], derivative["stale_reasons"])
 
 
 def test_draft_artifact_edit_requires_prior_read_hash_and_versions(tmp_path: Path):

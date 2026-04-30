@@ -395,6 +395,15 @@ def source_material_derivatives(
         f"""
         SELECT
           s.source_id,
+          s.sha256 AS source_sha256,
+          s.stale AS source_stale,
+          (
+            SELECT ss.snapshot_id
+            FROM source_snapshots ss
+            WHERE ss.source_id = s.source_id AND ss.sha256 = s.sha256
+            ORDER BY ss.created_at DESC, ss.snapshot_id DESC
+            LIMIT 1
+          ) AS current_source_snapshot_id,
           a.artifact_id,
           a.path,
           a.artifact_type,
@@ -451,6 +460,19 @@ def source_material_derivatives(
         method = str(row["extraction_method"] or extraction_metadata.get("extractor") or "artifact_text")
         artifact_type = str(row["artifact_type"])
         derivative_role = "ocr_text" if row["ocr_id"] or "ocr" in method or "ocr" in artifact_type else "extracted_text"
+        source_sha256 = str(row["source_sha256"] or "")
+        extraction_source_sha256 = str(extraction_metadata.get("source_sha256") or "")
+        ocr_source_sha256 = str(ocr_metadata.get("source_sha256") or "")
+        current, stale_reasons = _source_derivative_currentness(
+            source_stale=bool(row["source_stale"]),
+            artifact_stale=bool(row["stale"]),
+            source_sha256=source_sha256,
+            extraction_source_sha256=extraction_source_sha256,
+            ocr_source_sha256=ocr_source_sha256,
+            extraction_coverage=str(row["extraction_coverage_status"] or ""),
+            ocr_coverage=str(row["ocr_coverage_status"] or ""),
+            has_ocr=bool(row["ocr_id"] or row["ocr_engine"]),
+        )
         derivatives.setdefault(source_id, []).append(
             {
                 "source_id": source_id,
@@ -460,6 +482,11 @@ def source_material_derivatives(
                 "evidence_role": "source_attached_text_derivative_not_independent_evidence",
                 "citation_target": {"target_type": "source", "target_id": source_id},
                 "artifact_citation_rule": "cite the source_id for facts found in this derivative unless the work order explicitly allows artifact citation",
+                "source_material_state": "current" if current else "stale",
+                "current": current,
+                "stale_reasons": stale_reasons,
+                "source_sha256": source_sha256,
+                "source_snapshot_id": row["current_source_snapshot_id"] or "",
                 "path": row["path"],
                 "title": row["title"],
                 "trust_status": row["trust_status"],
@@ -488,6 +515,32 @@ def source_material_derivatives(
             }
         )
     return derivatives
+
+
+def _source_derivative_currentness(
+    *,
+    source_stale: bool,
+    artifact_stale: bool,
+    source_sha256: str,
+    extraction_source_sha256: str,
+    ocr_source_sha256: str,
+    extraction_coverage: str,
+    ocr_coverage: str,
+    has_ocr: bool,
+) -> tuple[bool, list[str]]:
+    reasons: list[str] = []
+    if source_stale:
+        reasons.append("source_stale")
+    if artifact_stale:
+        reasons.append("artifact_stale")
+    if extraction_coverage and extraction_coverage != "complete":
+        reasons.append(f"extraction_coverage_{extraction_coverage}")
+    if has_ocr and ocr_coverage and ocr_coverage != "complete":
+        reasons.append(f"ocr_coverage_{ocr_coverage}")
+    provenance_hashes = [value for value in (extraction_source_sha256, ocr_source_sha256) if value]
+    if source_sha256 and provenance_hashes and all(value != source_sha256 for value in provenance_hashes):
+        reasons.append("source_sha256_mismatch")
+    return not reasons, reasons
 
 
 def _require_target_in_matter(

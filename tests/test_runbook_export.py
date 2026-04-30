@@ -104,6 +104,20 @@ def _seed_incomplete_matter(conn) -> str:
         severity="blocker",
         reason="manual reducer review required",
     )
+    _ = repo.record_provider_run(
+        conn,
+        task_id="napier-citation-repair",
+        stage="S7",
+        requested_provider="openrouter",
+        requested_model="deepseek/deepseek-v4-pro",
+        actual_provider="DeepSeek",
+        actual_model="deepseek/deepseek-v4-pro-20260423",
+        input_tokens=100,
+        output_tokens=25,
+        cache_hit_tokens=10,
+        fallback_allowed=False,
+        fallback_policy_result="openrouter_endpoint_provenance",
+    )
     return candidate_id
 
 
@@ -121,8 +135,16 @@ def test_runbook_export_includes_missing_certifications_reducer_queue_and_next_c
     assert runbook["reducer_review_queue"]
     assert candidate_id in rendered
     assert runbook["provider_failure_groups"]
+    assert runbook["provider_taxonomy"]
+    assert "openrouter_endpoint_provenance" in rendered
     assert "OpenRouter HTTP 401 unauthorized" in rendered
+    assert "manual_reducer_review" in rendered
+    assert "Blocker Ownership" in rendered
+    assert "signature" in rendered
+    assert isinstance(runbook["exact_next_action"], dict)
+    assert str(db_path) in str(runbook["exact_next_action"].get("resume_command"))
     assert str(db_path) in str(runbook["exact_resume_command"])
+    assert "Exact next action" in rendered
     assert "## Exact Resume Command" in rendered
 
 
@@ -142,3 +164,5 @@ def test_runbook_export_cli_writes_markdown_and_json_payload(tmp_path: Path, cap
     assert "Atticus Matter Runbook" in content
     assert "citation_audit" in content
     assert "reducer-review show" in content
+    assert "Provider Taxonomy" in content
+    assert "Reducer Review Commands" in content

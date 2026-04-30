@@ -1121,6 +1121,20 @@ def _record_openrouter_post_dispatch_failure(
         fallback_policy_result=fallback_policy_result,
         raw_usage=cast(dict[str, object], _json_safe_payload(usage_payload)),
     )
+    _ = repo.record_provider_control_plane_failure(
+        conn,
+        matter_scope=repo.matter_scope_for_target(conn, target_type="task", target_id=task_id) or str(task["matter_scope"]),
+        task_id=task_id,
+        provider=requested.provider,
+        message=reason,
+        runnable_task_count=1,
+        provider_policy_result=fallback_policy_result,
+        source="provider.post_dispatch",
+        error_type="provider_dispatch_failed",
+        attention_prefix="provider runtime",
+        trigger_reason_prefix="provider runtime",
+        event_prefix="orchestrator.provider_runtime",
+    )
     _charge_budget_scopes(conn, task=task, task_id=task_id, amount_usd=estimated_cost, provider_run_id=provider_run_id)
     _ = _mark_lease_failed(conn, lease_id=lease_id, reason=reason)
     _record_attempt_finished(conn, attempt_id=attempt_id, status="failed", output_path=output_path, error={"error": reason})
@@ -1190,11 +1204,20 @@ def _openrouter_runtime_usage(
     """Build auditable OpenRouter runtime telemetry without hiding routing state."""
 
     response = response or {}
+    actual_provider = str(response.get("provider") or "")
+    actual_model = str(response.get("model") or "")
     return {
         "usage": dict(usage),
         "adapter": adapter_name,
         "output_path": str(output_path),
         "requested_model": requested_model,
+        "openrouter_endpoint_provenance": {
+            "requested_model": requested_model,
+            "actual_provider": actual_provider,
+            "actual_model": actual_model,
+            "configured_models": list(configured_models),
+            "honored_requested_model": bool(actual_model and _openrouter_model_was_honored(requested_model, actual_model)),
+        },
         "configured_models": list(configured_models),
         "openrouter_failover_events": list(openrouter_failover_events),
         "max_tokens": max_tokens,

@@ -34,7 +34,10 @@ def final_gate_readiness(conn: sqlite3.Connection, matter_scope: str) -> dict[st
             {
                 "type": "missing_certification",
                 "certification": cert,
+                "owner": "orchestrator",
+                "signature": f"missing_certification:matter:{matter_scope}:{cert}",
                 "repair": _repair_for_missing_certification(cert),
+                "resume_command": f"python -m atticus.cli final-gate create-missing --db DB --matter {matter_scope} --write --json",
             }
         )
     for review in open_reviews:
@@ -43,18 +46,31 @@ def final_gate_readiness(conn: sqlite3.Connection, matter_scope: str) -> dict[st
                 "type": "reducer_review_required",
                 "candidate_id": review["candidate_id"],
                 "task_id": review["task_id"],
+                "owner": "reducer",
+                "signature": f"reducer_review:{review['candidate_id']}",
                 "repair": "review and accept/reject reducer candidate",
+                "resume_command": f"python -m atticus.cli reducer-review show --db DB --candidate-id {review['candidate_id']} --json",
             }
         )
     for artifact_id in report.stale_artifacts:
-        blocked_reasons.append({"type": "stale_artifact", "artifact_id": artifact_id, "repair": "rebuild or replace stale artifact"})
+        blocked_reasons.append({
+            "type": "stale_artifact",
+            "artifact_id": artifact_id,
+            "owner": "orchestrator",
+            "signature": f"stale_artifact:{artifact_id}",
+            "repair": "rebuild or replace stale artifact",
+            "resume_command": f"python -m atticus.cli inspect --db DB --type artifact --id {artifact_id}",
+        })
     for attention in report.unresolved_human_attention:
         blocked_reasons.append(
             {
                 "type": "open_human_attention",
                 "attention_id": attention["attention_id"],
                 "reason": attention["reason"],
+                "owner": attention.get("owner") or "operator",
+                "signature": attention.get("signature") or f"human_attention:{attention['attention_id']}",
                 "repair": "resolve or supersede human attention item",
+                "resume_command": f"python -m atticus.cli human-attention --db DB --matter {matter_scope}",
             }
         )
     failed_without_plan = _failed_final_tasks_without_repair_plan(conn, matter_scope)
@@ -64,7 +80,10 @@ def final_gate_readiness(conn: sqlite3.Connection, matter_scope: str) -> dict[st
                 "type": "failed_final_task_without_repair_plan",
                 "task_id": task["task_id"],
                 "task_type": task["task_type"],
+                "owner": "orchestrator",
+                "signature": f"failed_final_task:{task['task_id']}",
                 "repair": "create or apply repair plan for failed final workflow task",
+                "resume_command": f"python -m atticus.cli orchestrator worker-failed --db DB --matter {matter_scope} --task-id {task['task_id']} --reason \"inspect failed final workflow task\" --write",
             }
         )
     only_final_missing = missing == ["final_quality_gate"]
@@ -107,7 +126,7 @@ def plan_final_gate_repairs(conn: sqlite3.Connection, matter_scope: str) -> list
                     "certification": cert,
                     "task_type": CERTIFICATION_TASK_POLICY.get(cert, (cert, LegalStage.S9_FINAL_QUALITY_GATE, ""))[0],
                     "stage": str(CERTIFICATION_TASK_POLICY.get(cert, (cert, LegalStage.S9_FINAL_QUALITY_GATE, ""))[1]),
-                    "write_command": f"python -m atticus.cli final-gate create-missing --db DB --matter {matter_scope} --write --json",
+                    "write_command": str(reason.get("resume_command") or f"python -m atticus.cli final-gate create-missing --db DB --matter {matter_scope} --write --json"),
                 }
             )
         elif reason["type"] == "reducer_review_required":
@@ -116,7 +135,7 @@ def plan_final_gate_repairs(conn: sqlite3.Connection, matter_scope: str) -> list
                     "type": "manual_reducer_review",
                     "candidate_id": reason["candidate_id"],
                     "task_id": reason["task_id"],
-                    "write_command": f"python -m atticus.cli reducer-review show --db DB --candidate-id {reason['candidate_id']} --json",
+                    "write_command": str(reason.get("resume_command") or f"python -m atticus.cli reducer-review show --db DB --candidate-id {reason['candidate_id']} --json"),
                 }
             )
         else:
@@ -225,23 +244,32 @@ def _next_final_gate_action(
     blocked_reasons: list[dict[str, object]],
 ) -> dict[str, object]:
     if not blocked_reasons:
-        return {"type": "complete", "resume_command": ""}
+        return {"type": "complete", "owner": "none", "resume_command": ""}
     if open_reviews:
         review = open_reviews[0]
         return {
             "type": "manual_reducer_review",
+            "owner": "reducer",
             "candidate_id": review["candidate_id"],
             "task_id": review["task_id"],
+            "signature": f"reducer_review:{review['candidate_id']}",
             "resume_command": f"python -m atticus.cli reducer-review show --db DB --candidate-id {review['candidate_id']} --json",
         }
     if missing:
         return {
             "type": "create_missing_certification_work",
+            "owner": "orchestrator",
             "certification": missing[0],
+            "signature": f"missing_certification:matter:{matter_scope}:{missing[0]}",
             "resume_command": f"python -m atticus.cli final-gate create-missing --db DB --matter {matter_scope} --write --json",
         }
     first = blocked_reasons[0]
-    return {"type": first["type"], "resume_command": f"python -m atticus.cli matter-health --db DB --matter {matter_scope} --why-not-done --json"}
+    return {
+        "type": first["type"],
+        "owner": first.get("owner") or "orchestrator",
+        "signature": first.get("signature") or f"final_gate_blocker:{first['type']}",
+        "resume_command": first.get("resume_command") or f"python -m atticus.cli matter-health --db DB --matter {matter_scope} --why-not-done --json",
+    }
 
 
 def _repair_for_missing_certification(certification: str) -> str:

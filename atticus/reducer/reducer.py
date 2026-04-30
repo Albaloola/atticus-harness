@@ -524,6 +524,38 @@ def _issue_completion_certification_if_safe(
                 "decision_task_created": decision_task.get("created", False),
             }
         ]
+    if certification_type == "final_quality_gate":
+        support_outcome = run_validation(conn, gate_name="citation_support_integrity", target_type="candidate", target_id=candidate_id)
+        if not support_outcome.passed:
+            reason = "final quality gate citation support/currentness validation failed"
+            _ = repo.record_human_attention(
+                conn,
+                target_type="task",
+                target_id=str(task.get("task_id") or ""),
+                severity="blocker",
+                reason=f"completion certification {certification_type} withheld: {reason}",
+                matter_scope=matter_scope,
+            )
+            decision_task = _surface_withheld_certification_next_step(
+                conn,
+                task=task,
+                candidate_id=candidate_id,
+                artifact_id=artifact_id,
+                certification_type=certification_type,
+                reason=reason,
+                validation_result_id=support_outcome.validation_result_id,
+                packet=packet,
+            )
+            return [
+                {
+                    "certification_type": certification_type,
+                    "withheld": True,
+                    "validation_result_id": support_outcome.validation_result_id,
+                    "reason": reason,
+                    "decision_task_id": decision_task.get("task_id", ""),
+                    "decision_task_created": decision_task.get("created", False),
+                }
+            ]
     if certification_type in VALIDATED_CERTIFICATION_GATES:
         outcome = run_validation(conn, gate_name=certification_type, target_type="matter", target_id=matter_scope)
         if not outcome.passed:

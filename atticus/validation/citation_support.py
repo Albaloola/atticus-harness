@@ -148,16 +148,13 @@ def quote_found_in_artifact(conn: sqlite3.Connection, *, artifact_id: str, quote
 
 
 def quote_found_in_authority(conn: sqlite3.Connection, *, authority_id: str, quote: str) -> bool:
-    return _quote_found_in_rows(
-        conn,
-        quote=quote,
-        query="""
-            SELECT citation || ' ' || title || ' ' || source_url AS content
-            FROM legal_authorities
-            WHERE authority_id = ? AND status != 'rejected'
-        """,
-        params=(authority_id,),
-    )
+    normalized_quote = normalize_quote_text(quote).casefold()
+    if not normalized_quote:
+        return False
+    for content in _verified_current_authority_texts(conn, authority_id=authority_id):
+        if quote_matches_text(normalized_quote, normalize_quote_text(content).casefold()):
+            return True
+    return False
 
 
 def _check_citation(
@@ -235,6 +232,18 @@ def _check_citation(
         )
 
     if target_type == "artifact":
+        if _artifact_is_source_material_derivative(conn, artifact_id=target_id) and not _artifact_has_active_registry_certification(conn, artifact_id=target_id):
+            return _result(
+                finding_id=finding_id,
+                citation_id=citation_id,
+                target_type=target_type,
+                target_id=target_id,
+                quote=quote,
+                quote_hash=actual_hash,
+                status="derivative_artifact_not_independent_evidence",
+                level="none",
+                reason="OCR/extraction derivative artifacts cannot prove material facts directly; cite the source/chunk or an actively certified registry entry",
+            )
         if quote_found_in_artifact(conn, artifact_id=target_id, quote=quote):
             return _result(
                 finding_id=finding_id,
@@ -347,6 +356,7 @@ def _summary_details(*, results: list[CitationSupportResult], failures: list[Cit
     quote_not_found = [_legacy_failure(result) for result in results if result.support_status == "quote_not_found"]
     unsupported_law = [_legacy_failure(result) for result in results if result.support_status == "unsupported_law_without_verified_authority"]
     orientation_only = [_legacy_failure(result) for result in results if result.support_status == "orientation_only_target"]
+    derivative_artifact = [_legacy_failure(result) for result in results if result.support_status == "derivative_artifact_not_independent_evidence"]
     return {
         "required": True,
         "quote_support_checked": True,
@@ -359,6 +369,7 @@ def _summary_details(*, results: list[CitationSupportResult], failures: list[Cit
         "quote_not_found": quote_not_found,
         "unsupported_law_without_verified_authority": unsupported_law,
         "orientation_only_target": orientation_only,
+        "derivative_artifact_not_independent_evidence": derivative_artifact,
         "support_statuses": [result.as_dict() for result in results],
         "note": "This deterministic gate verifies quoted text/hash presence and target role; it does not infer legal semantic support.",
     }
@@ -375,6 +386,44 @@ def _legacy_failure(result: CitationSupportResult) -> dict[str, str]:
 
 def _support_status_passes(status: str) -> bool:
     return status in {"verified_quote_in_source", "verified_quote_in_authority", "verified_quote_in_artifact"}
+
+
+def _artifact_is_source_material_derivative(conn: sqlite3.Connection, *, artifact_id: str) -> bool:
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM artifacts a
+        LEFT JOIN extraction_records er ON er.artifact_id = a.artifact_id
+        LEFT JOIN ocr_records ocr ON ocr.artifact_id = a.artifact_id
+        LEFT JOIN transcription_records tr ON tr.artifact_id = a.artifact_id
+        WHERE a.artifact_id = ?
+          AND (
+            a.artifact_type IN ('extracted_text', 'extraction_record', 'ocr_extract', 'ocr_text', 'transcription_record', 'transcript')
+            OR er.extraction_id IS NOT NULL
+            OR ocr.ocr_id IS NOT NULL
+            OR tr.transcription_id IS NOT NULL
+          )
+        LIMIT 1
+        """,
+        (artifact_id,),
+    ).fetchone()
+    return row is not None
+
+
+def _artifact_has_active_registry_certification(conn: sqlite3.Connection, *, artifact_id: str) -> bool:
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM certifications
+        WHERE subject_type = 'artifact'
+          AND subject_id = ?
+          AND status = 'active'
+          AND certification_type IN ('evidence_registry', 'source_registry', 'certified_evidence_registry')
+        LIMIT 1
+        """,
+        (artifact_id,),
+    ).fetchone()
+    return row is not None
 
 
 def _replace_support_results(
@@ -417,29 +466,54 @@ def _replace_support_results(
 
 def _source_material_query() -> str:
     return """
-        SELECT a.content
+        SELECT a.content, NULL AS text_hash
         FROM artifacts a
         JOIN artifact_sources af ON af.artifact_id = a.artifact_id
-        WHERE af.source_id = ? AND a.stale = 0
+        JOIN sources s ON s.source_id = af.source_id AND s.matter_scope = a.matter_scope
+        WHERE af.source_id = ? AND a.stale = 0 AND s.stale = 0
         UNION
-        SELECT a.content
+        SELECT a.content, NULL AS text_hash
         FROM extraction_records er
         JOIN artifacts a ON a.artifact_id = er.artifact_id
-        WHERE er.source_id = ? AND a.stale = 0
+        JOIN sources s ON s.source_id = er.source_id AND s.matter_scope = a.matter_scope
+        WHERE er.source_id = ?
+          AND a.stale = 0
+          AND s.stale = 0
+          AND (json_extract(er.metadata_json, '$.source_sha256') IS NULL OR json_extract(er.metadata_json, '$.source_sha256') = s.sha256)
         UNION
-        SELECT a.content
+        SELECT a.content, NULL AS text_hash
         FROM ocr_records ocr
         JOIN artifacts a ON a.artifact_id = ocr.artifact_id
-        WHERE ocr.source_id = ? AND a.stale = 0
+        JOIN sources s ON s.source_id = ocr.source_id AND s.matter_scope = a.matter_scope
+        WHERE ocr.source_id = ?
+          AND a.stale = 0
+          AND s.stale = 0
+          AND (json_extract(ocr.metadata_json, '$.source_sha256') IS NULL OR json_extract(ocr.metadata_json, '$.source_sha256') = s.sha256)
         UNION
-        SELECT a.content
+        SELECT a.content, NULL AS text_hash
         FROM transcription_records tr
         JOIN artifacts a ON a.artifact_id = tr.artifact_id
-        WHERE tr.source_id = ? AND a.stale = 0
+        JOIN sources s ON s.source_id = tr.source_id AND s.matter_scope = a.matter_scope
+        WHERE tr.source_id = ? AND a.stale = 0 AND s.stale = 0
         UNION
-        SELECT text AS content
-        FROM source_chunks
-        WHERE source_id = ?
+        SELECT sc.text AS content, sc.text_hash
+        FROM source_chunks sc
+        JOIN sources s ON s.source_id = sc.source_id AND s.matter_scope = sc.matter_scope
+        LEFT JOIN artifacts a ON a.artifact_id = sc.artifact_id AND a.matter_scope = sc.matter_scope
+        WHERE sc.source_id = ?
+          AND s.stale = 0
+          AND COALESCE(a.stale, 0) = 0
+          AND (
+            sc.source_snapshot_id IS NULL
+            OR sc.source_snapshot_id = ''
+            OR sc.source_snapshot_id = (
+              SELECT ss.snapshot_id
+              FROM source_snapshots ss
+              WHERE ss.source_id = sc.source_id AND ss.sha256 = s.sha256
+              ORDER BY ss.created_at DESC, ss.snapshot_id DESC
+              LIMIT 1
+            )
+          )
     """
 
 
@@ -449,7 +523,12 @@ def _quote_found_in_rows(conn: sqlite3.Connection, *, quote: str, query: str, pa
         return False
     rows = cast(list[SqlRow], conn.execute(query, params).fetchall())
     for row in rows:
-        normalized_content = normalize_quote_text(str(row["content"] or "")).casefold()
+        content = str(row["content"] or "")
+        if "text_hash" in row.keys():
+            text_hash = str(row["text_hash"] or "").strip().lower()
+            if text_hash and text_hash != normalized_quote_sha256(content):
+                continue
+        normalized_content = normalize_quote_text(content).casefold()
         if quote_matches_text(normalized_quote, normalized_content):
             return True
     return False
@@ -474,3 +553,61 @@ def quote_matches_text(normalized_quote: str, normalized_content: str) -> bool:
             return False
         position = index + len(fragment)
     return True
+
+
+def _verified_current_authority_texts(conn: sqlite3.Connection, *, authority_id: str) -> list[str]:
+    rows = cast(
+        list[SqlRow],
+        conn.execute(
+            """
+            SELECT av.details_json
+            FROM authority_verifications av
+            JOIN legal_authorities la ON la.authority_id = av.authority_id
+            WHERE av.authority_id = ?
+              AND la.status != 'rejected'
+              AND av.currentness_status = 'current'
+              AND av.proposition_supported = 1
+            ORDER BY av.checked_at DESC, av.authority_verification_id DESC
+            """,
+            (authority_id,),
+        ).fetchall(),
+    )
+    texts: list[str] = []
+    for row in rows:
+        details = _json_dict(str(row["details_json"] or "{}"))
+        for key in ("authority_text", "text", "excerpt", "quote", "quoted_text"):
+            value = details.get(key)
+            if isinstance(value, str) and value.strip() and _text_hash_valid(details, key=key, text=value):
+                texts.append(value)
+        quotes = details.get("quotes")
+        if isinstance(quotes, list):
+            for quote in quotes:
+                if isinstance(quote, str) and quote.strip():
+                    texts.append(quote)
+                elif isinstance(quote, Mapping):
+                    value = quote.get("text") or quote.get("quote") or quote.get("excerpt")
+                    if isinstance(value, str) and value.strip() and _text_hash_valid(quote, key="text", text=value):
+                        texts.append(value)
+    return texts
+
+
+def _text_hash_valid(details: Mapping[str, object], *, key: str, text: str) -> bool:
+    expected = str(
+        details.get(f"{key}_hash")
+        or details.get(f"{key}_sha256")
+        or details.get("authority_text_hash")
+        or details.get("text_hash")
+        or details.get("quoted_text_hash")
+        or ""
+    ).strip().lower()
+    return not expected or expected == normalized_quote_sha256(text)
+
+
+def _json_dict(raw: str) -> dict[str, object]:
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(value, Mapping):
+        return {}
+    return {str(key): item for key, item in cast(Mapping[object, object], value).items()}
