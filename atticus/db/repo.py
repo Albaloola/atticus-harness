@@ -22,6 +22,51 @@ LOOP_GUARD_REPEATS_PER_ESCALATION = 5
 LOOP_GUARD_MAX_AUTO_ESCALATION_LEVEL = 3
 ORCHESTRATOR_REPAIR_ATTEMPT_LIMIT = LOOP_GUARD_REPEATS_PER_ESCALATION * LOOP_GUARD_MAX_AUTO_ESCALATION_LEVEL
 ORCHESTRATOR_TERMINAL_STATUS = "user_intervention_required"
+SYSTEM_TASK_ATTENTION_PREFIXES = (
+    "budget blocked for ",
+    "cross-matter artifact dependency:",
+    "cross-matter source dependency:",
+    "cross-matter task dependency:",
+    "free loop reduction failed:",
+    "free loop worker failed:",
+    "incomplete task dependency:",
+    "inactive matter dependency:",
+    "lease expired:",
+    "live Codex execution requires ",
+    "live OpenRouter execution requires ",
+    "malformed certification requirement",
+    "malformed provider policy",
+    "malformed task gate metadata",
+    "missing artifact dependency:",
+    "missing certification:",
+    "missing matter dependency:",
+    "missing source dependency:",
+    "missing task dependency:",
+    "OpenRouter preflight failed before leasing",
+    "OpenRouter provider call failed after dispatch",
+    "orchestrator repair limit reached",
+    "provider policy for task ",
+    "stale artifact dependency:",
+    "stale source dependency:",
+    "task estimated cost ",
+    "validation failed:",
+    "completion certification ",
+    "OpenRouter provider call exceeded hard supervision limit",
+    "worker output quarantined:",
+    "worker failure reported to orchestrator:",
+)
+PROVIDER_USER_INTERVENTION_PATTERNS = (
+    "openrouter http 401",
+    "openrouter http 402",
+    "openrouter http 403",
+    "openrouter_api_key is required",
+    "api key is required",
+    "invalid api key",
+    "missing api key",
+    "unauthorized",
+    "forbidden",
+    "insufficient credits",
+)
 
 
 def connect(db_path: str | Path, *, read_only: bool = False) -> sqlite3.Connection:
@@ -439,6 +484,35 @@ def _json_dict(text: str) -> dict[str, object]:
     except (json.JSONDecodeError, TypeError):
         return {}
     return {str(key): item for key, item in cast(Mapping[object, object], value).items()} if isinstance(value, Mapping) else {}
+
+
+def _like_prefix(prefix: str) -> str:
+    escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"{escaped}%"
+
+
+def _system_attention_reason_variants(reasons: Iterable[str]) -> tuple[str, ...]:
+    variants: set[str] = set()
+    for raw in reasons:
+        reason = " ".join(str(raw).strip().split())
+        if not reason:
+            continue
+        variants.add(reason)
+        variants.add(f"free loop worker failed: {reason}")
+        variants.add(f"worker failure reported to orchestrator: {reason}")
+        variants.add(f"worker failure reported to orchestrator: free loop worker failed: {reason}")
+    return tuple(sorted(variants))
+
+
+def _provider_failure_requires_user_intervention(message: str) -> bool:
+    normalized = " ".join(message.lower().split())
+    return any(pattern in normalized for pattern in PROVIDER_USER_INTERVENTION_PATTERNS)
+
+
+def provider_failure_requires_user_intervention(message: str) -> bool:
+    """Return whether a provider failure needs operator action instead of worker repair."""
+
+    return _provider_failure_requires_user_intervention(message)
 
 
 def _hash_file(path: Path) -> tuple[str, int]:
@@ -922,6 +996,20 @@ def update_task_status(conn: sqlite3.Connection, task_id: str, status: str, reas
         (str(status), utc_now(), task_id),
     )
     _ = emit_event(conn, "task.status_changed", matter_scope=matter_scope, payload={"task_id": task_id, "status": str(status), "reason": reason})
+    if str(status) in {
+        str(TaskStatus.QUEUED),
+        str(TaskStatus.READY),
+        str(TaskStatus.LEASED),
+        str(TaskStatus.RUNNING),
+        str(TaskStatus.REDUCER_PENDING),
+        str(TaskStatus.COMPLETE),
+    }:
+        _ = resolve_system_task_attention(
+            conn,
+            task_id=task_id,
+            matter_scope=matter_scope,
+            resolution_source="task.status_changed",
+        )
 
 
 def update_task_blocked(conn: sqlite3.Connection, task_id: str, reasons: list[str]) -> None:
@@ -1437,6 +1525,92 @@ def record_human_attention_once(
     )
 
 
+def resolve_system_task_attention(
+    conn: sqlite3.Connection,
+    *,
+    task_id: str,
+    matter_scope: str | None = None,
+    reasons: Iterable[str] | None = None,
+    resolution_source: str = "system",
+) -> int:
+    """Close stale system-generated attention after a task is unblocked.
+
+    Operator-authored attention remains open. The closed rows are limited to
+    known harness reason prefixes plus exact prior blocker reasons and their
+    common wrapper forms.
+    """
+
+    resolved_matter_scope = matter_scope or _matter_scope_for_target(conn, target_type="task", target_id=task_id) or "unknown"
+    exact_reasons = _system_attention_reason_variants(reasons or ())
+    params: list[object] = [resolved_matter_scope, task_id]
+    clauses = [f"reason LIKE ? ESCAPE '\\'" for _ in SYSTEM_TASK_ATTENTION_PREFIXES]
+    params.extend(_like_prefix(prefix) for prefix in SYSTEM_TASK_ATTENTION_PREFIXES)
+    if exact_reasons:
+        clauses.append(f"reason IN ({','.join('?' for _ in exact_reasons)})")
+        params.extend(exact_reasons)
+    cur = conn.execute(
+        f"""
+        UPDATE human_attention
+        SET status = 'closed'
+        WHERE matter_scope = ?
+          AND target_type = 'task'
+          AND target_id = ?
+          AND status = 'open'
+          AND ({' OR '.join(clauses)})
+        """,
+        tuple(params),
+    )
+    changed = int(cur.rowcount if cur.rowcount is not None and cur.rowcount > 0 else 0)
+    if changed:
+        _ = emit_event(
+            conn,
+            "human_attention.resolved",
+            matter_scope=resolved_matter_scope,
+            payload={
+                "target_type": "task",
+                "target_id": task_id,
+                "resolved_count": changed,
+                "resolution_source": resolution_source,
+            },
+        )
+    return changed
+
+
+def resolve_stale_system_task_attention(
+    conn: sqlite3.Connection,
+    *,
+    matter_scope: str = "global",
+) -> int:
+    """Close system task blockers whose target task is no longer blocked."""
+
+    where = ""
+    params: tuple[object, ...] = ()
+    if matter_scope != "global":
+        where = "AND ha.matter_scope = ?"
+        params = (matter_scope,)
+    rows = conn.execute(
+        f"""
+        SELECT DISTINCT ha.target_id, ha.matter_scope
+        FROM human_attention ha
+        JOIN tasks t ON t.task_id = ha.target_id
+        WHERE ha.status = 'open'
+          AND ha.target_type = 'task'
+          AND t.status NOT IN (?, ?, ?)
+          {where}
+        """,
+        (TaskStatus.BLOCKED, TaskStatus.FAILED, TaskStatus.QUARANTINED, *params),
+    ).fetchall()
+    total = 0
+    for row in rows:
+        total += resolve_system_task_attention(
+            conn,
+            task_id=str(row["target_id"]),
+            matter_scope=str(row["matter_scope"]),
+            resolution_source="maintenance.stale_attention_cleanup",
+        )
+    return total
+
+
 def record_loop_guard_failure(
     conn: sqlite3.Connection,
     *,
@@ -1467,12 +1641,24 @@ def record_loop_guard_failure(
         error_type=clean_error_type,
         error_signature=signature,
     ) + 1
+    raw_payload = payload or {}
     escalation = _escalation_payload_for_signal(consecutive_count)
+    if bool(raw_payload.get("requires_user_intervention")) or bool(raw_payload.get("terminal")):
+        escalation = {
+            **escalation,
+            "escalation_level": max(int(escalation["escalation_level"]), 4),
+            "escalation_target": ORCHESTRATOR_TERMINAL_STATUS,
+            "attempts_until_next_escalation": 0,
+            "repair_attempts_remaining": 0,
+            "retry_allowed": False,
+            "terminal": True,
+            "requires_user_intervention": True,
+        }
     severity = "blocker" if bool(escalation["terminal"]) else "warning" if int(escalation["escalation_level"]) >= 2 else "info"
     error_log_id = f"err-{uuid4().hex}"
     now = utc_now()
     log_payload = {
-        **(payload or {}),
+        **raw_payload,
         "source": source,
         "failure_signature": signature,
         **escalation,
@@ -1524,6 +1710,130 @@ def record_loop_guard_failure(
         elif level >= 3:
             _ = emit_event(conn, "master_orchestrator.loop_guard_escalated", matter_scope=matter_scope, payload=escalation_payload)
     return result
+
+
+def record_provider_preflight_failure(
+    conn: sqlite3.Connection,
+    *,
+    matter_scope: str,
+    task_id: str,
+    provider: str,
+    message: str,
+    runnable_task_count: int,
+    provider_policy_result: str = "",
+) -> str | None:
+    """Surface provider control-plane failures without blaming a worker task."""
+
+    return record_provider_control_plane_failure(
+        conn,
+        matter_scope=matter_scope,
+        task_id=task_id,
+        provider=provider,
+        message=message,
+        runnable_task_count=runnable_task_count,
+        provider_policy_result=provider_policy_result,
+        source="provider.preflight",
+        error_type="provider_preflight_failed",
+        attention_prefix="provider preflight",
+        trigger_reason_prefix="provider preflight",
+        event_prefix="orchestrator.provider_preflight",
+    )
+
+
+def record_provider_control_plane_failure(
+    conn: sqlite3.Connection,
+    *,
+    matter_scope: str,
+    task_id: str,
+    provider: str,
+    message: str,
+    runnable_task_count: int,
+    provider_policy_result: str = "",
+    source: str = "provider.runtime",
+    error_type: str = "provider_control_plane_failed",
+    attention_prefix: str = "provider failure",
+    trigger_reason_prefix: str = "provider failure",
+    event_prefix: str = "orchestrator.provider_control_plane",
+) -> str | None:
+    """Surface provider auth/config/billing failures without entering worker retry loops."""
+
+    clean_message = " ".join(message.strip().split()) or "provider control-plane failure"
+    requires_user = _provider_failure_requires_user_intervention(clean_message)
+    orchestrator_id = _ensure_signal_orchestrator(conn, matter_scope=matter_scope)
+    attention_reason = (
+        f"{attention_prefix} requires user intervention: {clean_message}"
+        if requires_user
+        else f"{attention_prefix} failed: {clean_message}"
+    )
+    _ = record_human_attention_once(
+        conn,
+        target_type="matter",
+        target_id=matter_scope,
+        severity="blocker" if requires_user else "warning",
+        reason=attention_reason,
+        matter_scope=matter_scope,
+    )
+    guard = record_loop_guard_failure(
+        conn,
+        matter_scope=matter_scope,
+        target_type="matter",
+        target_id=matter_scope,
+        error_type=error_type,
+        message=clean_message,
+        source=source,
+        payload={
+            "task_id": task_id,
+            "provider": provider,
+            "runnable_task_count": runnable_task_count,
+            "provider_policy_result": provider_policy_result,
+            "requires_user_intervention": requires_user,
+            "retry_allowed": not requires_user,
+        },
+    )
+    if orchestrator_id is None:
+        return None
+    now = utc_now()
+    next_status = ORCHESTRATOR_TERMINAL_STATUS if requires_user else "repair_required"
+    _ = conn.execute(
+        "UPDATE matter_orchestrators SET status = ?, updated_at = ? WHERE orchestrator_id = ?",
+        (next_status, now, orchestrator_id),
+    )
+    event_payload = {
+        "task_id": task_id,
+        "provider": provider,
+        "message": clean_message,
+        "runnable_task_count": runnable_task_count,
+        "provider_policy_result": provider_policy_result,
+        **guard,
+        "requires_user_intervention": requires_user,
+        "retry_allowed": not requires_user,
+        "terminal": requires_user,
+        "escalation_target": ORCHESTRATOR_TERMINAL_STATUS if requires_user else guard.get("escalation_target"),
+        "source": source,
+    }
+    event_type = f"{event_prefix}_user_intervention_required" if requires_user else f"{event_prefix}_failed"
+    event_id = record_orchestrator_event(
+        conn,
+        orchestrator_id=orchestrator_id,
+        event_type=event_type,
+        payload=event_payload,
+    )
+    if requires_user:
+        _ = emit_event(
+            conn,
+            "master_orchestrator.user_intervention_required",
+            matter_scope=matter_scope,
+            payload={"orchestrator_event_id": event_id, **event_payload},
+        )
+        _ = request_maintenance_run(
+            conn,
+            matter_scope=matter_scope,
+            trigger_reason=f"{trigger_reason_prefix} requires user intervention for {provider}",
+            triggered_by="master_orchestrator",
+            trigger_event_id=event_id,
+            payload=event_payload,
+        )
+    return event_id
 
 
 def record_orchestrator_task_blocked(

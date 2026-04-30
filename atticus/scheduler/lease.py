@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import cast
 from datetime import UTC, datetime, timedelta
+import json
 import sqlite3
 from uuid import uuid4
 
@@ -71,11 +72,19 @@ def acquire_lease(
     if task["status"] == TaskStatus.BLOCKED and not dry_run:
         if not blocked_task_auto_requeue_allowed(task):
             raise LeaseError(f"task {task_id} is blocked by terminal runtime failure")
+        reasons = _blocked_reasons(task)
         _ = conn.execute(
             "UPDATE tasks SET status = ?, blocked_reasons_json = '[]', updated_at = ? WHERE task_id = ? AND status = ?",
             (TaskStatus.QUEUED, utc_now(), task_id, TaskStatus.BLOCKED),
         )
         _ = repo.emit_event(conn, "task.unblocked", matter_scope=str(task["matter_scope"]), payload={"task_id": task_id, "reason": "lease gates passed"})
+        _ = repo.resolve_system_task_attention(
+            conn,
+            task_id=task_id,
+            matter_scope=str(task["matter_scope"]),
+            reasons=reasons,
+            resolution_source="lease.gates_passed",
+        )
         task = cast(Mapping[str, object], conn.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone())
 
     existing = cast(Mapping[str, object] | None, conn.execute(
@@ -110,6 +119,12 @@ def acquire_lease(
         "UPDATE tasks SET status = ?, updated_at = ? WHERE task_id = ?",
         (TaskStatus.LEASED, now, task_id),
     )
+    _ = repo.resolve_system_task_attention(
+        conn,
+        task_id=task_id,
+        matter_scope=str(task["matter_scope"]),
+        resolution_source="lease.acquired",
+    )
     _ = repo.emit_event(
         conn,
         "lease.acquired",
@@ -126,6 +141,18 @@ def _active_worker_lease_count(conn: sqlite3.Connection) -> int:
         if _parse_time(str(row["expires_at"])) > now:
             count += 1
     return count
+
+
+def _blocked_reasons(task: Mapping[str, object]) -> list[str]:
+    try:
+        raw = task["blocked_reasons_json"]
+    except KeyError:
+        return []
+    try:
+        loaded = json.loads(str(raw or "[]"))
+    except (TypeError, ValueError):
+        return []
+    return [str(item) for item in loaded] if isinstance(loaded, list) else []
 
 
 def lease_is_active(conn: sqlite3.Connection, *, lease_id: str, task_id: str | None = None) -> bool:
@@ -167,6 +194,12 @@ def complete_lease(conn: sqlite3.Connection, *, lease_id: str, task_status: str 
         (str(task_status), now, lease["task_id"]),
     )
     matter_scope = repo.matter_scope_for_target(conn, target_type="task", target_id=str(lease["task_id"])) or "unknown"
+    _ = repo.resolve_system_task_attention(
+        conn,
+        task_id=str(lease["task_id"]),
+        matter_scope=matter_scope,
+        resolution_source="lease.completed",
+    )
     _ = repo.emit_event(conn, "lease.completed", matter_scope=matter_scope, payload={"lease_id": lease_id, "task_id": lease["task_id"]})
 
 

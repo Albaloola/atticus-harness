@@ -473,7 +473,7 @@ def test_run_free_loop_cli_self_migrates_stale_v5_db_before_failure_logging(
 
     with repo.db_connection(db_path, read_only=True) as conn:
         schema_version = conn.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()
-        error_logs = _scalar_int(conn, "SELECT COUNT(*) FROM error_logs WHERE target_id = 'stale-v5-openrouter-no-live'")
+        error_logs = _scalar_int(conn, "SELECT COUNT(*) FROM error_logs WHERE error_type = 'provider_preflight_failed'")
         maintenance_tables = _scalar_int(
             conn,
             """

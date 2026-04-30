@@ -116,6 +116,13 @@ def _estimated_cost_usd(task: sqlite3.Row, reasons: list[str]) -> float:
 
 
 def _requeue_previously_blocked_task(conn: sqlite3.Connection, *, task_id: str) -> None:
+    row = conn.execute("SELECT matter_scope, blocked_reasons_json FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
+    matter_scope = str(row["matter_scope"]) if row is not None else repo.matter_scope_for_target(conn, target_type="task", target_id=task_id) or "unknown"
+    try:
+        reasons = json.loads(str(row["blocked_reasons_json"] or "[]")) if row is not None else []
+    except (json.JSONDecodeError, TypeError):
+        reasons = []
+    clean_reasons = [str(reason) for reason in reasons] if isinstance(reasons, list) else []
     _ = conn.execute(
         """
         UPDATE tasks
@@ -127,6 +134,13 @@ def _requeue_previously_blocked_task(conn: sqlite3.Connection, *, task_id: str) 
     _ = repo.emit_event(
         conn,
         "task.unblocked",
-        matter_scope=repo.matter_scope_for_target(conn, target_type="task", target_id=task_id) or "unknown",
+        matter_scope=matter_scope,
         payload={"task_id": task_id, "reason": "scheduler gates passed"},
+    )
+    _ = repo.resolve_system_task_attention(
+        conn,
+        task_id=task_id,
+        matter_scope=matter_scope,
+        reasons=clean_reasons,
+        resolution_source="scheduler.gates_passed",
     )

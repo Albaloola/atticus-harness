@@ -1525,12 +1525,96 @@ def test_run_free_loop_preflights_openrouter_before_batch_leasing(tmp_path: Path
             for row in conn.execute("SELECT status FROM tasks WHERE task_id LIKE 'preflight-task-%' ORDER BY task_id").fetchall()
         ]
         attention_count = _count(conn, "SELECT COUNT(*) AS n FROM human_attention WHERE reason LIKE 'OpenRouter preflight failed before leasing%'")
+        matter_attention_count = _count(conn, "SELECT COUNT(*) AS n FROM human_attention WHERE target_type = 'matter' AND reason LIKE 'provider preflight requires user intervention:%'")
+        worker_failed_count = _count(conn, "SELECT COUNT(*) AS n FROM orchestrator_events WHERE event_type = 'orchestrator.worker_failed'")
+        provider_block_count = _count(conn, "SELECT COUNT(*) AS n FROM orchestrator_events WHERE event_type = 'orchestrator.provider_preflight_user_intervention_required'")
+        maintenance_count = _count(conn, "SELECT COUNT(*) AS n FROM maintenance_runs WHERE triggered_by = 'master_orchestrator' AND trigger_reason LIKE 'provider preflight requires user intervention%'")
+        provider_error = cast(Mapping[str, object], conn.execute("SELECT severity, terminal, payload_json FROM error_logs WHERE error_type = 'provider_preflight_failed'").fetchone())
 
     assert tick["leased_tasks"] == []
     assert lease_count == 0
     assert task_statuses == [TaskStatus.QUEUED, TaskStatus.QUEUED, TaskStatus.QUEUED]
     assert any("OpenRouter HTTP 401" in item["error"] for item in _object_dicts(tick["worker_errors"]))
     assert attention_count == 1
+    assert matter_attention_count == 1
+    assert worker_failed_count == 0
+    assert provider_block_count == 1
+    assert maintenance_count == 1
+    assert provider_error["severity"] == "blocker"
+    assert int(str(provider_error["terminal"])) == 1
+    assert _json_mapping(str(provider_error["payload_json"]))["requires_user_intervention"] is True
+
+
+def test_run_free_loop_treats_post_dispatch_provider_auth_failure_as_user_intervention(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    db_path = init_db(tmp_path)
+    env = {"OPENROUTER_API_KEY": "sk-test", "ATTICUS_ENABLE_LIVE_OPENROUTER": "1"}
+    policy = {
+        "provider": "openrouter",
+        "model": "deepseek/deepseek-v4-flash",
+        "runtime": "openrouter",
+        "allow_fallback": False,
+        "estimated_cost_usd": 0.01,
+    }
+
+    def fake_probe(provider_policy: Mapping[str, object], *, client: object | None = None, env: Mapping[str, str] | None = None) -> dict[str, object]:
+        del provider_policy, client, env
+        return {"ok": True, "reason": "", "provider_policy_result": "probe_ok"}
+
+    def fake_execute_openrouter(
+        conn: sqlite3.Connection,
+        *,
+        task_id: str,
+        lease_id: str,
+        worker_id: str,
+        output_dir: str | Path,
+        env: Mapping[str, str],
+        allow_live: bool,
+    ) -> object:
+        del conn, task_id, lease_id, worker_id, output_dir, env, allow_live
+        raise WorkerExecutionBlocked("OpenRouter provider call failed after dispatch: OpenRouter HTTP 401")
+
+    monkeypatch.setattr(free_loop_module, "probe_live_openrouter", fake_probe)
+    monkeypatch.setattr(free_loop_module, "execute_openrouter_work_order", fake_execute_openrouter)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="post-dispatch-401",
+                title="Post dispatch 401",
+                task_type="source_inventory",
+                stage=LegalStage.S0_SOURCE_INVENTORY,
+                provider_policy=policy,
+                status=TaskStatus.QUEUED,
+            ),
+        )
+        tick = run_free_loop_once(
+            conn,
+            output_dir=tmp_path,
+            capacity=1,
+            execute_workers=True,
+            runtime="openrouter",
+            allow_live=True,
+            env=env,
+        )
+        task = cast(Mapping[str, object], conn.execute("SELECT status FROM tasks WHERE task_id = 'post-dispatch-401'").fetchone())
+        worker_attention_count = _count(conn, "SELECT COUNT(*) AS n FROM human_attention WHERE reason LIKE 'free loop worker failed:%'")
+        matter_attention_count = _count(conn, "SELECT COUNT(*) AS n FROM human_attention WHERE target_type = 'matter' AND reason LIKE 'provider runtime requires user intervention:%'")
+        worker_failed_count = _count(conn, "SELECT COUNT(*) AS n FROM orchestrator_events WHERE event_type = 'orchestrator.worker_failed'")
+        provider_runtime_count = _count(conn, "SELECT COUNT(*) AS n FROM orchestrator_events WHERE event_type = 'orchestrator.provider_runtime_user_intervention_required'")
+        maintenance_count = _count(conn, "SELECT COUNT(*) AS n FROM maintenance_runs WHERE triggered_by = 'master_orchestrator' AND trigger_reason LIKE 'provider runtime requires user intervention%'")
+        provider_error = cast(Mapping[str, object], conn.execute("SELECT severity, terminal, payload_json FROM error_logs WHERE error_type = 'provider_dispatch_requires_user_intervention'").fetchone())
+
+    assert tick["leased_tasks"] == ["post-dispatch-401"]
+    assert any("OpenRouter HTTP 401" in item["error"] for item in _object_dicts(tick["worker_errors"]))
+    assert task["status"] == TaskStatus.BLOCKED
+    assert worker_attention_count == 0
+    assert matter_attention_count == 1
+    assert worker_failed_count == 0
+    assert provider_runtime_count == 1
+    assert maintenance_count == 1
+    assert provider_error["severity"] == "blocker"
+    assert int(str(provider_error["terminal"])) == 1
+    assert _json_mapping(str(provider_error["payload_json"]))["requires_user_intervention"] is True
 
 
 def test_run_free_loop_executes_leased_workers_in_parallel_when_capacity_allows(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

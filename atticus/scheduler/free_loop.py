@@ -299,7 +299,15 @@ def _openrouter_preflight_error(
             "provider_policy_result": str(probe.get("provider_policy_result") or ""),
         },
     )
-    _report_failure_without_masking(conn, task_id=task_id, reason=message)
+    _ = repo.record_provider_preflight_failure(
+        conn,
+        matter_scope=matter_scope,
+        task_id=task_id,
+        provider="openrouter",
+        message=message,
+        runnable_task_count=len(runnable_tasks),
+        provider_policy_result=str(probe.get("provider_policy_result") or ""),
+    )
     return {"task_id": task_id, "error": message}
 
 
@@ -437,6 +445,24 @@ def _execute_one_leased_worker(
 
 def _handle_worker_exception(conn: sqlite3.Connection, *, task_id: str, lease_id: str, reason: str) -> None:
     _fail_active_lease_after_worker_exception(conn, lease_id=lease_id, task_id=task_id, reason=reason)
+    if repo.provider_failure_requires_user_intervention(reason):
+        matter_scope = repo.matter_scope_for_target(conn, target_type="task", target_id=task_id) or "unknown"
+        provider = "openrouter" if "openrouter" in reason.lower() else "provider"
+        _ = repo.record_provider_control_plane_failure(
+            conn,
+            matter_scope=matter_scope,
+            task_id=task_id,
+            provider=provider,
+            message=reason,
+            runnable_task_count=1,
+            provider_policy_result="post_dispatch_user_intervention",
+            source="provider.post_dispatch",
+            error_type="provider_dispatch_requires_user_intervention",
+            attention_prefix="provider runtime",
+            trigger_reason_prefix="provider runtime",
+            event_prefix="orchestrator.provider_runtime",
+        )
+        return
     decomposition = decompose_broad_task_if_needed(
         conn,
         task_id=task_id,

@@ -412,6 +412,66 @@ def test_maintenance_tick_writes_report_notifies_user_and_master(tmp_path: Path)
     assert run["completed_at"]
 
 
+def test_maintenance_tick_closes_stale_system_attention_for_requeued_tasks(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="requeued-after-provider-fix",
+                title="Requeued after provider fix",
+                task_type="source_inventory",
+                matter_scope="alpha",
+                status=TaskStatus.QUEUED,
+            ),
+        )
+        stale_attention = repo.record_human_attention(
+            conn,
+            matter_scope="alpha",
+            target_type="task",
+            target_id="requeued-after-provider-fix",
+            severity="blocker",
+            reason="free loop worker failed: OpenRouter provider call failed after dispatch: OpenRouter HTTP 401",
+        )
+        stale_quarantine_attention = repo.record_human_attention(
+            conn,
+            matter_scope="alpha",
+            target_type="task",
+            target_id="requeued-after-provider-fix",
+            severity="blocker",
+            reason="worker output quarantined: citations[0].quoted_text_hash must be a sha256 hex digest when present",
+        )
+        stale_cert_attention = repo.record_human_attention(
+            conn,
+            matter_scope="alpha",
+            target_type="task",
+            target_id="requeued-after-provider-fix",
+            severity="blocker",
+            reason="completion certification production_mapping withheld: validation failed after reduction",
+        )
+        operator_attention = repo.record_human_attention(
+            conn,
+            matter_scope="alpha",
+            target_type="task",
+            target_id="requeued-after-provider-fix",
+            severity="blocker",
+            reason="operator directive: review this before drafting",
+        )
+        request = request_maintenance(conn, matter_scope="alpha", reason="cleanup stale provider blockers", write=True)
+
+        result = maintenance_tick(conn, matter_scope="alpha", maintenance_run_id=str(request["maintenance_run_id"]), write=True)
+        stale = conn.execute("SELECT status FROM human_attention WHERE attention_id = ?", (stale_attention,)).fetchone()
+        stale_quarantine = conn.execute("SELECT status FROM human_attention WHERE attention_id = ?", (stale_quarantine_attention,)).fetchone()
+        stale_cert = conn.execute("SELECT status FROM human_attention WHERE attention_id = ?", (stale_cert_attention,)).fetchone()
+        operator = conn.execute("SELECT status FROM human_attention WHERE attention_id = ?", (operator_attention,)).fetchone()
+
+    assert any(action["type"] == "resolve_stale_system_task_attention" for action in cast(list[dict[str, object]], result["applied_actions"]))
+    assert stale["status"] == "closed"
+    assert stale_quarantine["status"] == "closed"
+    assert stale_cert["status"] == "closed"
+    assert operator["status"] == "open"
+
+
 def test_maintenance_can_expire_stale_leases_and_emit_resume_signal(tmp_path: Path):
     db_path = init_db(tmp_path)
     with repo.db_connection(db_path) as conn:
