@@ -573,6 +573,11 @@ def test_openrouter_preflight_groups_by_provider_policy_and_leases_only_passing_
     assert sorted(probes) == ["deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-pro"]
     assert result["leased_tasks"] == ["flash-ok"]
     assert executed == ["flash-ok"]
+    preflight_groups = sorted(cast(list[Mapping[str, object]], result["preflight_groups"]), key=lambda group: str(group["model"]))
+    assert [group["model"] for group in preflight_groups] == ["deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-pro"]
+    assert [group["ok"] for group in preflight_groups] == [True, False]
+    assert preflight_groups[0]["task_ids"] == ["flash-ok"]
+    assert preflight_groups[1]["task_ids"] == ["pro-bad"]
     assert cast(list[Mapping[str, object]], result["worker_errors"])[0]["task_id"] == "pro-bad"
     assert [(row["task_id"], row["status"]) for row in lease_rows] == [("flash-ok", "completed")]
 

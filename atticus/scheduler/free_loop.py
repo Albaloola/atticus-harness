@@ -143,6 +143,7 @@ def run_free_loop_once(
     leased_tasks: list[str] = []
     executed_tasks: list[str] = []
     worker_errors: list[dict[str, str]] = []
+    preflight_groups: list[dict[str, object]] = []
     if execute_workers and runtime == "openrouter":
         preflight = _openrouter_preflight(
             conn,
@@ -152,6 +153,7 @@ def run_free_loop_once(
         )
         runnable = preflight["runnable_tasks"]
         worker_errors.extend(preflight["errors"])
+        preflight_groups.extend(preflight["preflight_groups"])
 
     leased_workers: list[dict[str, str]] = []
     for index, task in enumerate(runnable, start=1):
@@ -206,6 +208,7 @@ def run_free_loop_once(
             "reduction_errors": reduction_errors,
             "skipped_reductions": skipped_reductions,
             "worker_errors": worker_errors,
+            "preflight_groups": preflight_groups,
         },
     )
     _commit_progress(conn)
@@ -221,6 +224,7 @@ def run_free_loop_once(
         "reduction_errors": reduction_errors,
         "skipped_reductions": skipped_reductions,
         "worker_errors": worker_errors,
+        "preflight_groups": preflight_groups,
     }
 
 
@@ -284,7 +288,7 @@ def _openrouter_preflight(
     allow_live: bool,
 ) -> dict[str, list[Mapping[str, object]] | list[dict[str, str]]]:
     if not runnable_tasks:
-        return {"runnable_tasks": [], "errors": []}
+        return {"runnable_tasks": [], "errors": [], "preflight_groups": []}
     groups: dict[str, dict[str, object]] = {}
     for task in runnable_tasks:
         task_id = str(task["task_id"])
@@ -326,6 +330,7 @@ def _openrouter_preflight(
 
     allowed: list[Mapping[str, object]] = []
     errors: list[dict[str, str]] = []
+    preflight_groups: list[dict[str, object]] = []
     effective_env = env if env is not None else os.environ
     for group in groups.values():
         tasks = cast(list[Mapping[str, object]], group["tasks"])
@@ -333,6 +338,8 @@ def _openrouter_preflight(
         matter_scope = str(group["matter_scope"])
         parse_error = str(group.get("error") or "")
         provider_policy = group.get("policy")
+        provider = str(cast(Mapping[str, object], provider_policy).get("provider") or "openrouter") if isinstance(provider_policy, Mapping) else "openrouter"
+        model = str(cast(Mapping[str, object], provider_policy).get("model") or "") if isinstance(provider_policy, Mapping) else ""
         if parse_error:
             errors.append(_record_openrouter_preflight_group_failure(
                 conn,
@@ -342,6 +349,17 @@ def _openrouter_preflight(
                 reason=parse_error,
                 provider_policy_result="policy_parse_error",
             ))
+            preflight_groups.append(
+                {
+                    "fingerprint": str(group["fingerprint"]),
+                    "provider": provider,
+                    "model": model,
+                    "task_ids": task_ids,
+                    "ok": False,
+                    "reason": parse_error,
+                    "provider_policy_result": "policy_parse_error",
+                }
+            )
             continue
         probe = probe_live_openrouter(cast(Mapping[str, object], provider_policy), env=effective_env)
         if probe.get("ok") is True:
@@ -352,6 +370,17 @@ def _openrouter_preflight(
                 resolution_source="provider.preflight_ok",
             )
             allowed.extend(tasks)
+            preflight_groups.append(
+                {
+                    "fingerprint": str(group["fingerprint"]),
+                    "provider": provider,
+                    "model": model,
+                    "task_ids": task_ids,
+                    "ok": True,
+                    "reason": str(probe.get("reason") or ""),
+                    "provider_policy_result": str(probe.get("provider_policy_result") or "probe_ok"),
+                }
+            )
             continue
         reason = str(probe.get("reason") or "OpenRouter preflight failed")
         errors.append(_record_openrouter_preflight_group_failure(
@@ -362,7 +391,18 @@ def _openrouter_preflight(
             reason=reason,
             provider_policy_result=str(probe.get("provider_policy_result") or ""),
         ))
-    return {"runnable_tasks": allowed, "errors": errors}
+        preflight_groups.append(
+            {
+                "fingerprint": str(group["fingerprint"]),
+                "provider": provider,
+                "model": model,
+                "task_ids": task_ids,
+                "ok": False,
+                "reason": reason,
+                "provider_policy_result": str(probe.get("provider_policy_result") or ""),
+            }
+        )
+    return {"runnable_tasks": allowed, "errors": errors, "preflight_groups": preflight_groups}
 
 
 def _record_openrouter_preflight_group_failure(
