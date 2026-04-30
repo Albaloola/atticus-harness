@@ -15,6 +15,7 @@ from atticus.providers.model_policy import default_smart_model_policy, load_mode
 from atticus.scheduler.capacity import MAX_PARALLEL_AGENT_CAPACITY, agent_capacity
 from atticus.scheduler.gates import evaluate_task_gates
 from atticus.scheduler.lease import LeaseError, acquire_lease, expire_leases
+from atticus.scheduler.supervisor_invariants import evaluate_no_silent_idle
 
 
 OPERATOR_SIGNAL_TYPES = {"suggestion", "directive", "redirect", "attention"}
@@ -134,7 +135,7 @@ def orchestrator_tick(conn: sqlite3.Connection, matter_scope: str, capacity: int
                 payload={**route_payload, "routed_event_id": routed_event_id},
             )
             routed_operator_signals.append({**route_payload, "routed_event_id": routed_event_id})
-    return {
+    result: dict[str, object] = {
         "dry_run": dry_run,
         "matter_scope": matter_scope,
         "orchestrator_id": orchestrator_id,
@@ -152,6 +153,11 @@ def orchestrator_tick(conn: sqlite3.Connection, matter_scope: str, capacity: int
         "skipped": skipped,
         "external_actions": "blocked",
     }
+    if capacity_effective > 0:
+        result["no_silent_idle"] = evaluate_no_silent_idle(conn, matter_scope, result, write=not dry_run)
+    else:
+        result["no_silent_idle"] = {"ok": True, "matter_scope": matter_scope, "reason": "capacity_zero"}
+    return result
 
 
 def record_operator_signal(

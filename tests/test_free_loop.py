@@ -16,6 +16,7 @@ from atticus.db.schema import SCHEMA_VERSION
 from atticus.scheduler import free_loop as free_loop_module
 from atticus.scheduler.free_loop import run_free_loop_once
 from atticus.scheduler.lease import acquire_lease, complete_lease
+from atticus.status.completion import FINAL_LEGAL_DRAFT_CERTIFICATIONS
 from atticus.workers.outputs import record_worker_result
 from atticus.workers.result_parser import RESULT_PACKET_SCHEMA_VERSION
 
@@ -84,6 +85,27 @@ def _packet(task_id: str) -> dict[str, object]:
     }
 
 
+def _certify_matter(conn: sqlite3.Connection, matter_scope: str, certification_type: str) -> None:
+    validation_id = repo.record_validation(
+        conn,
+        matter_scope=matter_scope,
+        target_type="matter",
+        target_id=matter_scope,
+        gate_name=certification_type,
+        passed=True,
+        details={"test": True},
+    )
+    repo.add_certification(
+        conn,
+        subject_type="matter",
+        subject_id=matter_scope,
+        certification_type=certification_type,
+        validator="test",
+        validation_result_id=validation_id,
+        evidence={"test": True},
+    )
+
+
 def test_free_loop_once_reduces_pending_candidates_and_imports_proposed_tasks(tmp_path: Path):
     db_path = init_db(tmp_path)
     with repo.db_connection(db_path) as conn:
@@ -119,6 +141,99 @@ def test_free_loop_once_reduces_pending_candidates_and_imports_proposed_tasks(tm
     assert followup is not None
     assert followup["status"] == str(TaskStatus.QUEUED)
     assert provider_runs == 0
+
+
+def test_free_loop_no_progress_with_missing_certification_surfaces_next_action(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    matter_scope = "napier-accommodation-arrears"
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="napier-final-quality",
+                title="Napier final quality",
+                task_type="final_quality_gate",
+                stage=LegalStage.S9_FINAL_QUALITY_GATE,
+                matter_scope=matter_scope,
+                status=TaskStatus.COMPLETE,
+            ),
+        )
+        for certification_type in FINAL_LEGAL_DRAFT_CERTIFICATIONS:
+            if certification_type != "final_quality_gate":
+                _certify_matter(conn, matter_scope, certification_type)
+
+        result = run_free_loop_once(
+            conn,
+            output_dir=tmp_path / "out",
+            capacity=0,
+            execute_workers=False,
+            matter_scope=matter_scope,
+        )
+        event = conn.execute(
+            """
+            SELECT payload_json
+            FROM events
+            WHERE event_type = 'supervisor.no_progress_detected'
+            ORDER BY event_id DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        repair_plan = conn.execute(
+            "SELECT blocker_type FROM repair_plans WHERE matter_scope = ? AND blocker_type = 'missing_certification' LIMIT 1",
+            (matter_scope,),
+        ).fetchone()
+        attention = conn.execute(
+            """
+            SELECT reason
+            FROM human_attention
+            WHERE matter_scope = ? AND target_type = 'matter' AND target_id = ? AND status = 'open'
+            LIMIT 1
+            """,
+            (matter_scope, matter_scope),
+        ).fetchone()
+
+    invariant = cast(Mapping[str, object], result["no_silent_idle"])
+    assert invariant["ok"] is False
+    assert invariant["reason"] == "no_progress_with_incomplete_matter"
+    assert cast(Mapping[str, object], invariant["next_action"])["type"] == "missing_certification"
+    assert "final_quality_gate" in invariant["missing_certifications"]
+    assert event is not None
+    assert "final_quality_gate" in str(json.loads(str(event["payload_json"])))
+    assert repair_plan is not None
+    assert attention is not None
+
+
+def test_free_loop_no_silent_idle_does_not_fire_when_matter_done(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    matter_scope = "napier-accommodation-arrears"
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="napier-final-quality-done",
+                title="Napier final quality done",
+                task_type="final_quality_gate",
+                stage=LegalStage.S9_FINAL_QUALITY_GATE,
+                matter_scope=matter_scope,
+                status=TaskStatus.COMPLETE,
+            ),
+        )
+        for certification_type in FINAL_LEGAL_DRAFT_CERTIFICATIONS:
+            _certify_matter(conn, matter_scope, certification_type)
+
+        result = run_free_loop_once(
+            conn,
+            output_dir=tmp_path / "out",
+            capacity=0,
+            execute_workers=False,
+            matter_scope=matter_scope,
+        )
+        event_count = _scalar_int(conn, "SELECT COUNT(*) FROM events WHERE event_type = 'supervisor.no_progress_detected'")
+
+    invariant = cast(Mapping[str, object], result["no_silent_idle"])
+    assert invariant["ok"] is True
+    assert invariant["reason"] == "matter_complete"
+    assert event_count == 0
 
 
 def test_free_loop_requeues_transient_openrouter_json_failure_when_live_enabled(tmp_path: Path):

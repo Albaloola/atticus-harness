@@ -17,6 +17,7 @@ from atticus.core.events import utc_now
 from atticus.db import repo
 from atticus.db.doctor import schema_check_json, verify_schema
 from atticus.scheduler.lease import expire_leases
+from atticus.scheduler.supervisor_invariants import evaluate_no_silent_idle
 
 
 MAINTENANCE_ISOLATION_LEVEL = "control_plane_only"
@@ -106,7 +107,7 @@ def maintenance_tick(
     resume_signal = _resume_signal(diagnostics)
     report_summary = _summary(diagnostics, actions, resume_signal)
     if not write:
-        return {
+        result: dict[str, object] = {
             "dry_run": True,
             "matter_scope": matter_scope,
             "maintenance_run_id": str(run.get("maintenance_run_id") or ""),
@@ -116,6 +117,8 @@ def maintenance_tick(
             "resume_signal": resume_signal,
             "summary": report_summary,
         }
+        result["no_silent_idle"] = evaluate_no_silent_idle(conn, matter_scope, result, write=False)
+        return result
 
     run_id = str(run["maintenance_run_id"])
     _ = conn.execute(
@@ -153,7 +156,7 @@ def maintenance_tick(
         actions=[*actions, *applied_actions],
         resume_signal=resume_signal,
     )
-    return {
+    result = {
         "dry_run": False,
         "matter_scope": matter_scope,
         "maintenance_run_id": run_id,
@@ -164,6 +167,8 @@ def maintenance_tick(
         "resume_signal": resume_signal,
         "summary": report_summary,
     }
+    result["no_silent_idle"] = evaluate_no_silent_idle(conn, matter_scope, result, write=True)
+    return result
 
 
 def maintenance_report(conn: sqlite3.Connection, *, maintenance_run_id: str) -> dict[str, object]:

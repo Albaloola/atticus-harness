@@ -29,6 +29,7 @@ from atticus.scheduler.capacity import MAX_PARALLEL_AGENT_CAPACITY, agent_capaci
 from atticus.scheduler.gates import LIVE_CODEX_NOT_ENABLED_BLOCKER, LIVE_OPENROUTER_NOT_ENABLED_BLOCKER
 from atticus.scheduler.lease import LeaseError, acquire_lease
 from atticus.scheduler.planner import select_runnable_tasks
+from atticus.scheduler.supervisor_invariants import evaluate_no_silent_idle
 from atticus.workers.proposed_tasks import import_proposed_tasks_from_candidate
 from atticus.workers.runtime import execute_codex_work_order, execute_local_work_order, execute_openrouter_work_order
 
@@ -185,34 +186,7 @@ def run_free_loop_once(
         _commit_progress(conn)
 
     ok = not reduction_errors and not worker_errors
-    _ = repo.emit_event(
-        conn,
-        "free_loop.tick",
-        matter_scope=_tick_matter_scope(
-            conn,
-            leased_tasks=leased_tasks,
-            executed_tasks=executed_tasks,
-            reduction_errors=reduction_errors,
-            skipped_reductions=skipped_reductions,
-            worker_errors=worker_errors,
-        ),
-        payload={
-            "ok": ok,
-            "capacity_requested": capacity_requested,
-            "capacity_effective": capacity_effective,
-            "capacity_limit": MAX_PARALLEL_AGENT_CAPACITY,
-            "reduced_candidates": reduced_candidates,
-            "imported_tasks": imported_tasks,
-            "leased_tasks": leased_tasks,
-            "executed_tasks": executed_tasks,
-            "reduction_errors": reduction_errors,
-            "skipped_reductions": skipped_reductions,
-            "worker_errors": worker_errors,
-            "preflight_groups": preflight_groups,
-        },
-    )
-    _commit_progress(conn)
-    return {
+    result: dict[str, object] = {
         "ok": ok,
         "capacity_requested": capacity_requested,
         "capacity_effective": capacity_effective,
@@ -226,6 +200,24 @@ def run_free_loop_once(
         "worker_errors": worker_errors,
         "preflight_groups": preflight_groups,
     }
+    result["no_silent_idle"] = evaluate_no_silent_idle(conn, matter_scope, result, write=True)
+    _ = repo.emit_event(
+        conn,
+        "free_loop.tick",
+        matter_scope=_tick_matter_scope(
+            conn,
+            leased_tasks=leased_tasks,
+            executed_tasks=executed_tasks,
+            reduction_errors=reduction_errors,
+            skipped_reductions=skipped_reductions,
+            worker_errors=worker_errors,
+        ),
+        payload={
+            **result,
+        },
+    )
+    _commit_progress(conn)
+    return result
 
 
 def run_free_loop(
