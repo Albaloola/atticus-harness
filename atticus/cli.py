@@ -85,6 +85,7 @@ from atticus.status.report import generate_status
 from atticus.tools.registry import list_tools
 from atticus.validation.gates import run_validation
 from atticus.verifier import verify_candidate
+from atticus.workflows.final_gate import create_missing_final_gate_work, final_gate_readiness, plan_final_gate_repairs
 from atticus.workflows.registry import list_workflows, load_workflow, plan_workflow
 from atticus.workers.outputs import reject_candidate_output
 from atticus.workers.runtime import execute_local_work_order
@@ -237,6 +238,13 @@ def build_parser() -> argparse.ArgumentParser:
     _ = reducer_review.add_argument("--reason", default="")
     _ = reducer_review.add_argument("--write", action="store_true")
     _ = reducer_review.add_argument("--json", dest="json_output", action="store_true")
+
+    final_gate = sub.add_parser("final-gate", help="inspect and repair deterministic final gate readiness")
+    _ = final_gate.add_argument("action", choices=["readiness", "repair-plan", "create-missing"])
+    _ = final_gate.add_argument("--db", required=True)
+    _ = final_gate.add_argument("--matter", required=True)
+    _ = final_gate.add_argument("--write", action="store_true")
+    _ = final_gate.add_argument("--json", dest="json_output", action="store_true")
 
     inspect = sub.add_parser("inspect", help="read-only record inspection")
     _ = inspect.add_argument("--db", required=True)
@@ -698,6 +706,24 @@ def _main(args: CliArgs) -> int:
                 if not args.candidate_id:
                     raise ValueError("reducer-review reject requires --candidate-id")
                 payload = reject_reducer_review(conn, candidate_id=args.candidate_id, reason=args.reason, write=args.write)
+        print_json(_materialize_resume_commands(payload, args.db))
+        return 0
+
+    if args.command == "final-gate":
+        read_only = args.action != "create-missing" or not args.write
+        with repo.db_connection(args.db, read_only=read_only) as conn:
+            schema_check = schema_check_json(conn, db_path=args.db)
+            if not schema_check["ok"]:
+                print_json(schema_check)
+                return 2
+            if args.action == "readiness":
+                payload = final_gate_readiness(conn, args.matter)
+            elif args.action == "repair-plan":
+                payload = {"repairs": plan_final_gate_repairs(conn, args.matter)}
+            else:
+                if not args.write:
+                    raise ValueError("final-gate create-missing requires --write")
+                payload = create_missing_final_gate_work(conn, args.matter)
         print_json(_materialize_resume_commands(payload, args.db))
         return 0
 
