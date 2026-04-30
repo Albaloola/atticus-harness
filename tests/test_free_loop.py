@@ -14,7 +14,7 @@ from atticus.core.tasks import TaskSpec
 from atticus.db import repo
 from atticus.scheduler import free_loop as free_loop_module
 from atticus.scheduler.free_loop import run_free_loop_once
-from atticus.scheduler.lease import acquire_lease
+from atticus.scheduler.lease import acquire_lease, complete_lease
 from atticus.workers.outputs import record_worker_result
 from atticus.workers.result_parser import RESULT_PACKET_SCHEMA_VERSION
 
@@ -494,6 +494,86 @@ def test_run_free_loop_cli_openrouter_without_live_gate_does_not_dispatch(tmp_pa
     assert failed_leases == 0
     assert task["status"] == str(TaskStatus.QUEUED)
     assert task["blocked_reasons_json"] == "[]"
+
+
+def test_openrouter_preflight_groups_by_provider_policy_and_leases_only_passing_group(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    db_path = init_db(tmp_path)
+    probes: list[str] = []
+    executed: list[str] = []
+
+    def fake_probe(provider_policy: Mapping[str, object], *, env: Mapping[str, str]) -> dict[str, object]:
+        del env
+        model = str(provider_policy.get("model") or "")
+        probes.append(model)
+        if model.endswith("flash"):
+            return {"ok": True}
+        return {"ok": False, "reason": "simulated bad policy", "provider_policy_result": "simulated_bad_policy"}
+
+    def fake_execute_openrouter_work_order(
+        conn: sqlite3.Connection,
+        *,
+        task_id: str,
+        lease_id: str,
+        worker_id: str,
+        output_dir: Path,
+        env: Mapping[str, str] | None,
+        allow_live: bool,
+    ) -> None:
+        del worker_id, output_dir, env, allow_live
+        executed.append(task_id)
+        complete_lease(conn, lease_id=lease_id, task_status=TaskStatus.COMPLETE)
+
+    monkeypatch.setattr(free_loop_module, "probe_live_openrouter", fake_probe)
+    monkeypatch.setattr(free_loop_module, "execute_openrouter_work_order", fake_execute_openrouter_work_order)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="flash-ok",
+                title="Flash OK",
+                task_type="source_inventory",
+                provider_policy={
+                    "provider": "openrouter",
+                    "model": "deepseek/deepseek-v4-flash",
+                    "allow_fallback": False,
+                    "estimated_cost_usd": 0.01,
+                },
+            ),
+        )
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="pro-bad",
+                title="Pro bad",
+                task_type="source_inventory",
+                provider_policy={
+                    "provider": "openrouter",
+                    "model": "deepseek/deepseek-v4-pro",
+                    "allow_fallback": False,
+                    "estimated_cost_usd": 0.02,
+                },
+            ),
+        )
+
+        result = run_free_loop_once(
+            conn,
+            output_dir=tmp_path / "out",
+            capacity=2,
+            execute_workers=True,
+            runtime="openrouter",
+            allow_live=True,
+            env={"ATTICUS_ENABLE_LIVE_OPENROUTER": "1"},
+        )
+        lease_rows = conn.execute("SELECT task_id, status FROM leases ORDER BY task_id").fetchall()
+
+    assert sorted(probes) == ["deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-pro"]
+    assert result["leased_tasks"] == ["flash-ok"]
+    assert executed == ["flash-ok"]
+    assert cast(list[Mapping[str, object]], result["worker_errors"])[0]["task_id"] == "pro-bad"
+    assert [(row["task_id"], row["status"]) for row in lease_rows] == [("flash-ok", "completed")]
 
 
 def test_run_free_loop_cli_self_migrates_stale_v5_db_before_failure_logging(

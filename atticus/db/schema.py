@@ -257,6 +257,19 @@ CREATE TABLE IF NOT EXISTS legal_authorities (
   updated_at TEXT NOT NULL
 ) STRICT;
 
+CREATE TABLE IF NOT EXISTS authority_verifications (
+  authority_verification_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL,
+  authority_id TEXT NOT NULL REFERENCES legal_authorities(authority_id) ON DELETE CASCADE,
+  jurisdiction TEXT NOT NULL DEFAULT '',
+  binding_status TEXT NOT NULL DEFAULT '',
+  currentness_status TEXT NOT NULL DEFAULT 'unknown',
+  proposition_supported INTEGER NOT NULL DEFAULT 0 CHECK(proposition_supported IN (0, 1)),
+  checked_by TEXT NOT NULL DEFAULT '',
+  checked_at TEXT NOT NULL,
+  details_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(details_json))
+) STRICT;
+
 CREATE TABLE IF NOT EXISTS claims (
   claim_id TEXT PRIMARY KEY,
   matter_scope TEXT NOT NULL,

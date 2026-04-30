@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import cast
 from collections.abc import Mapping
+import hashlib
 from pathlib import Path
 import json
 import sqlite3
@@ -169,6 +170,27 @@ def test_budget_gate_blocks_over_budget_tasks(tmp_path: Path):
     assert "budget blocked" in str(row["blocked_reasons_json"])
 
 
+def test_select_runnable_tasks_dry_run_does_not_write_blocked_reasons(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="draft-preview-too-early",
+                title="Draft preview too early",
+                task_type="draft",
+                stage=LegalStage.S8_DRAFT_PREPARATION,
+                status=TaskStatus.QUEUED,
+            ),
+        )
+        runnable = select_runnable_tasks(conn, capacity=3, dry_run=True)
+        row = cast(Mapping[str, object], conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'draft-preview-too-early'").fetchone())
+
+    assert runnable == []
+    assert row["status"] == TaskStatus.QUEUED
+    assert json.loads(str(row["blocked_reasons_json"])) == []
+
+
 def test_context_packs_are_deterministic_and_fingerprinted(tmp_path: Path):
     db_path = init_db(tmp_path)
     with repo.db_connection(db_path) as conn:
@@ -301,6 +323,224 @@ def test_validation_failure_creates_human_attention(tmp_path: Path):
     assert attention["target_type"] == "matter"
     assert attention["target_id"] == "atticus"
     assert "validation failed" in str(attention["reason"])
+
+
+def test_citation_integrity_does_not_claim_quote_support_checked(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        source_id = repo.add_source(conn, path="/raw/evidence.pdf", sha256="b" * 64)
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="citation-target-only",
+                title="Citation target only",
+                task_type="draft",
+                stage=LegalStage.S8_DRAFT_PREPARATION,
+                source_dependencies=[source_id],
+            ),
+        )
+        candidate_id = repo.record_candidate_output(
+            conn,
+            task_id="citation-target-only",
+            lease_id=None,
+            worker_id="worker-1",
+            output_type="worker_result_packet",
+            payload=cited_fact_packet("citation-target-only", source_id),
+        )
+        outcome = run_validation(conn, gate_name="citation_integrity", target_type="candidate", target_id=candidate_id)
+
+    assert outcome.passed
+    assert outcome.details["proof_target_checked"] is True
+    assert outcome.details["quote_support_checked"] is False
+    assert "proof_checked" not in outcome.details
+
+
+def test_citation_support_integrity_fails_without_quote(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        source_id = repo.add_source(conn, path="/raw/evidence.pdf", sha256="b" * 64)
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="citation-support-missing",
+                title="Citation support missing",
+                task_type="draft",
+                stage=LegalStage.S8_DRAFT_PREPARATION,
+                source_dependencies=[source_id],
+            ),
+        )
+        packet = cited_fact_packet("citation-support-missing", source_id)
+        cast(list[dict[str, object]], packet["citations"])[0].pop("quoted_text_hash", None)
+        candidate_id = repo.record_candidate_output(
+            conn,
+            task_id="citation-support-missing",
+            lease_id=None,
+            worker_id="worker-1",
+            output_type="worker_result_packet",
+            payload=packet,
+        )
+        outcome = run_validation(conn, gate_name="citation_support_integrity", target_type="candidate", target_id=candidate_id)
+
+    assert not outcome.passed
+    assert cast(list[object], outcome.details["missing_quote"])
+
+
+def test_citation_support_integrity_checks_quote_hash_and_source_material(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    quote = "The tenant must pay rent by 1 May."
+    quote_hash = hashlib.sha256(" ".join(quote.split()).encode("utf-8")).hexdigest()
+    with repo.db_connection(db_path) as conn:
+        source_id = repo.add_source(conn, path="/raw/lease.pdf", sha256="c" * 64)
+        repo.add_artifact(
+            conn,
+            path="/candidate/lease-extract.txt",
+            artifact_type="extracted_text",
+            content=f"Opening text. {quote} Closing text.",
+            source_ids=[source_id],
+        )
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="citation-support-ok",
+                title="Citation support ok",
+                task_type="draft",
+                stage=LegalStage.S8_DRAFT_PREPARATION,
+                source_dependencies=[source_id],
+            ),
+        )
+        packet = cited_fact_packet("citation-support-ok", source_id)
+        citation = cast(list[dict[str, object]], packet["citations"])[0]
+        citation["quote"] = quote
+        citation["quoted_text_hash"] = quote_hash
+        candidate_id = repo.record_candidate_output(
+            conn,
+            task_id="citation-support-ok",
+            lease_id=None,
+            worker_id="worker-1",
+            output_type="worker_result_packet",
+            payload=packet,
+        )
+        outcome = run_validation(conn, gate_name="citation_support_integrity", target_type="candidate", target_id=candidate_id)
+
+    assert outcome.passed
+    assert cast(list[object], outcome.details["checked_citations"])
+
+
+def test_citation_support_integrity_fails_hash_mismatch(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    quote = "The tenant must pay rent by 1 May."
+    with repo.db_connection(db_path) as conn:
+        source_id = repo.add_source(conn, path="/raw/lease.pdf", sha256="c" * 64)
+        repo.add_artifact(
+            conn,
+            path="/candidate/lease-extract.txt",
+            artifact_type="extracted_text",
+            content=quote,
+            source_ids=[source_id],
+        )
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="citation-support-bad-hash",
+                title="Citation support bad hash",
+                task_type="draft",
+                stage=LegalStage.S8_DRAFT_PREPARATION,
+                source_dependencies=[source_id],
+            ),
+        )
+        packet = cited_fact_packet("citation-support-bad-hash", source_id)
+        citation = cast(list[dict[str, object]], packet["citations"])[0]
+        citation["quote"] = quote
+        citation["quoted_text_hash"] = "d" * 64
+        candidate_id = repo.record_candidate_output(
+            conn,
+            task_id="citation-support-bad-hash",
+            lease_id=None,
+            worker_id="worker-1",
+            output_type="worker_result_packet",
+            payload=packet,
+        )
+        outcome = run_validation(conn, gate_name="citation_support_integrity", target_type="candidate", target_id=candidate_id)
+
+    assert not outcome.passed
+    assert cast(list[object], outcome.details["hash_mismatch"])
+
+
+def _authority_law_packet(task_id: str, authority_id: str) -> dict[str, object]:
+    packet = valid_packet(task_id)
+    packet["findings"] = [
+        {
+            "finding_id": "finding-law-1",
+            "text": "The authority establishes a legal rule.",
+            "finding_type": "law",
+            "citation_ids": ["cite-authority-1"],
+            "confidence": 0.8,
+            "reasoning_status": "supported",
+        }
+    ]
+    packet["citations"] = [
+        {
+            "citation_id": "cite-authority-1",
+            "target_type": "authority",
+            "target_id": authority_id,
+            "locator": "p.1",
+        }
+    ]
+    return packet
+
+
+def test_candidate_authority_is_allowed_orientation_but_not_proof(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO legal_authorities(authority_id, matter_scope, jurisdiction, citation, authority_type, title, status, source_url, created_at, updated_at)
+            VALUES ('auth-candidate', 'atticus', 'Scotland', 'Example v University [2024] CSOH 1', 'case', 'Example', 'candidate', '', 'now', 'now')
+            """
+        )
+        repo.add_task(conn, TaskSpec(task_id="law-candidate-authority", title="Law", task_type="authority_map", stage=LegalStage.S6_AUTHORITY_LAW_MAP))
+        candidate_id = repo.record_candidate_output(
+            conn,
+            task_id="law-candidate-authority",
+            lease_id=None,
+            worker_id="worker-1",
+            output_type="worker_result_packet",
+            payload=_authority_law_packet("law-candidate-authority", "auth-candidate"),
+        )
+        outcome = run_validation(conn, gate_name="citation_integrity", target_type="candidate", target_id=candidate_id)
+
+    assert not outcome.passed
+    assert "supported law findings require at least one proof-allowed authority citation" in str(outcome.details["error"])
+
+
+def test_verified_current_authority_is_proof_allowed(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO legal_authorities(authority_id, matter_scope, jurisdiction, citation, authority_type, title, status, source_url, created_at, updated_at)
+            VALUES ('auth-verified', 'atticus', 'Scotland', 'Example v University [2024] CSOH 1', 'case', 'Example', 'candidate', '', 'now', 'now')
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO authority_verifications(authority_verification_id, matter_scope, authority_id, jurisdiction, binding_status,
+              currentness_status, proposition_supported, checked_by, checked_at, details_json)
+            VALUES ('auth-ver-1', 'atticus', 'auth-verified', 'Scotland', 'persuasive', 'current', 1, 'test', 'now', '{}')
+            """
+        )
+        repo.add_task(conn, TaskSpec(task_id="law-verified-authority", title="Law", task_type="authority_map", stage=LegalStage.S6_AUTHORITY_LAW_MAP))
+        candidate_id = repo.record_candidate_output(
+            conn,
+            task_id="law-verified-authority",
+            lease_id=None,
+            worker_id="worker-1",
+            output_type="worker_result_packet",
+            payload=_authority_law_packet("law-verified-authority", "auth-verified"),
+        )
+        outcome = run_validation(conn, gate_name="citation_integrity", target_type="candidate", target_id=candidate_id)
+
+    assert outcome.passed
 
 
 def test_expired_worker_lease_quarantines_late_output(tmp_path: Path):
@@ -753,6 +993,92 @@ def test_reducer_rejects_unscoped_search_followup_tasks(tmp_path: Path):
     assert "proposed source/evidence search or review has no source, artifact, or task scope" in str(attention["reason"])
     assert "proposed source/evidence search or review has no source, artifact, or task scope" in str(privacy_attention["reason"])
     assert "proposed source/evidence search or review has no source, artifact, or task scope" in str(redaction_fix_attention["reason"])
+
+
+def test_reducer_rejects_repeated_scoped_followup_loop_and_dedupes_attention(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        source_id = repo.add_source(conn, source_id="BETA-SRC-0001", matter_scope="beta", path="/beta/one.pdf", sha256="1" * 64)
+        previous = ""
+        for index in range(5):
+            task_id = f"search-loop-{index}"
+            repo.add_task(
+                conn,
+                TaskSpec(
+                    task_id=task_id,
+                    title=f"Search loop {index}",
+                    task_type="source_search",
+                    matter_scope="beta",
+                    source_dependencies=[source_id],
+                    provider_policy={"provider": "openrouter", "model": "deepseek/deepseek-v4-flash", "allow_fallback": False, "estimated_cost_usd": 0.0},
+                ),
+            )
+            if previous:
+                _ = conn.execute("UPDATE tasks SET parent_task_id = ? WHERE task_id = ?", (previous, task_id))
+            previous = task_id
+
+        packet = valid_packet(previous)
+        packet["proposed_tasks"] = [
+            {
+                "task_id": "search-loop-5",
+                "title": "Search loop 5",
+                "task_type": "source_search",
+                "matter_scope": "beta",
+                "stage": "S2",
+                "instructions": "Search BETA-SRC-0001 again for the same records.",
+                "source_dependencies": [source_id],
+            }
+        ]
+        worker_lease = acquire_lease(conn, task_id=previous, worker_id="worker-1")
+        candidate_id = record_worker_result(conn, task_id=previous, lease_id=worker_lease, worker_id="worker-1", payload=packet)
+        reducer_lease = acquire_lease(conn, task_id=previous, worker_id="reducer-1", lease_role="reducer")
+        first = reduce_candidate(conn, candidate_id=candidate_id, reducer_lease_id=reducer_lease, dry_run=False)
+
+        # Re-importing the same reduced candidate should not create duplicate open attention.
+        _ = repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="search-loop-repeat",
+                title="Search loop repeat",
+                task_type="source_search",
+                matter_scope="beta",
+                source_dependencies=[source_id],
+                provider_policy={"provider": "openrouter", "model": "deepseek/deepseek-v4-flash", "allow_fallback": False, "estimated_cost_usd": 0.0},
+            ),
+        )
+        _ = conn.execute("UPDATE tasks SET parent_task_id = ? WHERE task_id = 'search-loop-repeat'", (previous,))
+        repeat_packet = valid_packet("search-loop-repeat")
+        repeat_packet["proposed_tasks"] = packet["proposed_tasks"]
+        repeat_worker_lease = acquire_lease(conn, task_id="search-loop-repeat", worker_id="worker-2")
+        repeat_candidate_id = record_worker_result(conn, task_id="search-loop-repeat", lease_id=repeat_worker_lease, worker_id="worker-2", payload=repeat_packet)
+        repeat_reducer_lease = acquire_lease(conn, task_id="search-loop-repeat", worker_id="reducer-2", lease_role="reducer")
+        second = reduce_candidate(conn, candidate_id=repeat_candidate_id, reducer_lease_id=repeat_reducer_lease, dry_run=False)
+
+        imported = conn.execute("SELECT 1 FROM tasks WHERE task_id = 'search-loop-5'").fetchone()
+        attention_count = _count(
+            conn,
+            """
+            SELECT COUNT(*) AS n
+            FROM human_attention
+            WHERE target_type = 'proposed_task'
+              AND target_id = 'search-loop-5'
+              AND status = 'open'
+            """,
+        )
+        duplicate_events = _count(
+            conn,
+            """
+            SELECT COUNT(*) AS n
+            FROM events
+            WHERE event_type = 'proposed_task.rejection_duplicate_seen'
+            """,
+        )
+
+    assert first["imported_tasks"] == []
+    assert second["imported_tasks"] == []
+    assert imported is None
+    assert attention_count == 1
+    assert duplicate_events == 1
 
 
 def test_reducer_rejects_cross_matter_proposed_tasks_and_task_id_collisions(tmp_path: Path):

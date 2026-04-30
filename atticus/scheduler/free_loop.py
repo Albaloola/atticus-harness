@@ -21,6 +21,7 @@ from atticus.core.policies import LegalStage, TaskStatus
 from atticus.agents.decomposition import compact_decomposed_parent_if_needed, decompose_broad_task_if_needed
 from atticus.agents.orchestrator import report_worker_failure_to_orchestrator
 from atticus.db import repo
+from atticus.providers.cache_observability import fingerprint_provider_policy
 from atticus.providers.live_readiness import probe_live_openrouter
 from atticus.reducer.reducer import ReductionBlocked, reduce_candidate
 from atticus.scheduler.capacity import MAX_PARALLEL_AGENT_CAPACITY, agent_capacity
@@ -51,6 +52,7 @@ def run_free_loop_once(
     env: Mapping[str, str] | None = None,
     codex_timeout_seconds: float = 180.0,
     codex_reasoning_effort: str = "low",
+    matter_scope: str | None = None,
 ) -> dict[str, object]:
     """Run one safe supervisor tick.
 
@@ -122,6 +124,9 @@ def run_free_loop_once(
     runnable = select_runnable_tasks(
         conn,
         capacity=capacity_effective,
+        matter_scope=matter_scope,
+        dry_run=False,
+        allow_decomposition=True,
         resolved_transient_blocker_prefixes=_resolved_transient_blocker_prefixes(
             runtime=runtime,
             allow_live=allow_live,
@@ -131,19 +136,15 @@ def run_free_loop_once(
     leased_tasks: list[str] = []
     executed_tasks: list[str] = []
     worker_errors: list[dict[str, str]] = []
-    preflight_error = (
-        _openrouter_preflight_error(
+    if execute_workers and runtime == "openrouter":
+        preflight = _openrouter_preflight(
             conn,
             runnable_tasks=runnable,
             env=env,
             allow_live=allow_live,
         )
-        if execute_workers and runtime == "openrouter"
-        else None
-    )
-    if preflight_error is not None:
-        worker_errors.append(preflight_error)
-        runnable = []
+        runnable = preflight["runnable_tasks"]
+        worker_errors.extend(preflight["errors"])
 
     leased_workers: list[dict[str, str]] = []
     for index, task in enumerate(runnable, start=1):
@@ -227,6 +228,7 @@ def run_free_loop(
     env: Mapping[str, str] | None = None,
     codex_timeout_seconds: float = 180.0,
     codex_reasoning_effort: str = "low",
+    matter_scope: str | None = None,
 ) -> dict[str, object]:
     """Run a bounded autonomous free loop and return per-tick summaries."""
 
@@ -242,6 +244,7 @@ def run_free_loop(
             env=env,
             codex_timeout_seconds=codex_timeout_seconds,
             codex_reasoning_effort=codex_reasoning_effort,
+            matter_scope=matter_scope,
         )
         ticks.append(tick)
         if not tick["reduced_candidates"] and not tick["leased_tasks"]:
@@ -266,39 +269,113 @@ def _resolved_transient_blocker_prefixes(
     return ()
 
 
-def _openrouter_preflight_error(
+def _openrouter_preflight(
     conn: sqlite3.Connection,
     *,
     runnable_tasks: list[Mapping[str, object]],
     env: Mapping[str, str] | None,
     allow_live: bool,
-) -> dict[str, str] | None:
+) -> dict[str, list[Mapping[str, object]] | list[dict[str, str]]]:
     if not runnable_tasks:
-        return None
-    first_task = runnable_tasks[0]
-    task_id = str(first_task["task_id"])
-    matter_scope = str(first_task["matter_scope"])
-    try:
-        provider_policy = json.loads(str(first_task["provider_policy_json"] or "{}"))
-    except (json.JSONDecodeError, TypeError) as exc:
-        return {"task_id": task_id, "error": f"OpenRouter preflight could not parse provider policy: {exc}"}
-    if not isinstance(provider_policy, Mapping):
-        return {"task_id": task_id, "error": "OpenRouter preflight provider policy must be a JSON object"}
-    probe = probe_live_openrouter(provider_policy, env=env if env is not None else os.environ)
-    if probe.get("ok") is True:
-        _ = repo.resolve_provider_control_plane_attention(
+        return {"runnable_tasks": [], "errors": []}
+    groups: dict[str, dict[str, object]] = {}
+    for task in runnable_tasks:
+        task_id = str(task["task_id"])
+        matter_scope = str(task["matter_scope"])
+        try:
+            provider_policy_raw = json.loads(str(task["provider_policy_json"] or "{}"))
+        except (json.JSONDecodeError, TypeError) as exc:
+            error = f"OpenRouter preflight could not parse provider policy: {exc}"
+            groups[f"parse-error:{task_id}"] = {
+                "tasks": [task],
+                "policy": None,
+                "fingerprint": f"parse-error:{task_id}",
+                "matter_scope": matter_scope,
+                "error": error,
+            }
+            continue
+        if not isinstance(provider_policy_raw, Mapping):
+            groups[f"parse-error:{task_id}"] = {
+                "tasks": [task],
+                "policy": None,
+                "fingerprint": f"parse-error:{task_id}",
+                "matter_scope": matter_scope,
+                "error": "OpenRouter preflight provider policy must be a JSON object",
+            }
+            continue
+        provider_policy = {str(key): value for key, value in provider_policy_raw.items()}
+        fingerprint = fingerprint_provider_policy(provider_policy)
+        group = groups.setdefault(
+            fingerprint,
+            {
+                "tasks": [],
+                "policy": provider_policy,
+                "fingerprint": fingerprint,
+                "matter_scope": matter_scope,
+                "error": "",
+            },
+        )
+        cast(list[Mapping[str, object]], group["tasks"]).append(task)
+
+    allowed: list[Mapping[str, object]] = []
+    errors: list[dict[str, str]] = []
+    effective_env = env if env is not None else os.environ
+    for group in groups.values():
+        tasks = cast(list[Mapping[str, object]], group["tasks"])
+        task_ids = [str(task["task_id"]) for task in tasks]
+        matter_scope = str(group["matter_scope"])
+        parse_error = str(group.get("error") or "")
+        provider_policy = group.get("policy")
+        if parse_error:
+            errors.append(_record_openrouter_preflight_group_failure(
+                conn,
+                matter_scope=matter_scope,
+                task_ids=task_ids,
+                policy_fingerprint=str(group["fingerprint"]),
+                reason=parse_error,
+                provider_policy_result="policy_parse_error",
+            ))
+            continue
+        probe = probe_live_openrouter(cast(Mapping[str, object], provider_policy), env=effective_env)
+        if probe.get("ok") is True:
+            _ = repo.resolve_provider_control_plane_attention(
+                conn,
+                matter_scope=matter_scope,
+                provider="openrouter",
+                resolution_source="provider.preflight_ok",
+            )
+            allowed.extend(tasks)
+            continue
+        reason = str(probe.get("reason") or "OpenRouter preflight failed")
+        errors.append(_record_openrouter_preflight_group_failure(
             conn,
             matter_scope=matter_scope,
-            provider="openrouter",
-            resolution_source="provider.preflight_ok",
-        )
-        return None
-    reason = str(probe.get("reason") or "OpenRouter preflight failed")
-    message = f"OpenRouter preflight failed before leasing {len(runnable_tasks)} runnable task(s): {reason}"
+            task_ids=task_ids,
+            policy_fingerprint=str(group["fingerprint"]),
+            reason=reason,
+            provider_policy_result=str(probe.get("provider_policy_result") or ""),
+        ))
+    return {"runnable_tasks": allowed, "errors": errors}
+
+
+def _record_openrouter_preflight_group_failure(
+    conn: sqlite3.Connection,
+    *,
+    matter_scope: str,
+    task_ids: list[str],
+    policy_fingerprint: str,
+    reason: str,
+    provider_policy_result: str,
+) -> dict[str, str]:
+    first_task_id = task_ids[0] if task_ids else "unknown"
+    message = (
+        f"OpenRouter preflight failed before leasing {len(task_ids)} runnable task(s) "
+        f"for policy {policy_fingerprint}: {reason}"
+    )
     _ = repo.record_human_attention_once(
         conn,
         target_type="task",
-        target_id=task_id,
+        target_id=first_task_id,
         severity="blocker",
         reason=message,
         matter_scope=matter_scope,
@@ -308,23 +385,25 @@ def _openrouter_preflight_error(
         "provider.preflight_failed",
         matter_scope=matter_scope,
         payload={
-            "task_id": task_id,
-            "runnable_task_count": len(runnable_tasks),
+            "task_id": first_task_id,
+            "task_ids": task_ids,
+            "runnable_task_count": len(task_ids),
             "provider": "openrouter",
+            "provider_policy_fingerprint": policy_fingerprint,
             "reason": reason,
-            "provider_policy_result": str(probe.get("provider_policy_result") or ""),
+            "provider_policy_result": provider_policy_result,
         },
     )
     _ = repo.record_provider_preflight_failure(
         conn,
         matter_scope=matter_scope,
-        task_id=task_id,
+        task_id=first_task_id,
         provider="openrouter",
         message=message,
-        runnable_task_count=len(runnable_tasks),
-        provider_policy_result=str(probe.get("provider_policy_result") or ""),
+        runnable_task_count=len(task_ids),
+        provider_policy_result=provider_policy_result,
     )
-    return {"task_id": task_id, "error": message}
+    return {"task_id": first_task_id, "error": message}
 
 
 def _execute_leased_workers(

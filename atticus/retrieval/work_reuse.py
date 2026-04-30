@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+import json
 import sqlite3
 from typing import cast
 
@@ -56,7 +57,7 @@ def validate_reusable_step(conn: sqlite3.Connection, step_id: str) -> ReuseDecis
             return candidate_decision
     context_pack_id = _optional_id(step, "context_pack_id")
     if context_pack_id:
-        context_decision = _same_matter_target_decision(conn, matter_scope=matter_scope, target_type="context_pack", target_id=context_pack_id)
+        context_decision = _context_pack_reuse_decision(conn, matter_scope=matter_scope, context_pack_id=context_pack_id)
         if not context_decision.reusable:
             return context_decision
     provider_run_id = _optional_id(step, "provider_run_id")
@@ -70,18 +71,22 @@ def validate_reusable_step(conn: sqlite3.Connection, step_id: str) -> ReuseDecis
 
 
 def find_reusable_artifacts(conn: sqlite3.Connection, matter_scope: str, goal: str) -> list[dict[str, object]]:
-    rows = [
-        dict(cast(Mapping[str, object], row))
-        for row in conn.execute(
-            """
-            SELECT artifact_id, matter_scope, path, artifact_type, stage, trust_status, stale, title, content
-            FROM artifacts
-            WHERE matter_scope = ? AND stale = 0 AND trust_status IN ('validated', 'certified')
-            ORDER BY updated_at DESC, artifact_id
-            """,
-            (matter_scope,),
-        )
-    ]
+    rows: list[dict[str, object]] = []
+    for row in conn.execute(
+        """
+        SELECT artifact_id, matter_scope, path, artifact_type, stage, trust_status, stale, title, content
+        FROM artifacts
+        WHERE matter_scope = ? AND stale = 0 AND trust_status IN ('validated', 'certified')
+        ORDER BY updated_at DESC, artifact_id
+        """,
+        (matter_scope,),
+    ):
+        item = dict(cast(Mapping[str, object], row))
+        decision = _artifact_reuse_decision(conn, matter_scope=matter_scope, artifact_id=str(item["artifact_id"]))
+        if not decision.reusable:
+            continue
+        item["reuse_decision"] = decision.as_dict()
+        rows.append(item)
     return _rank(goal, rows, id_key="artifact_id")
 
 
@@ -107,19 +112,23 @@ def find_reusable_candidates(conn: sqlite3.Connection, matter_scope: str, goal: 
 
 
 def find_reusable_context_packs(conn: sqlite3.Connection, matter_scope: str, goal: str) -> list[dict[str, object]]:
-    rows = [
-        dict(cast(Mapping[str, object], row))
-        for row in conn.execute(
-            """
-            SELECT context_pack_id, matter_scope, task_id, pack_type, fingerprint, estimated_tokens, sections_json
-            FROM context_packs
-            WHERE matter_scope = ?
-            ORDER BY created_at DESC
-            LIMIT 50
-            """,
-            (matter_scope,),
-        )
-    ]
+    rows: list[dict[str, object]] = []
+    for row in conn.execute(
+        """
+        SELECT context_pack_id, matter_scope, task_id, pack_type, fingerprint, estimated_tokens, sections_json
+        FROM context_packs
+        WHERE matter_scope = ?
+        ORDER BY created_at DESC
+        LIMIT 50
+        """,
+        (matter_scope,),
+    ):
+        item = dict(cast(Mapping[str, object], row))
+        decision = _context_pack_reuse_decision(conn, matter_scope=matter_scope, context_pack_id=str(item["context_pack_id"]))
+        if not decision.reusable:
+            continue
+        item["reuse_decision"] = decision.as_dict()
+        rows.append(item)
     return _rank(goal, rows, id_key="context_pack_id")
 
 
@@ -238,6 +247,81 @@ def _same_matter_target_decision(
     if target_matter != matter_scope:
         return ReuseDecision(False, f"linked {target_type} belongs to another matter", orientation_allowed=False)
     return ReuseDecision(True, f"linked {target_type} is same-matter", trusted_as_proof=False)
+
+
+def _context_pack_reuse_decision(conn: sqlite3.Connection, *, matter_scope: str, context_pack_id: str) -> ReuseDecision:
+    row = conn.execute(
+        "SELECT matter_scope, sections_json FROM context_packs WHERE context_pack_id = ?",
+        (context_pack_id,),
+    ).fetchone()
+    if row is None:
+        return ReuseDecision(False, "linked context_pack missing", orientation_allowed=False)
+    if str(row["matter_scope"]) != matter_scope:
+        return ReuseDecision(False, "linked context_pack belongs to another matter", orientation_allowed=False)
+    try:
+        sections_raw = json.loads(str(row["sections_json"] or "[]"))
+        if not isinstance(sections_raw, list):
+            return ReuseDecision(False, "context_pack sections JSON is not an array", orientation_allowed=False)
+        sections = cast(list[object], sections_raw)
+    except (json.JSONDecodeError, TypeError):
+        return ReuseDecision(False, "context_pack sections are not valid JSON", orientation_allowed=False)
+    problems: list[str] = []
+    for material in _source_materials_from_sections(sections):
+        source_id = str(material.get("source_id") or "")
+        if not source_id:
+            continue
+        source = conn.execute("SELECT matter_scope, sha256, stale FROM sources WHERE source_id = ?", (source_id,)).fetchone()
+        if source is None:
+            problems.append(f"source missing: {source_id}")
+            continue
+        if str(source["matter_scope"]) != matter_scope:
+            problems.append(f"source cross-matter: {source_id}")
+        if int(source["stale"] or 0):
+            problems.append(f"source stale: {source_id}")
+        expected_sha = _source_sha_from_material(material)
+        if expected_sha and expected_sha != str(source["sha256"] or ""):
+            problems.append(f"source hash changed: {source_id}")
+        artifact_id = str(material.get("artifact_id") or "")
+        if artifact_id:
+            artifact = conn.execute("SELECT matter_scope, sha256, stale FROM artifacts WHERE artifact_id = ?", (artifact_id,)).fetchone()
+            if artifact is None:
+                problems.append(f"extraction artifact missing: {artifact_id}")
+            elif str(artifact["matter_scope"]) != matter_scope:
+                problems.append(f"extraction artifact cross-matter: {artifact_id}")
+            elif int(artifact["stale"] or 0):
+                problems.append(f"extraction artifact stale: {artifact_id}")
+            else:
+                expected_text_sha = _text_sha_from_material(material)
+                if expected_text_sha and expected_text_sha != str(artifact["sha256"] or ""):
+                    problems.append(f"extraction artifact hash changed: {artifact_id}")
+    if problems:
+        return ReuseDecision(False, "; ".join(problems), orientation_allowed=False)
+    return ReuseDecision(True, "context pack source material is same-matter and current", trusted_as_proof=False)
+
+
+def _source_materials_from_sections(sections: list[object]) -> list[Mapping[str, object]]:
+    for section in sections:
+        if not isinstance(section, Mapping) or str(section.get("name") or "") != "source_materials":
+            continue
+        content = section.get("content")
+        if not isinstance(content, list):
+            return []
+        return [cast(Mapping[str, object], item) for item in content if isinstance(item, Mapping)]
+    return []
+
+
+def _source_sha_from_material(material: Mapping[str, object]) -> str:
+    provenance = material.get("source_provenance")
+    if isinstance(provenance, Mapping):
+        return str(provenance.get("sha256") or "")
+    return str(material.get("source_sha256") or "")
+
+
+def _text_sha_from_material(material: Mapping[str, object]) -> str:
+    provenance = material.get("extraction_provenance")
+    if isinstance(provenance, Mapping):
+        return str(provenance.get("text_sha256") or "")
+    return str(material.get("sha256") or "")
 
 
 def _optional_id(row: Mapping[str, object], key: str) -> str:

@@ -249,6 +249,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     schedule = sub.add_parser("schedule", help="dependency-aware scheduling preview or write")
     _ = schedule.add_argument("--db", required=True)
+    _ = schedule.add_argument("--matter", help="limit scheduler inspection/application to one matter")
+    _ = schedule.add_argument("--all-matters", action="store_true", help="explicitly allow global multi-matter scheduling")
     _ = schedule.add_argument("--capacity", type=int, default=MAX_PARALLEL_AGENT_CAPACITY)
     _ = schedule.add_argument("--dry-run", dest="dry_run", action="store_true", default=True)
     _ = schedule.add_argument("--write", dest="dry_run", action="store_false", help="persist blocked reasons")
@@ -465,8 +467,10 @@ def build_parser() -> argparse.ArgumentParser:
     _ = live_resume.add_argument("--write-leases", action="store_true")
     _ = live_resume.add_argument("--worker-prefix", default="atticus-openrouter")
 
-    free_loop = sub.add_parser("run-free-loop", help="run bounded OpenRouter-free autonomous supervisor ticks")
+    free_loop = sub.add_parser("run-free-loop", help="run bounded autonomous supervisor ticks; live provider calls require --allow-live and provider env gates")
     _ = free_loop.add_argument("--db", required=True)
+    _ = free_loop.add_argument("--matter", help="limit supervisor ticks to one matter")
+    _ = free_loop.add_argument("--all-matters", action="store_true", help="explicitly allow global multi-matter supervisor ticks")
     _ = free_loop.add_argument("--output-dir", required=True)
     _ = free_loop.add_argument("--capacity", type=int, default=15)
     _ = free_loop.add_argument("--max-ticks", type=int, default=1)
@@ -680,11 +684,19 @@ def _main(args: CliArgs) -> int:
     if args.command == "schedule":
         if args.dry_run:
             with repo.db_connection(args.db, read_only=True) as conn:
-                runnable, blocked = _schedule_preview(conn, capacity=args.capacity)
+                matter_scope = _resolve_scheduler_matter_scope(conn, matter_scope=args.matter, all_matters=args.all_matters)
+                runnable, blocked = _schedule_preview(conn, capacity=args.capacity, matter_scope=matter_scope)
             print_json({"dry_run": True, "runnable": runnable, "blocked": blocked})
         else:
             with repo.db_connection(args.db) as conn:
-                runnable_rows = select_runnable_tasks(conn, capacity=args.capacity)
+                matter_scope = _resolve_scheduler_matter_scope(conn, matter_scope=args.matter, all_matters=args.all_matters)
+                runnable_rows = select_runnable_tasks(
+                    conn,
+                    capacity=args.capacity,
+                    matter_scope=matter_scope,
+                    dry_run=False,
+                    allow_decomposition=True,
+                )
                 runnable = [_task_summary(row) for row in runnable_rows]
             print_json({"dry_run": False, "runnable": runnable})
         return 0
@@ -1361,6 +1373,7 @@ def _main(args: CliArgs) -> int:
 
     if args.command == "run-free-loop":
         with repo.db_connection(args.db) as conn:
+            matter_scope = _resolve_scheduler_matter_scope(conn, matter_scope=args.matter, all_matters=args.all_matters)
             result = run_free_loop(
                 conn,
                 output_dir=args.output_dir,
@@ -1371,6 +1384,7 @@ def _main(args: CliArgs) -> int:
                 env=dict(os.environ),
                 codex_timeout_seconds=args.codex_timeout_seconds,
                 codex_reasoning_effort=args.codex_reasoning_effort,
+                matter_scope=matter_scope,
             )
         print_json(result)
         return 0 if result.get("ok") is True else 2
@@ -1482,16 +1496,23 @@ def _main(args: CliArgs) -> int:
     return 1
 
 
-def _schedule_preview(conn: sqlite3.Connection, *, capacity: int) -> tuple[list[JsonObject], list[JsonObject]]:
+def _schedule_preview(conn: sqlite3.Connection, *, capacity: int, matter_scope: str | None = None) -> tuple[list[JsonObject], list[JsonObject]]:
     capacity_requested = agent_capacity(capacity)
     runnable: list[JsonObject] = []
     blocked: list[JsonObject] = []
+    params: tuple[object, ...] = ()
+    matter_clause = ""
+    if matter_scope:
+        matter_clause = " AND matter_scope = ?"
+        params = (matter_scope,)
     task_rows = cast(Iterable[sqlite3.Row], conn.execute(
-        """
+        f"""
         SELECT * FROM tasks
         WHERE status IN ('queued', 'ready', 'blocked')
+        {matter_clause}
         ORDER BY expected_value DESC, created_at ASC
-        """
+        """,
+        params,
     ))
     for task in task_rows:
         result = evaluate_task_gates(conn, cast(Mapping[str, object], cast(object, task)))
@@ -1509,6 +1530,25 @@ def _schedule_preview(conn: sqlite3.Connection, *, capacity: int) -> tuple[list[
         elif len(runnable) < capacity_requested:
             runnable.append(_task_summary(cast(Mapping[str, object], cast(object, task))))
     return runnable, blocked
+
+
+def _resolve_scheduler_matter_scope(conn: sqlite3.Connection, *, matter_scope: str | None, all_matters: bool) -> str | None:
+    if matter_scope:
+        return matter_scope
+    rows = conn.execute(
+        """
+        SELECT DISTINCT matter_scope
+        FROM tasks
+        WHERE status IN ('queued', 'ready', 'blocked', 'leased', 'reducer_pending')
+        ORDER BY matter_scope
+        """
+    ).fetchall()
+    active = [str(row["matter_scope"]) for row in rows]
+    if len(active) > 1 and not all_matters:
+        raise ValueError(
+            "multiple active matters are present; pass --matter <matter_scope> or --all-matters explicitly"
+        )
+    return None
 
 
 def _blocked_reasons_for_preview(task: Mapping[str, object]) -> list[str]:

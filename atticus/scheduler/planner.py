@@ -21,6 +21,9 @@ def select_runnable_tasks(
     conn: sqlite3.Connection,
     *,
     capacity: int,
+    dry_run: bool = False,
+    matter_scope: str | None = None,
+    allow_decomposition: bool = True,
     resolved_transient_blocker_prefixes: tuple[str, ...] = (),
 ) -> list[Mapping[str, object]]:
     capacity_requested = agent_capacity(capacity)
@@ -28,12 +31,16 @@ def select_runnable_tasks(
         return []
 
     runnable: list[Mapping[str, object]] = []
+    matter_clause = "AND matter_scope = ?" if matter_scope else ""
+    params: tuple[object, ...] = (matter_scope,) if matter_scope else ()
     for task in conn.execute(
-        """
+        f"""
         SELECT * FROM tasks
         WHERE status IN ('queued', 'ready', 'blocked')
+        {matter_clause}
         ORDER BY expected_value DESC, created_at ASC
-        """
+        """,
+        params,
     ):
         result = evaluate_task_gates(conn, task)
         budget_reasons = budget_blockers(conn, task)
@@ -44,21 +51,24 @@ def select_runnable_tasks(
                     resolved_transient_blocker_prefixes=resolved_transient_blocker_prefixes,
                 ):
                     continue
-                _requeue_previously_blocked_task(conn, task_id=str(task["task_id"]))
-                task = cast(Mapping[str, object], conn.execute("SELECT * FROM tasks WHERE task_id = ?", (task["task_id"],)).fetchone())
-            decomposition = decompose_broad_task_if_needed(
-                conn,
-                task_id=str(task["task_id"]),
-                reason="pre_dispatch_token_budget",
-                write=True,
-            )
-            if decomposition.get("applied"):
-                continue
+                if not dry_run:
+                    _requeue_previously_blocked_task(conn, task_id=str(task["task_id"]))
+                    task = cast(Mapping[str, object], conn.execute("SELECT * FROM tasks WHERE task_id = ?", (task["task_id"],)).fetchone())
+            if allow_decomposition and not dry_run:
+                decomposition = decompose_broad_task_if_needed(
+                    conn,
+                    task_id=str(task["task_id"]),
+                    reason="pre_dispatch_token_budget",
+                    write=True,
+                )
+                if decomposition.get("applied"):
+                    continue
             runnable.append(task)
             if len(runnable) >= capacity_requested:
                 break
         else:
-            repo.update_task_blocked(conn, str(task["task_id"]), result.reasons + budget_reasons)
+            if not dry_run:
+                repo.update_task_blocked(conn, str(task["task_id"]), result.reasons + budget_reasons)
     return runnable
 
 

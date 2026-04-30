@@ -31,6 +31,8 @@ SCOPED_SEARCH_TASK_TYPES = {
     "source_verification",
 }
 
+MAX_CONSECUTIVE_SCOPED_FOLLOWUPS = 5
+
 
 def import_proposed_tasks_from_candidate(conn: sqlite3.Connection, candidate: Mapping[str, object]) -> list[str]:
     payload = json.loads(str(candidate["payload_json"]))
@@ -91,6 +93,25 @@ def import_proposed_tasks_from_candidate(conn: sqlite3.Connection, candidate: Ma
         )
         if scope_error:
             _record_rejected_proposed_task(conn, task_id=task_id, matter_scope=matter_scope, reason=scope_error)
+            continue
+        loop_error = _scoped_followup_loop_error(
+            conn,
+            parent_task_id=parent_task_id,
+            task_map=task_map,
+        )
+        if loop_error:
+            _record_rejected_proposed_task(conn, task_id=task_id, matter_scope=matter_scope, reason=loop_error)
+            _ = repo.emit_event(
+                conn,
+                "proposed_task.loop_guard_rejected",
+                matter_scope=matter_scope,
+                payload={
+                    "task_id": task_id,
+                    "parent_task_id": parent_task_id,
+                    "imported_from_candidate_id": candidate_id,
+                    "reason": loop_error,
+                },
+            )
             continue
         if _task_exists(conn, task_id):
             if _existing_task_is_same_import(conn, task_id=task_id, matter_scope=matter_scope, candidate_id=candidate_id):
@@ -249,7 +270,7 @@ def _existing_task_is_same_import(conn: sqlite3.Connection, *, task_id: str, mat
 
 
 def _record_rejected_proposed_task(conn: sqlite3.Connection, *, task_id: str, matter_scope: str, reason: str) -> None:
-    _ = repo.record_human_attention(
+    attention_id = repo.record_human_attention_once(
         conn,
         target_type="proposed_task",
         target_id=task_id,
@@ -257,6 +278,50 @@ def _record_rejected_proposed_task(conn: sqlite3.Connection, *, task_id: str, ma
         reason=f"proposed task rejected: {reason}",
         matter_scope=matter_scope,
     )
+    if attention_id is None:
+        _ = repo.emit_event(
+            conn,
+            "proposed_task.rejection_duplicate_seen",
+            matter_scope=matter_scope,
+            payload={"task_id": task_id, "reason": reason},
+        )
+
+
+def _scoped_followup_loop_error(
+    conn: sqlite3.Connection,
+    *,
+    parent_task_id: str,
+    task_map: Mapping[object, object],
+) -> str:
+    task_type = str(task_map.get("task_type") or "").strip().lower()
+    if task_type not in SCOPED_SEARCH_TASK_TYPES:
+        return ""
+    chain_count = _same_type_parent_chain_count(conn, parent_task_id=parent_task_id, task_type=task_type)
+    if chain_count < MAX_CONSECUTIVE_SCOPED_FOLLOWUPS:
+        return ""
+    return (
+        f"scoped {task_type} follow-up loop reached hard limit "
+        f"{MAX_CONSECUTIVE_SCOPED_FOLLOWUPS}; summarize the gap and request human/orchestrator direction instead of spawning another search task"
+    )
+
+
+def _same_type_parent_chain_count(conn: sqlite3.Connection, *, parent_task_id: str, task_type: str) -> int:
+    count = 0
+    seen: set[str] = set()
+    current = parent_task_id
+    while current and current not in seen:
+        seen.add(current)
+        row = conn.execute(
+            "SELECT task_type, parent_task_id FROM tasks WHERE task_id = ?",
+            (current,),
+        ).fetchone()
+        if row is None:
+            break
+        if str(row["task_type"] or "").strip().lower() != task_type:
+            break
+        count += 1
+        current = str(row["parent_task_id"] or "")
+    return count
 
 
 def _dependency_error(
