@@ -1,0 +1,123 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "page 1",
+      "quote": "The accommodation support service can: ... Provide a dedicated member of staff to provide information and to answer any related queries",
+      "target_id": "NAP-SRC-0014",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "page 1",
+      "quote": "Please contact privateaccommodation@napier.ac.uk with your enquiries.",
+      "target_id": "NAP-SRC-0014",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-003",
+      "locator": "page 1",
+      "quote": "Provide a landlord reference within 5 working days when you email us at accommodation@napier.ac.uk",
+      "target_id": "NAP-SRC-0014",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-004",
+      "locator": "page 1",
+      "quote": "ENSA Advice ... Please contact ENSA Advice on 0131 229 8791 to arrange an appointment or email ensa.advice@napier.ac.uk",
+      "target_id": "NAP-SRC-0014",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-005",
+      "locator": "page 2",
+      "quote": "We operate a waiting list for University accommodation after our guarantee date in August.",
+      "target_id": "NAP-SRC-0014",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-006",
+      "locator": "page 2",
+      "quote": "please contact us at accommodation@napier.ac.uk or phone 0131 455 3713 and ask to be placed on this waiting list.",
+      "target_id": "NAP-SRC-0014",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001",
+        "cit-002"
+      ],
+      "confidence": 0.9,
+      "finding_id": "f-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "The University provides a Private Accommodation Support Service reachable via privateaccommodation@napier.ac.uk."
+    },
+    {
+      "citation_ids": [
+        "cit-003"
+      ],
+      "confidence": 0.9,
+      "finding_id": "f-002",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "The service can provide a landlord reference within 5 working days upon email request to accommodation@napier.ac.uk."
+    },
+    {
+      "citation_ids": [
+        "cit-004"
+      ],
+      "confidence": 0.9,
+      "finding_id": "f-003",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "ENSA Advice offers free, confidential welfare and accommodation advice; contactable at 0131 229 8791 or ensa.advice@napier.ac.uk."
+    },
+    {
+      "citation_ids": [
+        "cit-005",
+        "cit-006"
+      ],
+      "confidence": 0.9,
+      "finding_id": "f-004",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "University accommodation waiting list is available after August guarantee date; contact accommodation@napier.ac.uk or 0131 455 3713."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "evidence_summary",
+      "content": "## Internal Records Search: Anfal's Accommodation Support Contacts\n\n### Source: NAP-SRC-0014 (Private Accommodation Brochure 2025)\n\n**Key Contacts Identified:**\n\n1. **Private Accommodation Support Service**\n   - Email: privateaccommodation@napier.ac.uk\n   - Services: advice on finding flats, setting up viewings, dedicated staff support, landlord references within 5 working days.\n\n2. **University Accommodation Office**\n   - Email: accommodation@napier.ac.uk\n   - Phone: 0131 455 3713\n   - Services: waiting list for university accommodation after August guarantee date.\n\n3. **ENSA Advice (Students' Association)**\n   - Email: ensa.advice@napier.ac.uk\n   - Phone: 0131 229 8791\n   - Services: free, confidential advice on accommodation, tenancy agreements, tenant rights, disputes.\n\n**Note:** The brochure does not contain individual student records or specific contacts for Anfal. Further search of internal case management systems or email archives is required to identify actual contacts made by Anfal.",
+      "path": "candidate/T-NAP-SRC-0014-006-FU-INTERNAL-SEARCH/evidence_summary.md",
+      "stage": "S2",
+      "title": "Evidence Summary: Accommodation Support Contacts"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Search internal email archives and case management systems for any records of communication between Anfal and the accommodation support service (privateaccommodation@napier.ac.uk), accommodation office (accommodation@napier.ac.uk), or ENSA Advice (ensa.advice@napier.ac.uk). Look for emails, notes, or logs referencing Anfal's name, student ID, or accommodation issues. Report any findings including dates, staff names, and outcomes.",
+      "matter_scope": "napier-accommodation-arrears",
+      "stage": "S2",
+      "task_id": "T-NAP-SRC-0014-007-FU-INTERNAL-SEARCH",
+      "task_type": "evidence_search",
+      "title": "Search internal email and case management systems for Anfal's accommodation support contacts"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Reviewed NAP-SRC-0014 (Private Accommodation Brochure 2025) for accommodation support contacts. Identified three key contact points: Private Accommodation Support Service (privateaccommodation@napier.ac.uk), University Accommodation Office (accommodation@napier.ac.uk, 0131 455 3713), and ENSA Advice (ensa.advice@napier.ac.uk, 0131 229 8791). The brochure does not contain individual student records. Proposed follow-up task to search internal email and case management systems for Anfal's actual contacts.",
+  "task_id": "T-NAP-SRC-0014-006-FU-INTERNAL-SEARCH",
+  "uncertainties": [
+    {
+      "citation_ids": [],
+      "reasoning_status": "uncertain",
+      "text": "The brochure does not contain any records of Anfal's actual contacts with accommodation support services."
+    }
+  ]
+}

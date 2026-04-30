@@ -1,0 +1,158 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "email header",
+      "quote": "Resident Assistant applications open now...a 55% reduction in rent",
+      "target_id": "NAP-SRC-0016",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "email header",
+      "quote": "From Student Comms <studentcomms@napier.ac.uk> Date Mon 16/03/2026 09:14 To Elbushra, Anfal <40805511@live.napier.ac.uk>",
+      "target_id": "NAP-SRC-0016",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-003",
+      "locator": "email body",
+      "quote": "returning students, unless in exceptional circumstances, are not guaranteed an offer of accommodation after their first year at Edinburgh Napier",
+      "target_id": "NAP-SRC-0030",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-004",
+      "locator": "email header",
+      "quote": "From Srebrzynska, Nika <N.Srebrzynska@napier.ac.uk> on behalf of Student Accommodation <accommodation@napier.ac.uk> Date Mon 02/03/2026 10:29",
+      "target_id": "NAP-SRC-0030",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-005",
+      "locator": "email body",
+      "quote": "Due to the ongoing housing and cost of living crisis, private accommodation is more difficult to find and may be more expensive than usual",
+      "target_id": "NAP-SRC-0030",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-006",
+      "locator": "email body",
+      "quote": "Resident Assistants (RAs) are senior students who live within our student accommodation and play a key role in shaping a welcoming, supportive and inclusive community",
+      "target_id": "NAP-SRC-0016",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-002"
+      ],
+      "confidence": 0.95,
+      "finding_id": "F-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "NAP-SRC-0016 is a student newsletter sent to Anfal Elbushra on 16 March 2026 from Edinburgh Napier University Student Comms."
+    },
+    {
+      "citation_ids": [
+        "cit-004"
+      ],
+      "confidence": 0.95,
+      "finding_id": "F-002",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "NAP-SRC-0030 is an email sent to Anfal Elbushra on 2 March 2026 from Edinburgh Napier Student Accommodation regarding the Private Sector Accommodation Fair."
+    },
+    {
+      "citation_ids": [
+        "cit-003"
+      ],
+      "confidence": 0.95,
+      "finding_id": "F-003",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "The university informed returning students they are not guaranteed accommodation after their first year, except in exceptional circumstances."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.9,
+      "finding_id": "F-004",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "Neither source contains evidence of accommodation arrears, debt, or financial obligations. Task scope may require different sources."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "report",
+      "content": "# Evidence Gap Report - T-001\n\n## Sources Reviewed\n- NAP-SRC-0016: Student newsletter (16 Mar 2026) - RA roles, campus updates, events\n- NAP-SRC-0030: Private sector accommodation fair follow-up (2 Mar 2026)\n\n## Gap Assessment\nNeither source contains information about accommodation arrears, debt, financial obligations, or any dispute. Both are general informational communications from Edinburgh Napier University to student Anfal Elbushra.\n\n## Recommendation\nAdditional sources are needed to fill the evidence gap. Consider reviewing financial records, accommodation contracts, payment history, or correspondence related to arrears.",
+      "path": "candidate/T-001/evidence-gap-report.md",
+      "stage": "S2",
+      "title": "Evidence Gap Report for T-001"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "cost_limit_usd": 0.01,
+      "expected_value": 0.8,
+      "instructions": "Search the matter for sources containing accommodation arrears, debt, financial obligations, payment history, or accommodation contracts involving Anfal Elbushra. Look for financial records, invoices, demand letters, or accommodation agreements. If none exist, propose a task to request these from the client or relevant parties.",
+      "matter_dependencies": [],
+      "matter_scope": "napier-accommodation-arrears",
+      "provider_policy": {},
+      "required_certifications": [],
+      "source_dependencies": [],
+      "stage": "S2",
+      "task_dependencies": [],
+      "task_id": "T-002",
+      "task_type": "source_discovery",
+      "title": "Identify and retrieve arrears-related sources",
+      "validation_gates": [
+        "claim_evidence_support"
+      ]
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "citation_ids": [],
+      "confidence": 0.6,
+      "finding_id": "R-001",
+      "finding_type": "risk",
+      "reasoning_status": "uncertain",
+      "text": "Risk that the evidence_gap_fill task cannot be completed with these sources as they lack arrears or debt information."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Reviewed two source materials (NAP-SRC-0016, NAP-SRC-0030) for the evidence_gap_fill task. Both sources are communications from Edinburgh Napier University to student Anfal Elbushra. NAP-SRC-0016 is a student newsletter (16 Mar 2026) promoting Resident Assistant roles with 55% rent reduction, campus updates, and events. NAP-SRC-0030 is a post-fair email (2 Mar 2026) from Student Accommodation listing private sector housing options and noting returning students are not guaranteed university accommodation. Neither source contains accommodation arrears, debt, or financial obligation evidence. Extraction appears complete; no OCR truncation detected. No evidence gap fill possible from these sources.",
+  "task_id": "T-001",
+  "uncertainties": [
+    {
+      "citation_ids": [],
+      "confidence": 0.8,
+      "finding_id": "U-001",
+      "finding_type": "uncertain",
+      "reasoning_status": "uncertain",
+      "text": "It is uncertain whether these communications relate to any accommodation arrears or debt collection matter involving Anfal Elbushra."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.7,
+      "finding_id": "U-002",
+      "finding_type": "uncertain",
+      "reasoning_status": "uncertain",
+      "text": "The full content of NAP-SRC-0016 may extend beyond the 6000-character excerpt; additional pages may contain relevant information."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.7,
+      "finding_id": "U-003",
+      "finding_type": "uncertain",
+      "reasoning_status": "uncertain",
+      "text": "The full content of NAP-SRC-0030 may extend beyond the 6000-character excerpt; additional vendor listings or attachments may be relevant."
+    }
+  ]
+}

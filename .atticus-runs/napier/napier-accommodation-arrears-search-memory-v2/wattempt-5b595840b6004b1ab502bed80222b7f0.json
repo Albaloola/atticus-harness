@@ -1,0 +1,62 @@
+{
+  "citations": [],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "Legal memory index for matter napier-accommodation-arrears is empty; no prior records of Anfal Elbushra or RA application exist in memory."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-002",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No source materials or artifacts were provided in this work order; absence of evidence does not prove absence of records in the matter."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "memory_search_report",
+      "content": "## Memory Search Report: Anfal Elbushra RA Application Records\n\n**Task:** napier-accommodation-arrears-search-memory-v2\n**Matter Scope:** napier-accommodation-arrears\n**Search Target:** Legal memory for records of Anfal Elbushra RA (Resident Advisor/Residential Assistant) application.\n\n### Result\nNo records found. The legal memory index for this matter is empty. No source materials or artifacts were provided in the work order.\n\n### Limitations\n- Memory index is empty; no prior search results, summaries, or extracted data exist.\n- No external sources (e.g., university housing databases, email archives) were accessible.\n- Absence of memory does not confirm absence of records in the matter.\n\n### Recommended Next Steps\n1. Request human operator to provide relevant source documents (e.g., RA application forms, accommodation arrears correspondence, tenancy agreements).\n2. If documents are provided, perform a detailed evidence review and extraction.\n3. Consider searching external systems (e.g., university student housing portal) if access is available.",
+      "path": "candidate/napier-accommodation-arrears-search-memory-v2/memory_search_report.md",
+      "stage": "S2",
+      "title": "Memory Search Report - Anfal Elbushra RA Application"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Request human operator to provide any source documents related to Anfal Elbushra's RA application, accommodation arrears, or tenancy at Napier University. If documents are provided, ingest them as sources and perform a detailed review. If no documents are available, document the gap and propose alternative investigation steps.",
+      "matter_scope": "napier-accommodation-arrears",
+      "stage": "S2",
+      "task_id": "napier-accommodation-arrears-gather-evidence-v2",
+      "task_type": "evidence_gathering",
+      "title": "Gather external evidence on Anfal Elbushra RA application and accommodation arrears"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "finding_id": "R-001",
+      "text": "Relying on empty memory to conclude no RA application exists could be misleading; further investigation is required."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Memory search for Anfal Elbushra RA application records in matter napier-accommodation-arrears returned no results. The legal memory index is empty. No source materials or artifacts were provided. No records of Anfal Elbushra, RA application, or accommodation arrears were found in memory. A follow-up task is proposed to search external sources or request human-provided records.",
+  "task_id": "napier-accommodation-arrears-search-memory-v2",
+  "uncertainties": [
+    {
+      "finding_id": "U-001",
+      "text": "Whether Anfal Elbushra has ever submitted an RA (Resident Advisor/Residential Assistant) application or been involved in accommodation arrears at Napier University is unknown from memory alone."
+    },
+    {
+      "finding_id": "U-002",
+      "text": "The matter may contain external records (e.g., university housing files, emails, tenancy agreements) not yet ingested into Atticus memory."
+    }
+  ]
+}

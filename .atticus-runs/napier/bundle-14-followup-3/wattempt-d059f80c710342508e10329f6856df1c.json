@@ -1,0 +1,48 @@
+{
+  "citations": [],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No source materials, artifacts, or evidence were provided in this work order. The task requests a certified copy of a Notice to Quit from Edinburgh Napier University, but no such document or reference to it exists in the context. This finding is a drafting note to explain the absence of support."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "draft_note",
+      "content": "## Task: Request certified copy of Notice to Quit from Edinburgh Napier University\n\n**Status:** No evidence provided in this work order. The task appears to be a follow-up evidence acquisition step. Without any source materials or artifacts, no factual or legal findings can be made. The next step is to locate the Notice to Quit from Edinburgh Napier University records or to request it from the university's accommodation or legal department.\n\n**Recommendation:** Propose a follow-up task to search matter records or contact Edinburgh Napier University to obtain a certified copy of the Notice to Quit.",
+      "path": "candidate/bundle-14-followup-3/result.md",
+      "stage": "S2",
+      "title": "Draft note on missing Notice to Quit evidence"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Search matter records, source materials, and artifacts for any reference to a Notice to Quit issued by Edinburgh Napier University. If not found, propose a task to contact the university's accommodation or legal department to request a certified copy. Do not perform external actions; only propose the task.",
+      "matter_scope": "napier-accommodation-arrears",
+      "stage": "S2",
+      "task_id": "bundle-14-followup-4",
+      "task_type": "evidence_acquisition",
+      "title": "Locate or request certified copy of Notice to Quit from Edinburgh Napier University"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Task requests a certified copy of a Notice to Quit from Edinburgh Napier University. No source materials, artifacts, or evidence are provided in this work order. The matter scope is napier-accommodation-arrears. Without any evidence or source text, no factual, legal, or procedural findings can be supported. The task appears to be a follow-up evidence acquisition step. A drafting note is provided to explain the lack of support and to propose a follow-up task to locate or request the Notice to Quit from the university or relevant records.",
+  "task_id": "bundle-14-followup-3",
+  "uncertainties": [
+    {
+      "related_finding_ids": [
+        "F-001"
+      ],
+      "text": "No evidence of a Notice to Quit from Edinburgh Napier University is present in the work order. It is unknown whether such a notice exists, was served, or is available in university records.",
+      "uncertainty_id": "U-001"
+    }
+  ]
+}

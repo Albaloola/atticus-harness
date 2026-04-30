@@ -1,0 +1,116 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "extraction_provenance.method",
+      "quote": "extraction_method: pdf_text, ocr_engine: null",
+      "target_id": "NAP-SRC-0053",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "extraction_provenance.method",
+      "quote": "extraction_method: pdf_text, ocr_engine: null",
+      "target_id": "NAP-SRC-0055",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-003",
+      "locator": "extraction_provenance.confidence",
+      "quote": "confidence: 0.85",
+      "target_id": "NAP-SRC-0053",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-004",
+      "locator": "extraction_provenance.confidence",
+      "quote": "confidence: 0.85",
+      "target_id": "NAP-SRC-0055",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-005",
+      "locator": "coverage_status",
+      "quote": "coverage_status: complete",
+      "target_id": "NAP-SRC-0053",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-006",
+      "locator": "coverage_status",
+      "quote": "coverage_status: complete",
+      "target_id": "NAP-SRC-0055",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001",
+        "cit-003",
+        "cit-005"
+      ],
+      "confidence": 0.95,
+      "finding_id": "F-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "NAP-SRC-0053 has complete extracted text via pdftotext with 0.85 confidence; no OCR engine was used."
+    },
+    {
+      "citation_ids": [
+        "cit-002",
+        "cit-004",
+        "cit-006"
+      ],
+      "confidence": 0.95,
+      "finding_id": "F-002",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "NAP-SRC-0055 has complete extracted text via pdftotext with 0.85 confidence; no OCR engine was used."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-003",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "Tesseract OCR was not run because both sources already have complete pdftotext extraction. Running Tesseract may improve confidence for scanned or image-based PDFs."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "ocr_result",
+      "content": "Tesseract OCR was not executed because both source PDFs (NAP-SRC-0053 and NAP-SRC-0055) already have complete extracted text via pdftotext with 0.85 confidence. No OCR engine was previously applied. Running Tesseract may improve extraction quality if the PDFs contain scanned images or embedded fonts that pdftotext handles poorly. Proposed follow-up: run Tesseract on both sources and compare output quality.",
+      "path": "candidate/task-ocr-both-tesseract/result.md",
+      "stage": "S2",
+      "title": "Tesseract OCR Result for NAP-SRC-0053 and NAP-SRC-0055"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Run Tesseract OCR on the source PDFs NAP-SRC-0053 and NAP-SRC-0055. Compare the resulting text with the existing pdftotext extraction. Report any improvements in accuracy or coverage.",
+      "matter_scope": "napier-accommodation-arrears",
+      "source_dependencies": [
+        "NAP-SRC-0053",
+        "NAP-SRC-0055"
+      ],
+      "stage": "S2",
+      "task_id": "task-ocr-both-tesseract-run",
+      "task_type": "ocr_enhancement",
+      "title": "Run Tesseract OCR on NAP-SRC-0053 and NAP-SRC-0055"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Task requested Tesseract OCR on NAP-SRC-0053 and NAP-SRC-0055. Both sources already have complete extracted text via pdftotext with 0.85 confidence. No OCR engine was used. No stale sources or missing certifications. No contradictions or redaction flags. Proposed task to run Tesseract OCR for potential improvement.",
+  "task_id": "task-ocr-both-tesseract",
+  "uncertainties": [
+    {
+      "finding_id": "U-001",
+      "text": "It is uncertain whether Tesseract OCR would improve extraction quality beyond the existing pdftotext output for these PDFs."
+    }
+  ]
+}

@@ -1,0 +1,46 @@
+{
+  "citations": [],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No source materials, artifacts, or legal memory entries were provided in this work order. The task cannot search or list Notice to Quit records without evidence."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "evidence_map",
+      "content": "## Evidence Map: Notice to Quit Records\n\n**Task:** Search legal memory and list matter sources for Notice to Quit records.\n\n**Result:** No source materials, artifacts, or legal memory entries were provided in this work order. The evidence manifest and source materials sections were empty. The legal memory index was empty. Therefore, no Notice to Quit records could be identified or listed.\n\n**Next Step:** A follow-up task has been proposed to locate and upload relevant source documents (e.g., tenancy agreements, correspondence, court documents) that may contain Notice to Quit records for the napier-accommodation-arrears matter.",
+      "path": "candidate/bundle-14-followup-4-followup-search-retry-followup-1/evidence_map.md",
+      "stage": "S2",
+      "title": "Evidence Map for Notice to Quit Records"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Search the matter napier-accommodation-arrears for any source documents that may contain Notice to Quit records, such as tenancy agreements, correspondence, court documents, or other relevant records. Upload any found documents as source materials for further analysis.",
+      "matter_scope": "napier-accommodation-arrears",
+      "stage": "S2",
+      "task_id": "bundle-14-followup-4-followup-search-retry-followup-2",
+      "task_type": "evidence_acquisition",
+      "title": "Locate and upload source documents for Notice to Quit records"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "No source materials, artifacts, or legal memory entries were provided for this task. The task requested searching legal memory and listing matter sources for Notice to Quit records in the napier-accommodation-arrears matter. Without any evidence or memory to search, no supported findings about Notice to Quit records can be made. A follow-up task is proposed to locate and upload relevant source documents.",
+  "task_id": "bundle-14-followup-4-followup-search-retry-followup-1",
+  "uncertainties": [
+    {
+      "citation_ids": [],
+      "text": "It is unknown whether any Notice to Quit records exist for this matter because no source materials, artifacts, or memory entries were supplied.",
+      "uncertainty_id": "U-001"
+    }
+  ]
+}

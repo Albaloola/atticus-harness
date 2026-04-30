@@ -1,0 +1,71 @@
+{
+  "citations": [],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No source materials or artifacts were provided in this work order. The evidence_manifest and source_materials sections are empty."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-002",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "The task requires locating arrears-related source documents, but no documents are available in the current context. A follow-up task is needed to search the matter's source repository."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "candidate_report",
+      "content": "## Source Discovery Report for napier-accommodation-arrears\n\n**Task:** T-004\n**Stage:** S2\n**Status:** No source materials or artifacts were provided in the work order context. The evidence_manifest and source_materials sections are empty.\n\n**Finding:** No arrears-related documents (e.g., tenancy agreements, rent ledgers, demand letters, correspondence) could be located or cited from the supplied context.\n\n**Recommendation:** A follow-up task (T-005) is proposed to search the matter's source repository and legal memory for relevant documents. The task should use the `ListMatterSources` and `SearchLegalMemory` tools to identify and retrieve any existing records.",
+      "path": "candidate/T-004/result.md",
+      "stage": "S2",
+      "title": "Source Discovery Result - No Documents Found"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "cost_limit_usd": 0.01,
+      "expected_value": 0.8,
+      "instructions": "Use the ListMatterSources and SearchLegalMemory tools to locate any tenancy agreements, rent ledgers, demand letters, correspondence, or other arrears-related documents for the napier-accommodation-arrears matter. If documents are found, retrieve them and produce a structured evidence map. If none are found, flag the gap for human attention.",
+      "matter_dependencies": [],
+      "matter_scope": "napier-accommodation-arrears",
+      "provider_policy": {},
+      "required_certifications": [],
+      "source_dependencies": [],
+      "stage": "S2",
+      "task_dependencies": [],
+      "task_id": "T-005",
+      "task_type": "source_discovery",
+      "title": "Search matter source repository and legal memory for arrears-related documents",
+      "validation_gates": [
+        "claim_evidence_support"
+      ]
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "risk_id": "R-001",
+      "risk_type": "evidence_gap",
+      "text": "Absence of source materials may indicate that the matter has no uploaded records, or that the source discovery task was triggered prematurely."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "No source materials or artifacts were provided for the napier-accommodation-arrears matter. The evidence manifest and source_materials sections are empty. No arrears-related documents can be located or cited from the supplied context. A follow-up task is proposed to search the matter's source repository and legal memory for relevant tenancy agreements, rent ledgers, demand letters, and correspondence.",
+  "task_id": "T-004",
+  "uncertainties": [
+    {
+      "source": "empty evidence_manifest and source_materials",
+      "text": "No arrears-related documents (tenancy agreements, rent ledgers, demand letters, correspondence) are present in the supplied context.",
+      "uncertainty_id": "U-001"
+    }
+  ]
+}

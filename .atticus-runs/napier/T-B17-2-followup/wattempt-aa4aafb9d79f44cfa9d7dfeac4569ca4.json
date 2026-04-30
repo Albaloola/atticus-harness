@@ -1,0 +1,91 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "Email body, line 6",
+      "quote": "2 attachments (444 KB)\nTenancy Agreement 2025-26.pdf; Student Misconduct and Schedule of Charges 2025-26.pdf;",
+      "target_id": "NAP-SRC-0066",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001"
+      ],
+      "confidence": 0.85,
+      "finding_id": "F-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "NAP-SRC-0066 email states it contains two embedded PDF attachments: 'Tenancy Agreement 2025-26.pdf' and 'Student Misconduct and Schedule of Charges 2025-26.pdf'."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.9,
+      "finding_id": "F-002",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "The pdftotext extraction method used for NAP-SRC-0066 does not extract embedded attachment binary data. The attachments are not present as separate source files in the evidence manifest."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.9,
+      "finding_id": "F-003",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No tool configured for extracting embedded PDF attachments is available in the current tool registry. A follow-up task is needed to extract the attachments using a suitable tool (e.g., pdfdetach, Apache PDFBox, or manual extraction)."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "extraction_note",
+      "content": "The source NAP-SRC-0066 (Slateford Road Trimester 2 Full Flat Inspections email) references two embedded PDF attachments: 'Tenancy Agreement 2025-26.pdf' and 'Student Misconduct and Schedule of Charges 2025-26.pdf'. The initial pdftotext extraction did not capture these attachments. A follow-up task (T-B17-3-extract-attachments) is proposed to extract the embedded files using a tool such as pdfdetach or Apache PDFBox. Once extracted, the attachments should be added to the source inventory and processed for text extraction.",
+      "path": "candidate/T-B17-2-followup/extraction_note.md",
+      "stage": "S2",
+      "title": "Extraction Note for NAP-SRC-0066 Embedded Attachments"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "instructions": "Use a tool capable of extracting embedded PDF attachments (e.g., pdfdetach from poppler-utils, Apache PDFBox, or manual extraction) to extract the two attachments referenced in NAP-SRC-0066: 'Tenancy Agreement 2025-26.pdf' and 'Student Misconduct and Schedule of Charges 2025-26.pdf'. Save the extracted files as new sources in the 01-sources directory with appropriate source IDs (e.g., NAP-SRC-0066-attachment-1, NAP-SRC-0066-attachment-2). Then run text extraction on the new sources.",
+      "matter_scope": "napier-accommodation-arrears",
+      "source_dependencies": [
+        "NAP-SRC-0066"
+      ],
+      "stage": "S2",
+      "task_dependencies": [
+        "T-B17-2-followup"
+      ],
+      "task_id": "T-B17-3-extract-attachments",
+      "task_type": "extraction",
+      "title": "Extract embedded attachments from NAP-SRC-0066 PDF using pdfdetach or similar tool",
+      "validation_gates": [
+        "claim_evidence_support"
+      ]
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "finding_id": "F-002",
+      "risk_type": "missing_evidence",
+      "text": "The referenced Tenancy Agreement and Schedule of Charges are critical documents for the matter but are not yet available as separate sources."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "The extracted text of NAP-SRC-0066 references two embedded PDF attachments: 'Tenancy Agreement 2025-26.pdf' and 'Student Misconduct and Schedule of Charges 2025-26.pdf'. The text extraction method (pdftotext) did not extract the embedded attachment binary data. The attachments are not available as separate source files in the evidence manifest. A follow-up task is proposed to extract the embedded attachments using a tool capable of handling PDF portfolio or embedded files.",
+  "task_id": "T-B17-2-followup",
+  "uncertainties": [
+    {
+      "finding_id": "F-002",
+      "text": "The embedded attachments were not extracted by the initial pdftotext process; their content is unknown."
+    },
+    {
+      "finding_id": "F-003",
+      "text": "No extraction tool for embedded PDF attachments is currently configured in the harness."
+    }
+  ]
+}

@@ -1,0 +1,66 @@
+{
+  "citations": [],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No source materials or artifacts were provided in this work order; the evidence manifest and source_materials sections are empty."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-002",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "The task requires searching for a Napier accommodation tenancy agreement and arrears correspondence, but no such records are present in the context."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "report",
+      "content": "## Task: Search for Napier accommodation tenancy agreement and arrears correspondence\n\n**Status:** No source materials or artifacts were provided in the work order. The evidence manifest and source_materials sections are empty. Therefore, no tenancy agreement or arrears correspondence could be located or reviewed.\n\n**Recommendation:** A follow-up task is proposed to locate and ingest the relevant records from the matter's document repository or external sources.\n\n**Authorities noted (for reference):**\n- Private Housing (Tenancies) (Scotland) Act 2016, schedule 1 (excludes certain student accommodation from private residential tenancy)\n- Housing (Scotland) Act 1988, section 12 and schedule 4 (excluded tenancies)\n- Housing (Scotland) Act 2001, section 7 (minimum notice terms)\n- Equality Act 2010, sections 20, 21, 91 (reasonable adjustments and discrimination in education)\n\n**Next steps:**\n1. Locate the Napier accommodation tenancy agreement.\n2. Locate any arrears correspondence (e.g., letters, emails, notices).\n3. Ingest those documents as source materials.\n4. Re-run this task or a similar analysis task to review the documents.",
+      "path": "candidate/task-followup-010/result.md",
+      "stage": "S3",
+      "title": "Napier accommodation records search result"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Search the matter's document repository, email archives, or external sources for the Napier accommodation tenancy agreement and any correspondence related to arrears. Ingest all found documents as source materials with appropriate source_ids. If documents are not found, report the search locations and results.",
+      "matter_scope": "napier-accommodation-arrears",
+      "stage": "S3",
+      "task_id": "task-followup-011",
+      "task_type": "source_ingestion",
+      "title": "Locate and ingest Napier accommodation tenancy agreement and arrears correspondence"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "finding_id": "R-001",
+      "text": "Absence of source materials may indicate that the tenancy agreement and arrears correspondence have not yet been ingested into the matter record."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "No source materials or artifacts were provided for this task. The task is to search for a Napier accommodation tenancy agreement and arrears correspondence, but the evidence manifest and source_materials sections are empty. No documents, citations, or findings can be supported from the available context. A follow-up task is proposed to locate and ingest the relevant records.",
+  "task_id": "task-followup-010",
+  "uncertainties": [
+    {
+      "finding_id": "U-001",
+      "text": "It is unknown whether a Napier accommodation tenancy agreement exists in the matter records; no source materials were supplied."
+    },
+    {
+      "finding_id": "U-002",
+      "text": "It is unknown whether any arrears correspondence exists; no source materials were supplied."
+    },
+    {
+      "finding_id": "U-003",
+      "text": "The legal status of the accommodation (e.g., whether it is excluded from private residential tenancy under the Private Housing (Tenancies) (Scotland) Act 2016 schedule 1) cannot be assessed without the tenancy agreement."
+    }
+  ]
+}

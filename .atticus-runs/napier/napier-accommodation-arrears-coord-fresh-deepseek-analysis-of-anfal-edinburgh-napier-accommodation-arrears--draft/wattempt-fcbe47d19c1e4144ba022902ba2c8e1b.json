@@ -1,0 +1,117 @@
+{
+  "citations": [],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "finding-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No sources, source materials, or evidence artifacts were provided. The only artifact (art-e899bafd10c24cbb9542b1bb9935063c) is a prior evidence map that found no support. Any factual, legal, or procedural claim would be unsupported."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "finding-002",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "The task requires a candidate draft. A placeholder complaint letter is proposed, but it cannot contain supported facts, dates, amounts, or evidence references. It must be marked as a template requiring verification."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.9,
+      "finding_id": "finding-003",
+      "finding_type": "risk",
+      "reasoning_status": "uncertain",
+      "text": "Risk of overstatement: any draft that asserts facts without evidence could mislead a decision-maker and cause procedural rejection or costs consequences."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.8,
+      "finding_id": "finding-004",
+      "finding_type": "risk",
+      "reasoning_status": "uncertain",
+      "text": "Risk of privacy leak: without source documents, it is impossible to redact personal data. The placeholder draft avoids specifics, but any later insertion of real data must be reviewed."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "markdown",
+      "content": "# Placeholder Complaint Draft\n\n**Warning: This draft contains no supported facts. All placeholders must be replaced with verified evidence before use.**\n\n---\n\n[Your Name]\n[Your Address]\n[Date]\n\nEdinburgh Napier University\n[Address]\n\nDear Sir/Madam,\n\n**Complaint about accommodation arrears and related hardship**\n\nI am writing to make a formal complaint about the handling of my accommodation account and the impact it has had on me.\n\n[Insert a short, factual account of what happened, with dates. For example:]\n\n- On [date], I received a letter stating that I owed [amount] in accommodation arrears.\n- I contacted [department/person] on [date] to explain that [reason for difficulty, e.g., welfare payment delay, health issue].\n- Despite this, [describe what the university did or did not do, e.g., no response, threat of eviction, referral to debt collection].\n\n[Explain why you believe the university's actions were unfair or caused hardship. For example:]\n\n- I was not given a reasonable opportunity to explain my circumstances.\n- The university did not consider my vulnerability or offer support.\n- The arrears arose because of [reason, e.g., a mistake in my funding assessment, a delay in my student loan].\n\n[Describe the effect on you. For example:]\n\n- I was unable to focus on my studies.\n- I had to borrow money from family.\n- I was at risk of homelessness.\n\n**What I want**\n\nI ask the university to:\n\n1. Review the arrears and confirm whether they are correct.\n2. Consider my circumstances and any evidence I have provided.\n3. Offer a reasonable repayment plan or write off the arrears if they arose from university error.\n4. Provide a written apology and an explanation of what went wrong.\n5. Review its procedures to prevent similar problems for other students.\n\nI enclose copies of [list documents, e.g., letters, emails, medical evidence, welfare statements].\n\nPlease treat this as a formal complaint under the university's complaints procedure. I look forward to your response within [timeframe, e.g., 20 working days].\n\nYours faithfully,\n\n[Your Name]\n\n---\n\n**Notes on editing (for human review)**\n\n- This draft assumes a complaint to Edinburgh Napier University. If the matter should go to the Scottish Public Services Ombudsman (SPSO) or a court, the format and terminology must change.\n- All placeholders in square brackets must be replaced with verified facts, dates, and amounts.\n- The legal basis for any claim (e.g., Equality Act 2010 reasonable adjustments) must be added only if supported by evidence.\n- This draft does not contain legal advice. Check the university's complaints procedure and any relevant time limits before sending.",
+      "path": "candidate/napier-accommodation-arrears-coord-fresh-deepseek-analysis-of-anfal-edinburgh-napier-accommodation-arrears--draft/placeholder_complaint.md",
+      "stage": "S8",
+      "title": "Placeholder Complaint Draft"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "cost_limit_usd": 0,
+      "expected_value": 0,
+      "instructions": "Collect all relevant documents: accommodation contract, arrears notices, correspondence with the university, welfare or hardship evidence, medical or vulnerability evidence, and any complaint responses. Upload as source files to the matter.",
+      "matter_dependencies": [],
+      "matter_scope": "napier-accommodation-arrears",
+      "provider_policy": {},
+      "required_certifications": [],
+      "source_dependencies": [],
+      "stage": "S1",
+      "task_dependencies": [],
+      "task_id": "napier-accommodation-arrears-gather-sources",
+      "task_type": "source_gathering",
+      "title": "Gather source documents for Anfal Edinburgh Napier accommodation arrears",
+      "validation_gates": []
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "description": "Overstatement risk: placeholder draft uses conditional language, but any later insertion of unsupported facts could mislead.",
+      "finding_ids": [
+        "finding-003"
+      ],
+      "risk_id": "risk-001"
+    },
+    {
+      "description": "Privacy risk: placeholder draft avoids personal data, but real documents may contain sensitive information requiring redaction.",
+      "finding_ids": [
+        "finding-004"
+      ],
+      "risk_id": "risk-002"
+    },
+    {
+      "description": "Stale dependency: the only artifact (art-e899bafd10c24cbb9542b1bb9935063c) is marked stale=0, but it contains no evidence and may be outdated.",
+      "finding_ids": [
+        "finding-001"
+      ],
+      "risk_id": "risk-003"
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "No sources or source materials were supplied. The only artifact is a prior evidence map that itself found no support. No factual, legal, or procedural claims can be safely made. The candidate draft is a placeholder complaint letter that flags missing evidence and proposes a follow-up task to gather documents.",
+  "task_id": "napier-accommodation-arrears-coord-fresh-deepseek-analysis-of-anfal-edinburgh-napier-accommodation-arrears--draft",
+  "uncertainties": [
+    {
+      "description": "No evidence of accommodation arrears, hardship, welfare failures, or vulnerability exists in the work order. All such claims are unverified.",
+      "finding_ids": [
+        "finding-001"
+      ],
+      "uncertainty_id": "unc-001"
+    },
+    {
+      "description": "The appropriate forum (internal complaint, SPSO, court) cannot be determined without facts about the dispute and the parties.",
+      "finding_ids": [
+        "finding-002"
+      ],
+      "uncertainty_id": "unc-002"
+    },
+    {
+      "description": "The identity of the complainer (Anfal) and the respondent (Edinburgh Napier) is assumed from the matter scope, but no documents confirm this.",
+      "finding_ids": [
+        "finding-001"
+      ],
+      "uncertainty_id": "unc-003"
+    }
+  ]
+}

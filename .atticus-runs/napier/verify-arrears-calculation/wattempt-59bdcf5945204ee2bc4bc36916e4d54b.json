@@ -1,0 +1,157 @@
+{
+  "citations": [
+    {
+      "citation_id": "C1",
+      "locator": "email body",
+      "quote": "The outstanding arrears for your accommodation are \u00a34605.55",
+      "target_id": "NAP-SRC-0021",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "C2",
+      "locator": "letter dated 20/04/2026",
+      "quote": "Accommodation Arrears as of 10th April \u00a35,526.66",
+      "target_id": "NAP-SRC-0048",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "C3",
+      "locator": "email from Kathleen Donnelly dated 21/04/2026",
+      "quote": "please continue to adhere to the 9th of May deadline as outlined by the accommodation team",
+      "target_id": "NAP-SRC-0048",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "C4",
+      "locator": "letter dated 20/04/2026",
+      "quote": "We kindly ask you pay these within five days from the date of this letter.",
+      "target_id": "NAP-SRC-0048",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [
+    {
+      "contradiction_id": "CON1",
+      "description": "Arrears amount differs between 8 April (\u00a34,605.55) and 20 April (\u00a35,526.66) with no explanation.",
+      "finding_ids": [
+        "F1",
+        "F2"
+      ],
+      "resolution_status": "unresolved",
+      "severity": "high"
+    }
+  ],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "C1"
+      ],
+      "confidence": 0.85,
+      "finding_id": "F1",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "On 8 April 2026, the university stated accommodation arrears of \u00a34,605.55."
+    },
+    {
+      "citation_ids": [
+        "C2"
+      ],
+      "confidence": 0.85,
+      "finding_id": "F2",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "On 20 April 2026, the university stated accommodation arrears of \u00a35,526.66."
+    },
+    {
+      "citation_ids": [
+        "C1",
+        "C2"
+      ],
+      "confidence": 0.85,
+      "finding_id": "F3",
+      "finding_type": "contradiction",
+      "reasoning_status": "supported",
+      "text": "Arrears increased from \u00a34,605.55 to \u00a35,526.66 between 8 and 20 April 2026 without explanation."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.9,
+      "finding_id": "F4",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No source provides a breakdown of the arrears calculation, payment history, or the basis for the increase."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "analysis",
+      "content": "# Arrears Calculation Reconciliation\n\n## Sources Reviewed\n- NAP-SRC-0021: Email dated 8 April 2026, arrears stated as \u00a34,605.55.\n- NAP-SRC-0048: Letter dated 20 April 2026, arrears stated as \u00a35,526.66; email dated 21 April 2026 referencing a 9 May deadline.\n\n## Findings\n1. The arrears amount increased by \u00a3921.11 over 12 days without explanation.\n2. No breakdown of the arrears (e.g., rent, fees, interest) is provided.\n3. The 20 April letter demands payment within 5 days, but the 21 April email refers to a 9 May deadline from a Notice to Quit.\n\n## Uncertainties\n- The calculation method and underlying rental agreement are unknown.\n- It is unclear whether the student made any payments between the two dates.\n- The legal basis for the deadlines is not established.\n\n## Recommendations\n- Obtain the tenancy agreement and payment ledger.\n- Request clarification from the university on the arrears calculation and deadline discrepancy.\n- Consider whether the increase complies with the tenancy terms and relevant legislation.",
+      "path": "candidate/verify-arrears-calculation/result.md",
+      "stage": "S5",
+      "title": "Arrears calculation reconciliation analysis"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "cost_limit_usd": 0,
+      "expected_value": 0,
+      "instructions": "Request from the university a detailed breakdown of the arrears calculation, including the rental agreement, payment schedule, and ledger of charges and payments. Clarify the discrepancy between the 5-day and 9 May deadlines.",
+      "matter_dependencies": [],
+      "matter_scope": "napier-accommodation-arrears",
+      "provider_policy": {},
+      "required_certifications": [],
+      "source_dependencies": [
+        "NAP-SRC-0021",
+        "NAP-SRC-0048"
+      ],
+      "stage": "S5",
+      "task_dependencies": [],
+      "task_id": "request-arrears-breakdown",
+      "task_type": "evidence_request",
+      "title": "Request arrears breakdown and payment history",
+      "validation_gates": [
+        "claim_evidence_support"
+      ]
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "description": "Unexplained increase in arrears may indicate an error or additional charges not communicated to the student.",
+      "risk_id": "R1",
+      "severity": "high"
+    },
+    {
+      "description": "Conflicting deadlines could lead to procedural unfairness if the student relies on the later date.",
+      "risk_id": "R2",
+      "severity": "medium"
+    },
+    {
+      "description": "No evidence of compliance with university or statutory requirements for debt recovery or accommodation arrears.",
+      "risk_id": "R3",
+      "severity": "medium"
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Two sources show different arrears amounts: \u00a34,605.55 on 8 April 2026 and \u00a35,526.66 on 20 April 2026. The increase is unexplained, and no breakdown or payment history is provided. The 5-day deadline in the 20 April letter conflicts with the 9 May deadline in a Notice to Quit referenced in the 21 April email. No authority supports the calculation method.",
+  "task_id": "verify-arrears-calculation",
+  "uncertainties": [
+    {
+      "description": "The basis for the arrears calculation is unknown; no rental agreement, payment schedule, or ledger is provided.",
+      "impact": "Cannot verify whether either amount is correct or how the increase occurred.",
+      "uncertainty_id": "U1"
+    },
+    {
+      "description": "The relationship between the 5-day payment deadline and the 9 May deadline is unclear.",
+      "impact": "Potential confusion about which deadline governs and whether the student is in breach.",
+      "uncertainty_id": "U2"
+    },
+    {
+      "description": "No evidence of payments made by the student or of any dispute resolution process.",
+      "impact": "Cannot assess whether the arrears are disputed or whether the student has made partial payments.",
+      "uncertainty_id": "U3"
+    }
+  ]
+}

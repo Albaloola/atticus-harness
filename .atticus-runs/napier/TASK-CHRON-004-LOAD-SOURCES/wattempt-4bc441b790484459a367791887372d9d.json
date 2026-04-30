@@ -1,0 +1,82 @@
+{
+  "citations": [],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 0.0,
+      "finding_id": "F-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No source materials or artifacts were provided in this work order; cannot perform upload or indexing."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.0,
+      "finding_id": "F-002",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "Task type is 'ingest' but no source dependencies or evidence manifest entries exist to process."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.0,
+      "finding_id": "F-003",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "Matter scope 'napier-accommodation-arrears' has no uploaded documents; cannot index or extract metadata."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.0,
+      "finding_id": "F-004",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No OCR, PDF, DOCX, email, or transcript content was supplied; source ingestion cannot proceed."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "report",
+      "content": "## Source Ingestion Report for TASK-CHRON-004-LOAD-SOURCES\n\n**Status:** No documents to process.\n\n**Reason:** The work order contained zero source dependencies, zero source_materials entries, and zero artifact dependencies. The evidence_manifest and source_materials sections were both empty arrays. Without any source files (PDF, DOCX, email, transcript, OCR output, etc.), the ingestion and indexing step cannot be performed.\n\n**Next Steps:**\n- Confirm that the intended source documents for the Napier accommodation arrears matter have been uploaded to the matter record.\n- Once documents are available, re-issue this task with the correct source_dependencies populated.\n- Alternatively, use a human operator or a file-upload tool to add the documents before retrying.",
+      "path": "candidate/TASK-CHRON-004-LOAD-SOURCES/ingestion_report.md",
+      "stage": "S4",
+      "title": "Source Ingestion Report"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Locate and upload the source documents for the Napier accommodation arrears matter (e.g., tenancy agreements, rent statements, correspondence, university accommodation policies). After upload, re-run TASK-CHRON-004-LOAD-SOURCES to index and extract metadata from the newly available files.",
+      "matter_scope": "napier-accommodation-arrears",
+      "stage": "S4",
+      "task_id": "TASK-CHRON-004B-UPLOAD-SOURCES",
+      "task_type": "ingest",
+      "title": "Upload source documents for Napier accommodation arrears"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "risk_detail": "No source documents have been uploaded for the Napier accommodation arrears matter; ingestion and indexing cannot begin.",
+      "risk_type": "missing_evidence"
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Task TASK-CHRON-004-LOAD-SOURCES cannot proceed because no source documents, source_materials, or artifacts were provided in the work order. The evidence_manifest and source_materials sections are empty. A report artifact and a follow-up upload task are proposed. No citations, contradictions, or legal findings are possible without evidence.",
+  "task_id": "TASK-CHRON-004-LOAD-SOURCES",
+  "uncertainties": [
+    {
+      "reason": "No source documents were supplied; cannot determine what documents exist for the Napier accommodation arrears matter.",
+      "uncertainty_id": "U-001"
+    },
+    {
+      "reason": "The absence of source_materials in this work order does not prove the matter has no records; it only means none were included in this task context.",
+      "uncertainty_id": "U-002"
+    },
+    {
+      "reason": "Without source content, no factual, legal, procedural, or risk findings can be supported or contradicted.",
+      "uncertainty_id": "U-003"
+    }
+  ]
+}

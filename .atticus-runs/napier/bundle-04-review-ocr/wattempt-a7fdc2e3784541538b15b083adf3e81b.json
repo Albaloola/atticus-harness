@@ -1,0 +1,163 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "extraction_provenance",
+      "quote": "extraction_method: libreoffice_text, coverage_status: complete, confidence: 0.85",
+      "target_id": "NAP-SRC-0004",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "extraction_provenance",
+      "quote": "extraction_method: pdf_text, coverage_status: complete, confidence: 0.85",
+      "target_id": "NAP-SRC-0015",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-003",
+      "locator": "source_provenance",
+      "quote": "source_type: communications, trust_status: candidate",
+      "target_id": "NAP-SRC-0004",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-004",
+      "locator": "source_provenance",
+      "quote": "source_type: contracts-and-accommodation, trust_status: candidate",
+      "target_id": "NAP-SRC-0015",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-005",
+      "locator": "content_excerpt",
+      "quote": "Edinburgh Napier University have not vetted the any of the premises contained within this document",
+      "target_id": "NAP-SRC-0004",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-006",
+      "locator": "content_excerpt",
+      "quote": "PRIVATE SECTOR ACCOMMODATION A student guide to checking your contract",
+      "target_id": "NAP-SRC-0015",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001",
+        "cit-003"
+      ],
+      "confidence": 0.85,
+      "finding_id": "f-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "NAP-SRC-0004 (DOC) extraction via libreoffice_text is complete; no OCR used."
+    },
+    {
+      "citation_ids": [
+        "cit-002",
+        "cit-004"
+      ],
+      "confidence": 0.85,
+      "finding_id": "f-002",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "NAP-SRC-0015 (PDF) extraction via pdftotext is complete; no OCR used."
+    },
+    {
+      "citation_ids": [
+        "cit-005"
+      ],
+      "confidence": 0.85,
+      "finding_id": "f-003",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "NAP-SRC-0004 is a short-term stays and transport guide; not a contract or arrears document."
+    },
+    {
+      "citation_ids": [
+        "cit-006"
+      ],
+      "confidence": 0.85,
+      "finding_id": "f-004",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "NAP-SRC-0015 is a student guide to checking private accommodation contracts."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "review_report",
+      "content": "## OCR Completeness Review for NAP-SRC-0004 and NAP-SRC-0015\n\n### NAP-SRC-0004\n- **Source Type**: communications (DOC)\n- **Extraction Method**: libreoffice_text\n- **Coverage**: complete\n- **Confidence**: 0.85\n- **OCR Engine**: none\n- **Notes**: Contains hostel/hotel tables; plain text may lose tabular structure.\n\n### NAP-SRC-0015\n- **Source Type**: contracts-and-accommodation (PDF)\n- **Extraction Method**: pdftotext\n- **Coverage**: complete\n- **Confidence**: 0.85\n- **OCR Engine**: none\n- **Notes**: Multi-page guide; page breaks may affect readability.\n\n### Overall Assessment\nBoth extractions are complete with moderate confidence. No OCR was used. Recommend manual spot-check of table data in NAP-SRC-0004 and page continuity in NAP-SRC-0015.",
+      "path": "candidate/bundle-04-review-ocr/review-report.md",
+      "stage": "S3",
+      "title": "OCR Completeness Review Report"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [
+        "art-extracted-NAP-SRC-0004",
+        "art-extracted-NAP-SRC-0015"
+      ],
+      "instructions": "Manually compare the extracted text of NAP-SRC-0004 and NAP-SRC-0015 against the original source files. Flag any missing tables, broken formatting, or garbled text. Report discrepancies and propose re-extraction if needed.",
+      "matter_scope": "napier-accommodation-arrears",
+      "source_dependencies": [
+        "NAP-SRC-0004",
+        "NAP-SRC-0015"
+      ],
+      "stage": "S3",
+      "task_id": "bundle-04-verify-extraction",
+      "task_type": "source_review",
+      "title": "Verify extraction accuracy for NAP-SRC-0004 and NAP-SRC-0015",
+      "validation_gates": [
+        "production_mapping",
+        "chain_of_custody"
+      ]
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "citation_ids": [],
+      "confidence": 0.6,
+      "finding_id": "r-001",
+      "finding_type": "risk",
+      "reasoning_status": "uncertain",
+      "text": "No OCR was applied; if original sources contain scanned images or non-text content, extraction may be incomplete."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Reviewed OCR completeness for NAP-SRC-0004 (DOC) and NAP-SRC-0015 (PDF). Both extractions are complete with high confidence. NAP-SRC-0004 extracted via libreoffice_text; NAP-SRC-0015 via pdftotext. No OCR engine was used. No stale sources, missing certifications, or contradictions found. Proposed a follow-up task to verify extraction accuracy against original formatting.",
+  "task_id": "bundle-04-review-ocr",
+  "uncertainties": [
+    {
+      "citation_ids": [],
+      "confidence": 0.5,
+      "finding_id": "u-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "Extraction confidence is 0.85; no manual verification of formatting or table structure was performed."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.5,
+      "finding_id": "u-002",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "NAP-SRC-0004 contains tables (hostel/hotel listings) that may not be fully preserved in plain text extraction."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.5,
+      "finding_id": "u-003",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "NAP-SRC-0015 is a multi-page PDF; page breaks and formatting may affect readability of extracted text."
+    }
+  ]
+}

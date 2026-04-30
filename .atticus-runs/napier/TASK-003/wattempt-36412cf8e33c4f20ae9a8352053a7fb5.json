@@ -1,0 +1,111 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "entire extracted text",
+      "quote": "Edinburgh Napier University - Payment Confirmation (Ref: ENU447436) ... Paid today: 30.00 (GBP)",
+      "target_id": "NAP-SRC-0007",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "extraction_provenance",
+      "quote": "extraction_method: tesseract_ocr, confidence: 0.65",
+      "target_id": "NAP-SRC-0007",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-003",
+      "locator": "extraction_provenance",
+      "quote": "extraction_method: pdf_text, confidence: 0.85",
+      "target_id": "NAP-SRC-0005",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-002"
+      ],
+      "confidence": 0.95,
+      "finding_id": "F-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "supported",
+      "text": "OCR extraction for source NAP-SRC-0007 (IMG_0304.jpeg) used Tesseract with low confidence (0.65), producing garbled text. Enhanced OCR engine is not yet configured."
+    },
+    {
+      "citation_ids": [
+        "cit-003"
+      ],
+      "confidence": 0.85,
+      "finding_id": "F-002",
+      "finding_type": "drafting_note",
+      "reasoning_status": "supported",
+      "text": "Source NAP-SRC-0005 (PDF) extracted via pdf_text with moderate confidence (0.85) but contains OCR artifacts (e.g., garbled characters). Re-extraction may improve quality."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-003",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "Task TASK-003 is a tool_configuration task; no legal or factual findings can be derived from the provided evidence. The task requires configuring an enhanced OCR engine, not analyzing evidence."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "markdown",
+      "content": "# OCR Re-extraction Configuration Report\n\n## Summary\n- **Source NAP-SRC-0007**: Tesseract OCR confidence 0.65, garbled output. Requires enhanced OCR re-extraction.\n- **Source NAP-SRC-0005**: pdf_text extraction confidence 0.85, moderate artifacts. Optional re-extraction.\n\n## Recommended Action\nConfigure an enhanced OCR engine (e.g., Azure Document Intelligence) with the following parameters:\n- Engine: Azure Document Intelligence (prebuilt-read)\n- Language: English\n- Endpoint: [to be provided by Atticus ops]\n- API Key: [to be provided by Atticus ops]\n- Output format: plain text with bounding boxes\n\nApply re-extraction to NAP-SRC-0007 first, then optionally to NAP-SRC-0005.\n\n## Validation Gates\n- production_mapping: Ensure re-extracted text is mapped to the correct source_id.\n- chain_of_custody: Log the new extraction provenance with engine name, version, and timestamp.",
+      "path": "candidate/TASK-003/ocr-reconfiguration-report.md",
+      "stage": "S3",
+      "title": "OCR Re-extraction Configuration Report"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Configure the Azure Document Intelligence prebuilt-read model as the enhanced OCR engine. Set the endpoint and API key from Atticus secrets. Apply re-extraction to source NAP-SRC-0007 (IMG_0304.jpeg). Validate output quality by comparing with the existing Tesseract output. Log the new extraction provenance.",
+      "matter_scope": "napier-accommodation-arrears",
+      "source_dependencies": [
+        "NAP-SRC-0007"
+      ],
+      "stage": "S3",
+      "task_id": "TASK-003-FOLLOWUP",
+      "task_type": "tool_configuration",
+      "title": "Configure Azure Document Intelligence for re-extraction of NAP-SRC-0007",
+      "validation_gates": [
+        "production_mapping",
+        "chain_of_custody"
+      ]
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "finding_id": "R-001",
+      "text": "Low-confidence OCR (0.65) on NAP-SRC-0007 may cause critical payment details to be misread or lost, risking inaccurate evidence interpretation."
+    },
+    {
+      "finding_id": "R-002",
+      "text": "Without enhanced OCR re-extraction, the matter may proceed with unreliable text from image-based sources."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Task TASK-003 requests configuration of an enhanced OCR engine for re-extraction. Source NAP-SRC-0007 (IMG_0304.jpeg) was extracted via Tesseract with low confidence (0.65) and shows garbled text, indicating OCR quality is insufficient. Source NAP-SRC-0005 (PDF) was extracted via pdf_text with moderate confidence (0.85) but contains OCR artifacts. No enhanced OCR engine is currently configured. The task is a tool_configuration task; no legal findings are possible from the provided evidence. A drafting note identifies the OCR gap and proposes a follow-up task to configure an enhanced OCR engine (e.g., Azure Document Intelligence) for re-extraction of NAP-SRC-0007.",
+  "task_id": "TASK-003",
+  "uncertainties": [
+    {
+      "finding_id": "U-001",
+      "text": "Which enhanced OCR engine (e.g., Azure Document Intelligence, Google Cloud Vision) should be configured is not specified in the work order."
+    },
+    {
+      "finding_id": "U-002",
+      "text": "The exact configuration parameters (e.g., language, model version, endpoint) for the enhanced OCR engine are unknown."
+    },
+    {
+      "finding_id": "U-003",
+      "text": "Whether the enhanced OCR engine will be applied to NAP-SRC-0005 as well as NAP-SRC-0007 is not specified."
+    }
+  ]
+}

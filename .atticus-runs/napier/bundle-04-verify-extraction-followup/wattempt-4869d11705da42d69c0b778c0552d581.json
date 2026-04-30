@@ -1,0 +1,127 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "full document",
+      "quote": "Edinburgh Napier University have not vetted the any of the premises contained within this document and cannot be held responsible for the experience of guests at these premises.",
+      "target_id": "NAP-SRC-0004",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "hostel table",
+      "quote": "Kick Ass Greyfriars ... Price starting from \u00a314",
+      "target_id": "NAP-SRC-0004",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-003",
+      "locator": "hotel section",
+      "quote": "Hotels near Craiglockhart, Merchiston and Sighthill Campuses",
+      "target_id": "NAP-SRC-0004",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-004",
+      "locator": "transport section",
+      "quote": "By Bus \u2013 Must have exact change for buses or contactless card",
+      "target_id": "NAP-SRC-0004",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-005",
+      "locator": "disclaimer",
+      "quote": "Edinburgh Napier University has no affiliation with any of the premises listed.",
+      "target_id": "NAP-SRC-0004",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-006",
+      "locator": "hostel table footer",
+      "quote": "Prices are not static they will change according to availability and usually increase at weekends.",
+      "target_id": "NAP-SRC-0004",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001",
+        "cit-005"
+      ],
+      "confidence": 0.95,
+      "finding_id": "f-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Document is a visitor accommodation and transport guide published by Edinburgh Napier University, with disclaimers of no vetting or affiliation."
+    },
+    {
+      "citation_ids": [
+        "cit-002",
+        "cit-003",
+        "cit-004"
+      ],
+      "confidence": 0.95,
+      "finding_id": "f-002",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Extraction covers all major sections: transport (bus, air, rail, taxi), hostels (10 listings), and hotels near campuses."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.9,
+      "finding_id": "f-003",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "Document is a general visitor guide; no direct link to student accommodation arrears or tenancy terms identified."
+    },
+    {
+      "citation_ids": [
+        "cit-006"
+      ],
+      "confidence": 0.95,
+      "finding_id": "f-004",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Hostel prices are dynamic and typically increase on weekends; booking direct recommended for extras."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "review_report",
+      "content": "## Extraction Verification Report for NAP-SRC-0004\n\n**Source:** Edinburgh Short Term Stays and Transport Updated May 2025.doc\n**Extraction Method:** libreoffice_text (confidence 0.85)\n**Coverage Status:** complete\n\n### Findings\n- All major sections extracted: transport (bus, air, rail, taxi), hostel listings (10 entries with prices, distances, contact info), hotel listings near campuses.\n- Disclaimers preserved: university has not vetted premises and has no affiliation.\n- No OCR errors or missing text detected.\n- Document is a general visitor accommodation guide, not a tenancy or arrears record.\n\n### Recommendation\nConfirm whether this document is relevant to the accommodation arrears matter. If not, consider excluding from further analysis.",
+      "path": "candidate/bundle-04-verify-extraction-followup/verification-report.md",
+      "stage": "S3",
+      "title": "NAP-SRC-0004 Extraction Verification Report"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [
+        "candidate/bundle-04-verify-extraction-followup/verification-report.md"
+      ],
+      "instructions": "Review the extracted content of NAP-SRC-0004 (visitor accommodation guide) and determine its relevance to the napier-accommodation-arrears matter. If irrelevant, propose exclusion or archival. If relevant, identify specific sections that support or contradict claims in the matter.",
+      "matter_scope": "napier-accommodation-arrears",
+      "source_dependencies": [
+        "NAP-SRC-0004"
+      ],
+      "stage": "S3",
+      "task_id": "task-assess-relevance-NAP-SRC-0004",
+      "task_type": "source_review",
+      "title": "Assess relevance of NAP-SRC-0004 to accommodation arrears matter"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Reviewed extracted text of NAP-SRC-0004 (Edinburgh Short Term Stays and Transport guide). Extraction appears complete and well-structured, covering transport options, hostel and hotel listings, and disclaimers. No missing sections or OCR errors detected. The document is a general visitor guide, not a tenancy or arrears record. No contradictions, risks, or redaction flags identified. Proposed follow-up task to confirm relevance to accommodation arrears matter.",
+  "task_id": "bundle-04-verify-extraction-followup",
+  "uncertainties": [
+    {
+      "finding_id": "f-003",
+      "reason": "Document appears to be a general visitor guide; relevance to accommodation arrears matter is unclear."
+    }
+  ]
+}

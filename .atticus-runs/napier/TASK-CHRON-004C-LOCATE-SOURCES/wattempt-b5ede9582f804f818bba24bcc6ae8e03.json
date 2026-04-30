@@ -1,0 +1,46 @@
+{
+  "citations": [],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No source materials or artifacts were provided in this work order. The task cannot locate or attach documents without evidence."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "report",
+      "content": "No source materials were provided in the work order for task TASK-CHRON-004C-LOCATE-SOURCES. The evidence manifest and source_materials sections were empty. To proceed, a search of the matter's source repository is required to locate relevant documents such as tenancy agreements, rent ledgers, correspondence, and any arrears notices related to Napier accommodation.",
+      "path": "candidate/TASK-CHRON-004C-LOCATE-SOURCES/result.md",
+      "stage": "S4",
+      "title": "Source Location Report"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Use the ListMatterSources tool to enumerate all sources in the matter scope 'napier-accommodation-arrears'. Filter for documents related to accommodation arrears, tenancy agreements, rent ledgers, correspondence, and notices. Attach any found sources to the work order for further analysis.",
+      "matter_scope": "napier-accommodation-arrears",
+      "stage": "S4",
+      "task_id": "TASK-CHRON-004C-SEARCH-REPO",
+      "task_type": "ingest",
+      "title": "Search matter source repository for Napier accommodation arrears documents"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "No source materials or artifacts were provided in this work order for the Napier accommodation arrears matter. The task is to locate and attach source documents, but no evidence was supplied. No findings about the content of any document can be made. A follow-up task is proposed to search the matter's source repository for relevant documents.",
+  "task_id": "TASK-CHRON-004C-LOCATE-SOURCES",
+  "uncertainties": [
+    {
+      "finding_id": "F-001",
+      "text": "It is unknown whether any source documents for Napier accommodation arrears exist in the matter repository.",
+      "uncertainty_id": "U-001"
+    }
+  ]
+}

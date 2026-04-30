@@ -1,0 +1,62 @@
+{
+  "citations": [],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No source materials or artifacts were provided in the work order for this evidence collection task."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-002",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "The task requires locating a tenancy agreement and arrears correspondence, but no documents are available in the current context."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "evidence_map",
+      "content": "## Evidence Map for Napier Accommodation Arrears\n\n### Required Documents (Not Yet Located)\n- **Tenancy Agreement**: Not provided. Must be located and uploaded.\n- **Arrears Correspondence**: Not provided. Must be located and uploaded.\n\n### Available Authorities (for reference)\n- Private Housing (Tenancies) (Scotland) Act 2016, schedule 1\n- Housing (Scotland) Act 1988, section 12 and schedule 4\n- Housing (Scotland) Act 2001, section 7\n- Equality Act 2010, sections 20, 21, 91\n- Scottish Public Services Ombudsman Act 2002\n\n### Next Steps\n1. Search matter records for the tenancy agreement.\n2. Search matter records for arrears correspondence.\n3. Upload found documents as source materials.\n4. Re-run this task with the uploaded documents.",
+      "path": "candidate/T-04-002b-find-sources/evidence_map.md",
+      "stage": "S2",
+      "title": "Evidence Map for Napier Accommodation Arrears"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "cost_limit_usd": 0.01,
+      "expected_value": 0.9,
+      "instructions": "Search the matter records for the tenancy agreement and any arrears correspondence related to the Napier accommodation arrears matter. Upload any found documents as source materials. If documents are not found, request human assistance to locate them.",
+      "matter_dependencies": [],
+      "matter_scope": "napier-accommodation-arrears",
+      "required_certifications": [],
+      "source_dependencies": [],
+      "stage": "S2",
+      "task_dependencies": [],
+      "task_id": "T-04-002b-find-sources-followup",
+      "task_type": "evidence_collection",
+      "title": "Search and upload tenancy agreement and arrears correspondence",
+      "validation_gates": []
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "No source materials or artifacts were provided for this evidence collection task. The task is to locate and upload a tenancy agreement and arrears correspondence for the Napier accommodation arrears matter. No documents are available in the current context. A follow-up task is proposed to search for and upload the required records.",
+  "task_id": "T-04-002b-find-sources",
+  "uncertainties": [
+    {
+      "reason": "The evidence_manifest and source_materials sections are empty.",
+      "text": "No tenancy agreement or arrears correspondence has been provided or located in the current context.",
+      "uncertainty_id": "U-001"
+    }
+  ]
+}

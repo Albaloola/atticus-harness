@@ -1,0 +1,130 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "entire extracted text",
+      "quote": "MISS ANFAL ELBUSHRA Student Licence.pdf;",
+      "target_id": "NAP-SRC-0029",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "entire extracted text",
+      "quote": "This email contains a copy of the Tenancy Agreement & Code of Conduct",
+      "target_id": "NAP-SRC-0029",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-003",
+      "locator": "entire extracted text",
+      "quote": "From accommodation@napier.ac.uk <accommodation@napier.ac.uk>",
+      "target_id": "NAP-SRC-0029",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-004",
+      "locator": "entire extracted text",
+      "quote": "Date Thu 12/03/2026 10:26",
+      "target_id": "NAP-SRC-0029",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-005",
+      "locator": "entire extracted text",
+      "quote": "To   Elbushra, Anfal <40805511@live.napier.ac.uk>",
+      "target_id": "NAP-SRC-0029",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-006",
+      "locator": "entire extracted text",
+      "quote": "1 attachment (3 MB)",
+      "target_id": "NAP-SRC-0029",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001",
+        "cit-003",
+        "cit-004",
+        "cit-005",
+        "cit-006"
+      ],
+      "confidence": 0.95,
+      "finding_id": "f-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "NAP-SRC-0029 is an email from Edinburgh Napier University accommodation to Anfal Elbushra dated 12 March 2026, with a 3 MB attachment named 'MISS ANFAL ELBUSHRA Student Licence.pdf'."
+    },
+    {
+      "citation_ids": [
+        "cit-002"
+      ],
+      "confidence": 0.95,
+      "finding_id": "f-002",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "The email states it contains a copy of the Tenancy Agreement & Code of Conduct and requests the recipient to read and electronically sign the tenancy agreement."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "f-003",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "The extraction artifact art-extracted-NAP-SRC-0029 contains only the email body text; the binary content of the attached Student Licence PDF was not extracted by the pdf_text method."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "f-004",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No tool configured for binary attachment extraction from PDF is available in this task. A follow-up task is needed to extract the attached Student Licence PDF using a tool that can parse PDF attachments."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "extraction_report",
+      "content": "## Binary Extraction Report for NAP-SRC-0029\n\n**Source:** NAP-SRC-0029 (Email from Edinburgh Napier University to Anfal Elbushra, 12 March 2026)\n\n**Attachment Identified:** 'MISS ANFAL ELBUSHRA Student Licence.pdf' (3 MB)\n\n**Extraction Status:** The email body text was successfully extracted via pdf_text. However, the binary content of the attached Student Licence PDF was not extracted because the pdf_text method does not handle PDF attachments.\n\n**Recommendation:** Use a tool capable of extracting attachments from PDF files (e.g., pdftk, or a Python script with PyPDF2/pdfplumber) to retrieve the Student Licence PDF for further analysis.",
+      "path": "candidate/task-extract-student-licence-binary-v9-followup/extraction-report.md",
+      "stage": "S1",
+      "title": "Binary Extraction Report for NAP-SRC-0029"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Extract the binary attachment 'MISS ANFAL ELBUSHRA Student Licence.pdf' from the source PDF NAP-SRC-0029. Use a tool capable of parsing PDF attachments (e.g., pdftk, or a Python script with PyPDF2/pdfplumber). Save the extracted PDF as a new source file in the matter's source directory and register it in the file inventory. Then perform text extraction on the extracted PDF to obtain its contents.",
+      "matter_scope": "napier-accommodation-arrears",
+      "stage": "S1",
+      "task_id": "task-extract-student-licence-binary-v9-followup-attachment",
+      "task_type": "extraction",
+      "title": "Extract Student Licence PDF attachment from NAP-SRC-0029"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "description": "The Student Licence PDF attachment was not extracted; its terms and conditions are unavailable for review.",
+      "finding_id": "f-003",
+      "risk_type": "missing_evidence"
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Extracted text from NAP-SRC-0029 confirms an email from Edinburgh Napier University to Anfal Elbushra attaching a PDF titled 'MISS ANFAL ELBUSHRA Student Licence.pdf'. The email references a tenancy agreement and code of conduct but does not contain the binary content of the attached PDF. The extraction artifact (art-extracted-NAP-SRC-0029) is text-only; the binary Student Licence PDF was not extracted. A follow-up task is proposed to extract the binary attachment using a tool capable of handling PDF attachments.",
+  "task_id": "task-extract-student-licence-binary-v9-followup",
+  "uncertainties": [
+    {
+      "finding_id": "f-003",
+      "reason": "The binary Student Licence PDF attachment was not extracted; its contents remain unknown."
+    },
+    {
+      "finding_id": "f-004",
+      "reason": "No tool for binary attachment extraction is available in the current task context."
+    }
+  ]
+}

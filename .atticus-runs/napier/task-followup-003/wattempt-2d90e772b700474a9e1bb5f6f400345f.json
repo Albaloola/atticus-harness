@@ -1,0 +1,45 @@
+{
+  "citations": [],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No source materials or artifacts were provided in this work order; tenancy records for Napier accommodation arrears cannot be located or ingested from the supplied context."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "markdown",
+      "content": "# Task: Locate and ingest tenancy records for Napier accommodation arrears\n\n**Status:** No source materials or artifacts provided.\n\n**Next step:** Search matter memory and list existing sources to identify where tenancy records may reside.\n\n**Proposed follow-up task:** `task-followup-004` \u2014 Search legal memory and list matter sources for Napier accommodation arrears tenancy records.",
+      "path": "candidate/task-followup-003/result.md",
+      "stage": "S3",
+      "title": "Napier accommodation arrears tenancy records \u2014 initial assessment"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Search legal memory for any references to Napier accommodation arrears tenancy records. Use ListMatterSources to enumerate all sources in the matter scope 'napier-accommodation-arrears'. Report any source IDs, file names, or descriptions that may contain tenancy agreements, rent ledgers, arrears notices, or related correspondence. If no records are found, propose a human-directed search or intake step.",
+      "matter_scope": "napier-accommodation-arrears",
+      "stage": "S3",
+      "task_id": "task-followup-004",
+      "task_type": "source_discovery",
+      "title": "Search memory and list sources for Napier accommodation arrears tenancy records"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "No source materials or artifacts were provided for this task. The task is to locate and ingest tenancy records for Napier accommodation arrears, but no evidence, records, or source dependencies were supplied. No findings about the tenancy or arrears can be supported. A follow-up task is proposed to search matter memory and list existing sources to identify where tenancy records may reside.",
+  "task_id": "task-followup-003",
+  "uncertainties": [
+    {
+      "finding_id": "U001",
+      "text": "The location and existence of tenancy records for Napier accommodation arrears is unknown; no sources, artifacts, or memory entries were provided."
+    }
+  ]
+}

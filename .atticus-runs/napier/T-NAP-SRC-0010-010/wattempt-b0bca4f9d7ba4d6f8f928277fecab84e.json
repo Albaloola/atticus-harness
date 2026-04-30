@@ -1,0 +1,110 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "page 1",
+      "quote": "Rent: \u00a34,686.18 Total Rent (including \u00a3500 Advance Rent Payment) \u00a328.23 Per Day",
+      "target_id": "NAP-SRC-0010",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "clause 2(a)",
+      "quote": "The subsequent monthly sums due will be shown on the rent schedule to be provided separately to the Tenant.",
+      "target_id": "NAP-SRC-0010",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-003",
+      "locator": "clause 2(a)",
+      "quote": "The Landlord acknowledges the Tenant has paid the Advance Payment of FIVE HUNDRED POUNDS (\u00a3500) STERLING which will be credited to the Tenant's rent account.",
+      "target_id": "NAP-SRC-0010",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001"
+      ],
+      "confidence": 0.95,
+      "finding_id": "F-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Total rent for the tenancy is \u00a34,686.18, including a \u00a3500 advance payment, at \u00a328.23 per day."
+    },
+    {
+      "citation_ids": [
+        "cit-002"
+      ],
+      "confidence": 0.95,
+      "finding_id": "F-002",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "The agreement states a rent schedule will be provided separately; no schedule is included in this source."
+    },
+    {
+      "citation_ids": [
+        "cit-003"
+      ],
+      "confidence": 0.95,
+      "finding_id": "F-003",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "The tenant paid a \u00a3500 advance rent payment, credited to the rent account."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-004",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No rent schedule or payment records are present in source NAP-SRC-0010. Other matter sources were not provided for this task."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "report",
+      "content": "## Source Search Result: Rent Schedule and Payment Records\n\n**Task:** T-NAP-SRC-0010-010\n**Source Reviewed:** NAP-SRC-0010 (Student Licence for Miss Anfal Elbushra)\n\n### Findings\n- The tenancy agreement (NAP-SRC-0010) states a total rent of \u00a34,686.18, with a \u00a3500 advance payment credited.\n- Clause 2(a) explicitly states that a separate rent schedule will be provided to the tenant. **No such schedule is included in this source.**\n- No payment records, receipts, or arrears statements are present in this source.\n\n### Conclusion\nThe rent schedule and payment records are not located in source NAP-SRC-0010. A follow-up task is proposed to search other matter sources (e.g., correspondence, financial records, accommodation office records) for these documents.",
+      "path": "candidate/T-NAP-SRC-0010-010/result.md",
+      "stage": "S2",
+      "title": "Source Search Result: Rent Schedule and Payment Records"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Search all available matter sources (e.g., correspondence, financial records, accommodation office records) for the rent schedule referenced in clause 2(a) of NAP-SRC-0010 and any payment records (receipts, statements, arrears ledger) for Miss Anfal Elbushra. Report any documents found with their source IDs and relevant excerpts.",
+      "matter_scope": "napier-accommodation-arrears",
+      "stage": "S2",
+      "task_id": "T-NAP-SRC-0010-011",
+      "task_type": "source_search",
+      "title": "Search for rent schedule and payment records in other matter sources"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "finding_id": "R-001",
+      "text": "The absence of the rent schedule and payment records in this source may hinder verification of arrears calculations."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Reviewed source NAP-SRC-0010 (Student Licence) for rent schedule and payment records. The agreement states rent of \u00a34,686.18 total, \u00a3500 advance paid, and that a separate rent schedule will be provided. No rent schedule or payment records are present in this source. No other matter sources were provided. Proposed follow-up task to search for the rent schedule and payment records in other matter sources.",
+  "task_id": "T-NAP-SRC-0010-010",
+  "uncertainties": [
+    {
+      "finding_id": "U-001",
+      "text": "The rent schedule referenced in clause 2(a) is not included in source NAP-SRC-0010; its location is unknown."
+    },
+    {
+      "finding_id": "U-002",
+      "text": "No payment records (e.g., receipts, statements, arrears ledger) are present in the provided source materials."
+    },
+    {
+      "finding_id": "U-003",
+      "text": "It is unclear whether other matter sources (e.g., correspondence, financial records) contain the rent schedule or payment history."
+    }
+  ]
+}

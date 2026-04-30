@@ -1,0 +1,144 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "Bank Accounts section",
+      "quote": "You must add details of every bank account held in your name ... and upload a bank statement for each account showing the last 30 days transactions.",
+      "target_id": "NAP-SRC-0008",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "Bank Accounts section",
+      "quote": "Name of Bank: Monzo",
+      "target_id": "NAP-SRC-0008",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-003",
+      "locator": "Bank Accounts section",
+      "quote": "Current Balance (including overdraft): 0.38",
+      "target_id": "NAP-SRC-0008",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-004",
+      "locator": "Monthly Household Expenditure > Housing",
+      "quote": "Rent, Mortgage or Accommodation Costs: 5526.66",
+      "target_id": "NAP-SRC-0008",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-005",
+      "locator": "Monthly Household Income > Student Loan, Bursary",
+      "quote": "770.0",
+      "target_id": "NAP-SRC-0008",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-006",
+      "locator": "Personal Supporting Statement",
+      "quote": "I commute from Glasgow to Edinburgh ... my parents rely on government benefits ... I am therefore responsible for covering my",
+      "target_id": "NAP-SRC-0008",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001",
+        "cit-002",
+        "cit-003"
+      ],
+      "confidence": 0.95,
+      "finding_id": "f-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Applicant Anfal Elbushra reported a Monzo bank account with a \u00a30.38 balance."
+    },
+    {
+      "citation_ids": [
+        "cit-004",
+        "cit-005"
+      ],
+      "confidence": 0.95,
+      "finding_id": "f-002",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Monthly rent/accommodation costs of \u00a35,526.66 exceed monthly student loan/bursary income of \u00a3770."
+    },
+    {
+      "citation_ids": [
+        "cit-001"
+      ],
+      "confidence": 0.95,
+      "finding_id": "f-003",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "The application form requires upload of bank statements for each account; none are attached to this source."
+    },
+    {
+      "citation_ids": [
+        "cit-006"
+      ],
+      "confidence": 0.85,
+      "finding_id": "f-004",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Applicant states she commutes from Glasgow to Edinburgh and receives no family financial support."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "analysis_note",
+      "content": "**Task:** Request bank statements for applicant Anfal Elbushra.\n\n**Source reviewed:** NAP-SRC-0008 (Edinburgh Napier University Living Cost Questions \u2013 Trimester 2).\n\n**Key findings:**\n- Applicant disclosed a Monzo account with \u00a30.38 balance.\n- Monthly rent/accommodation costs: \u00a35,526.66; monthly income (student loan/bursary): \u00a3770.\n- The form explicitly requires bank statements for each account; none are attached to this source.\n- Applicant states she commutes from Glasgow to Edinburgh and receives no family financial support.\n\n**Recommended action:** Request the applicant provide bank statements for the Monzo account (and any other accounts) for the last 30 days to verify income, expenditure, and rent payment history. Clarify whether the \u00a35,526.66 figure is correct or includes other costs.",
+      "path": "candidate/req-bank-stmts-NAP-SRC-0008/result.md",
+      "stage": "S3",
+      "title": "Bank Statement Request Summary for Anfal Elbushra"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Review any tenancy agreement, rent schedule, or correspondence in the matter to confirm whether the \u00a35,526.66 monthly accommodation cost reported in NAP-SRC-0008 is accurate or includes non-housing costs. Cross-reference with bank statements once obtained.",
+      "matter_scope": "napier-accommodation-arrears",
+      "stage": "S3",
+      "task_id": "verify-rent-figure-NAP-SRC-0008",
+      "task_type": "fact_check",
+      "title": "Verify reported rent/accommodation cost of \u00a35,526.66"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "finding_id": "r-001",
+      "text": "Large rent figure (\u00a35,526.66) relative to income (\u00a3770) may indicate data entry error or inclusion of non-housing costs; verification needed."
+    },
+    {
+      "finding_id": "r-002",
+      "text": "Missing bank statements prevent verification of income, expenditure, and rent payment history."
+    },
+    {
+      "finding_id": "r-003",
+      "text": "Applicant's financial vulnerability (commuting, no family support) may raise welfare or reasonable adjustment considerations."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Source NAP-SRC-0008 (Edinburgh Napier University Living Cost Questions) shows applicant Anfal Elbushra reported a Monzo bank account with a \u00a30.38 balance and monthly rent/accommodation costs of \u00a35,526.66 against \u00a3770 monthly income. The form explicitly requires bank statements for each account. No bank statements are attached to the source. Task is to request those statements.",
+  "task_id": "req-bank-stmts-NAP-SRC-0008",
+  "uncertainties": [
+    {
+      "finding_id": "u-001",
+      "text": "It is unknown whether the applicant holds additional bank accounts beyond the Monzo account disclosed."
+    },
+    {
+      "finding_id": "u-002",
+      "text": "The source does not confirm whether bank statements were previously submitted separately or are missing."
+    },
+    {
+      "finding_id": "u-003",
+      "text": "The exact tenancy type and arrears amount are not stated in this source."
+    }
+  ]
+}

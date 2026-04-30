@@ -1,0 +1,90 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "extracted text",
+      "quote": "Credit/debit card payment :\n\nPaid today: 30.00 (GBP)\nYour payment reference is: ENU447436",
+      "target_id": "NAP-SRC-0007",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "extraction metadata",
+      "quote": "extraction_method: tesseract_ocr, confidence: 0.65",
+      "target_id": "NAP-SRC-0007",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001"
+      ],
+      "confidence": 0.65,
+      "finding_id": "F-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Source NAP-SRC-0007 shows a payment confirmation from Edinburgh Napier University for \u00a330.00 (GBP) with reference ENU447436."
+    },
+    {
+      "citation_ids": [
+        "cit-002"
+      ],
+      "confidence": 0.65,
+      "finding_id": "F-002",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "The extracted text for NAP-SRC-0007 was produced by Tesseract OCR with a confidence score of 0.65, indicating low reliability."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-003",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No Azure Document Intelligence configuration, credentials, or deployment instructions are present in the work order. The task cannot be executed with available tools."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "analysis",
+      "content": "## Gap Analysis for TASK-003-SETUP-AZURE-OCR\n\n**Objective:** Provision and configure Azure Document Intelligence for OCR re-extraction.\n\n**Current State:**\n- Only source NAP-SRC-0007 is available.\n- Existing OCR was performed by Tesseract with confidence 0.65.\n- No Azure credentials, endpoint, API keys, or deployment scripts are provided.\n\n**Required Actions (not executable by worker):**\n1. Obtain Azure subscription and resource group.\n2. Deploy Azure Document Intelligence resource.\n3. Retrieve endpoint URL and API key.\n4. Configure authentication (e.g., managed identity or key-based).\n5. Test connectivity with a sample document.\n\n**Recommendation:** Request human operator to provide Azure setup details or delegate to a DevOps task.",
+      "path": "candidate/TASK-003-SETUP-AZURE-OCR/result.md",
+      "stage": "S3",
+      "title": "Azure OCR Setup Gap Analysis"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Request from the human operator or DevOps team: Azure subscription ID, resource group name, Document Intelligence endpoint URL, API key or managed identity configuration, and any deployment scripts or ARM templates. Record the gathered information in a candidate artifact for use in configuring the OCR re-extraction pipeline.",
+      "matter_scope": "napier-accommodation-arrears",
+      "stage": "S3",
+      "task_id": "TASK-003A-GATHER-AZURE-CREDS",
+      "task_type": "information_gathering",
+      "title": "Gather Azure Document Intelligence credentials and deployment instructions",
+      "validation_gates": [
+        "production_mapping",
+        "chain_of_custody"
+      ]
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "description": "Low-confidence OCR (0.65) may introduce errors in the extracted payment details.",
+      "finding_id": "F-002",
+      "risk_type": "evidence_quality"
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Task TASK-003-SETUP-AZURE-OCR requires provisioning Azure Document Intelligence for OCR re-extraction. The only source material (NAP-SRC-0007) has low-confidence Tesseract OCR (0.65) with garbled text. No Azure configuration, credentials, or deployment instructions are present. The task is a tool_configuration step that cannot be executed with available tools. A drafting note identifies the gap and proposes a follow-up task to gather Azure setup details.",
+  "task_id": "TASK-003-SETUP-AZURE-OCR",
+  "uncertainties": [
+    {
+      "finding_id": "F-003",
+      "reason": "Azure Document Intelligence provisioning details are absent; task is a tool_configuration step that requires external setup."
+    }
+  ]
+}

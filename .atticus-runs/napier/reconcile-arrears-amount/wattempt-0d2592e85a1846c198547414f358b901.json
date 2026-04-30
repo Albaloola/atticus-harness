@@ -1,0 +1,163 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "email body",
+      "quote": "The outstanding arrears for your accommodation are \u00a34605.55",
+      "target_id": "NAP-SRC-0021",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "letter body",
+      "quote": "Accommodation Arrears as of 10th April \u00a35,526.66",
+      "target_id": "NAP-SRC-0048",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-003",
+      "locator": "statement summary",
+      "quote": "Total outgoings -\u00a319,057.59, Total deposits +\u00a319,057.88",
+      "target_id": "NAP-SRC-0012",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [
+    {
+      "citation_ids": [
+        "cit-001",
+        "cit-002"
+      ],
+      "contradiction_id": "c-001",
+      "text": "Arrears amount differs between NAP-SRC-0021 (\u00a34,605.55) and NAP-SRC-0048 (\u00a35,526.66)."
+    }
+  ],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001"
+      ],
+      "confidence": 0.85,
+      "finding_id": "f-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Email dated 8 Apr 2026 states accommodation arrears of \u00a34,605.55."
+    },
+    {
+      "citation_ids": [
+        "cit-002"
+      ],
+      "confidence": 0.85,
+      "finding_id": "f-002",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Letter dated 20 Apr 2026 states accommodation arrears of \u00a35,526.66 as of 10 Apr 2026."
+    },
+    {
+      "citation_ids": [
+        "cit-001",
+        "cit-002"
+      ],
+      "confidence": 0.85,
+      "finding_id": "f-003",
+      "finding_type": "contradiction",
+      "reasoning_status": "contradicted",
+      "text": "Arrears amount increased from \u00a34,605.55 (8 Apr) to \u00a35,526.66 (20 Apr) without explanation."
+    },
+    {
+      "citation_ids": [
+        "cit-003"
+      ],
+      "confidence": 0.7,
+      "finding_id": "f-004",
+      "finding_type": "inference",
+      "reasoning_status": "inferred",
+      "text": "Bank statement (NAP-SRC-0012) shows no payments to Napier University, suggesting arrears may be unpaid."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "analysis",
+      "content": "# Arrears Reconciliation Summary\n\n## Sources Reviewed\n- NAP-SRC-0021: Email 8 Apr 2026, arrears \u00a34,605.55\n- NAP-SRC-0048: Letter 20 Apr 2026, arrears \u00a35,526.66 as of 10 Apr\n- NAP-SRC-0012: Bank statement Sep 2025\u2013Apr 2026, no rent payments found\n\n## Key Findings\n1. Arrears increased by \u00a3921.11 between 8 Apr and 20 Apr without explanation.\n2. Bank statement shows no direct payments to Napier University.\n3. Notice to Quit deadline is 9 May 2026.\n\n## Uncertainties\n- Reason for increase unknown; may be additional charges or error.\n- Bank statement may not cover full rental period.\n- No tenancy agreement or payment schedule available.\n\n## Recommendations\n- Request itemized arrears breakdown from Napier finance.\n- Obtain tenancy agreement and payment history.\n- Verify if any payments were made outside the bank statement period.",
+      "path": "candidate/reconcile-arrears-amount/result.md",
+      "stage": "S5",
+      "title": "Arrears reconciliation summary"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Draft a request to Napier finance for a detailed breakdown of the \u00a35,526.66 arrears, including dates, charges, and payments credited. Compare with the earlier \u00a34,605.55 figure.",
+      "matter_scope": "napier-accommodation-arrears",
+      "source_dependencies": [
+        "NAP-SRC-0021",
+        "NAP-SRC-0048"
+      ],
+      "stage": "S5",
+      "task_id": "request-arrears-breakdown",
+      "task_type": "evidence_request",
+      "title": "Request itemized arrears breakdown from Napier University",
+      "validation_gates": [
+        "claim_evidence_support"
+      ]
+    }
+  ],
+  "redaction_flags": [
+    {
+      "citation_ids": [
+        "cit-003"
+      ],
+      "flag_id": "rf-001",
+      "text": "Bank statement contains personal transactions and third-party names that may require redaction."
+    }
+  ],
+  "risk_flags": [
+    {
+      "citation_ids": [
+        "cit-001",
+        "cit-002"
+      ],
+      "risk_id": "r-001",
+      "text": "Conflicting arrears figures may lead to incorrect payment demands or legal action."
+    },
+    {
+      "citation_ids": [
+        "cit-003"
+      ],
+      "risk_id": "r-002",
+      "text": "Bank statement shows high spending on non-essentials, potentially undermining hardship claims."
+    },
+    {
+      "citation_ids": [
+        "cit-002"
+      ],
+      "risk_id": "r-003",
+      "text": "Notice to Quit deadline of 9 May 2026 (NAP-SRC-0048) creates urgency to resolve amount."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Three sources show conflicting arrears figures: \u00a34,605.55 (NAP-SRC-0021, 8 Apr), \u00a35,526.66 (NAP-SRC-0048, 20 Apr), and a bank statement (NAP-SRC-0012) with no direct rent payments. The increase and lack of payment evidence raise uncertainty about the true amount owed.",
+  "task_id": "reconcile-arrears-amount",
+  "uncertainties": [
+    {
+      "citation_ids": [
+        "cit-001",
+        "cit-002"
+      ],
+      "text": "Reason for arrears increase from \u00a34,605.55 to \u00a35,526.66 is unclear; may include additional charges or corrections.",
+      "uncertainty_id": "u-001"
+    },
+    {
+      "citation_ids": [
+        "cit-003"
+      ],
+      "text": "Bank statement coverage (Sep 2025\u2013Apr 2026) may not include all relevant periods; no explicit rent transactions identified.",
+      "uncertainty_id": "u-002"
+    },
+    {
+      "citation_ids": [],
+      "text": "No tenancy agreement or payment schedule provided to verify correct arrears calculation.",
+      "uncertainty_id": "u-003"
+    }
+  ]
+}

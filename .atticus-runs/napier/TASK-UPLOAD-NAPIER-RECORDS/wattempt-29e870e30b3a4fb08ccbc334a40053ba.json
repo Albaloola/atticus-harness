@@ -1,0 +1,39 @@
+{
+  "citations": [],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 0.0,
+      "finding_id": "F-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No source materials or artifacts provided for upload. Cannot perform upload task without records."
+    }
+  ],
+  "proposed_artifacts": [],
+  "proposed_tasks": [
+    {
+      "instructions": "Locate and provide the Napier accommodation arrears records (e.g., tenancy agreements, rent ledgers, correspondence, arrears notices) as source materials or artifacts for upload.",
+      "matter_scope": "napier-accommodation-arrears",
+      "stage": "S4",
+      "task_id": "TASK-PROVIDE-NAPIER-RECORDS",
+      "task_type": "gather",
+      "title": "Provide Napier accommodation arrears records for upload"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "No source materials or artifacts were provided for the upload task. No upload can be performed. A follow-up task is proposed to gather the necessary records.",
+  "task_id": "TASK-UPLOAD-NAPIER-RECORDS",
+  "uncertainties": [
+    {
+      "description": "No records provided; cannot determine what to upload.",
+      "finding_ids": [
+        "F-001"
+      ]
+    }
+  ]
+}

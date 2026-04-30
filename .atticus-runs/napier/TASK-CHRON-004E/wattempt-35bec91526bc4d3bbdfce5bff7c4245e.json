@@ -1,0 +1,46 @@
+{
+  "citations": [],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 0,
+      "finding_id": "F-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No source materials or artifacts were provided in this work order. The task 'Locate and ingest Napier accommodation arrears source records' cannot be executed without evidence to ingest."
+    }
+  ],
+  "proposed_artifacts": [],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "instructions": "Search the matter's source repository for any records related to Napier accommodation arrears, including tenancy agreements, rent ledgers, correspondence, or notices. Use ListMatterSources and InspectRecord tools to locate and retrieve relevant documents. If found, ingest them as source materials for this task.",
+      "matter_scope": "napier-accommodation-arrears",
+      "stage": "S4",
+      "task_id": "TASK-CHRON-004E-SUB",
+      "task_type": "ingest",
+      "title": "Search for and ingest Napier accommodation arrears records"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "description": "No source materials were provided; the task cannot proceed without evidence.",
+      "risk_id": "R-001",
+      "risk_type": "missing_evidence",
+      "severity": "high"
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "No source materials or artifacts were provided for task TASK-CHRON-004E. The task to locate and ingest Napier accommodation arrears source records cannot be completed without evidence. A follow-up task is proposed to search the matter's source repository for relevant records.",
+  "task_id": "TASK-CHRON-004E",
+  "uncertainties": [
+    {
+      "description": "No source materials or artifacts were provided; the existence and location of Napier accommodation arrears records are unknown.",
+      "impact": "Task cannot be executed as instructed.",
+      "uncertainty_id": "U-001"
+    }
+  ]
+}

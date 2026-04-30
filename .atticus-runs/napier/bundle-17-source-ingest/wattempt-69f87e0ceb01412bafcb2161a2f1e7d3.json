@@ -1,0 +1,62 @@
+{
+  "citations": [],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 1,
+      "finding_id": "F-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No source materials were supplied for Bundle 17 ingestion. The evidence_manifest and source_materials sections are empty."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1,
+      "finding_id": "F-002",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No artifacts, authorities, or memory entries are available to support ingestion. The task cannot produce evidence findings."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "report",
+      "content": "## Bundle 17 Ingestion Report\n\n**Task:** bundle-17-source-ingest\n**Status:** Cannot proceed \u2014 no source documents provided.\n\n### Observations\n- The evidence_manifest and source_materials sections were empty.\n- No artifacts, authorities, or memory entries were available.\n- No citations or evidence findings could be generated.\n\n### Recommendation\nLocate and attach the source documents for Bundle 17 to the matter, then re-run this ingestion task.",
+      "path": "candidate/bundle-17-source-ingest/ingest-report.md",
+      "stage": "S3",
+      "title": "Bundle 17 Ingestion Report"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Search the matter for any source documents related to Bundle 17. If found, attach them to the matter and re-run bundle-17-source-ingest. If not found, request human upload of the missing documents.",
+      "matter_scope": "napier-accommodation-arrears",
+      "stage": "S3",
+      "task_id": "bundle-17-locate-sources",
+      "task_type": "evidence_collection",
+      "title": "Locate and attach source documents for Bundle 17"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "finding_id": "R-001",
+      "text": "Ingestion cannot proceed without source documents; this may delay downstream tasks."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "No source materials, artifacts, or authorities were provided for Bundle 17 ingestion. No evidence can be cited. The task cannot proceed without source documents. A follow-up task is proposed to locate and attach the source documents.",
+  "task_id": "bundle-17-source-ingest",
+  "uncertainties": [
+    {
+      "finding_id": "U-001",
+      "text": "The location and identity of the source documents for Bundle 17 are unknown."
+    },
+    {
+      "finding_id": "U-002",
+      "text": "It is unclear whether the source documents exist in the matter or need to be uploaded."
+    }
+  ]
+}

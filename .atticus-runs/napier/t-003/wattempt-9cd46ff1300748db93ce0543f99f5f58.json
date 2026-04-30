@@ -1,0 +1,56 @@
+{
+  "citations": [],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "f-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No source materials or artifacts were provided in this work order, so no completed tenancy agreement or records with Anfal's details can be identified."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "evidence_map",
+      "content": "## Evidence Gap: Completed Tenancy Agreement / Records with Anfal's Details\n\n**Task:** t-003 \u2014 Search for completed tenancy agreement or records with Anfal's details\n\n**Status:** No source materials or artifacts were provided in this work order. The matter scope is napier-accommodation-arrears, but no documents, emails, PDFs, or other records were attached.\n\n**Next Step:** A follow-up task (t-004) is proposed to locate and upload any relevant tenancy agreements, correspondence, or records containing Anfal's details from the matter's document repository or client intake.",
+      "path": "candidate/t-003/evidence_gap_anfal_records.md",
+      "stage": "S3",
+      "title": "Evidence Gap: Anfal's Tenancy Agreement or Records"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "cost_limit_usd": 0.01,
+      "expected_value": 0.5,
+      "instructions": "Search the matter napier-accommodation-arrears document repository, client intake files, and any correspondence for a completed tenancy agreement or records containing Anfal's details. Upload any found documents as source materials for further review.",
+      "matter_dependencies": [],
+      "matter_scope": "napier-accommodation-arrears",
+      "provider_policy": {},
+      "required_certifications": [],
+      "source_dependencies": [],
+      "stage": "S3",
+      "task_dependencies": [],
+      "task_id": "t-004",
+      "task_type": "evidence_gathering",
+      "title": "Locate and upload tenancy agreement or records with Anfal's details",
+      "validation_gates": [
+        "chain_of_custody"
+      ]
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "No source materials or artifacts were provided for this task. The task is to search for a completed tenancy agreement or records with Anfal's details in the matter napier-accommodation-arrears. Without any evidence, no factual, legal, or procedural findings can be supported. A follow-up task is proposed to locate and upload relevant records.",
+  "task_id": "t-003",
+  "uncertainties": [
+    {
+      "description": "No evidence was supplied to determine whether a completed tenancy agreement or records with Anfal's details exist in the matter.",
+      "uncertainty_id": "u-001"
+    }
+  ]
+}

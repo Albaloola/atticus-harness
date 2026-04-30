@@ -1,0 +1,68 @@
+{
+  "citations": [],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No source_materials, artifacts, or evidence manifest entries were provided for this task. The task cannot be performed without source documents."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-002",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "The task title 'Gather and upload arrears-related source documents' implies an external upload action, which is blocked. No upload or external action can be performed."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "report",
+      "content": "# Source Discovery Result for T-003\n\n**Task:** Gather and upload arrears-related source documents\n**Matter:** napier-accommodation-arrears\n**Stage:** S2\n\n## Outcome\n\nNo source materials, artifacts, or evidence manifest entries were provided in the work order. The task cannot be executed without source documents. No upload or external action can be performed.\n\n## Recommended Next Steps\n\n1. Locate and provide arrears-related records (e.g., tenancy agreement, rent statements, correspondence, payment records).\n2. Re-submit the task with the required source documents.\n3. Once documents are available, proceed with source discovery and evidence mapping.",
+      "path": "candidate/T-003/result.md",
+      "stage": "S2",
+      "title": "Source Discovery Result - No Documents Provided"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Identify and provide all arrears-related source documents for matter napier-accommodation-arrears. This may include tenancy agreements, rent statements, correspondence regarding arrears, payment records, and any related notices. Provide the documents as source materials so that source discovery can proceed.",
+      "matter_scope": "napier-accommodation-arrears",
+      "stage": "S2",
+      "task_id": "T-004",
+      "task_type": "source_discovery",
+      "title": "Locate and provide arrears-related source documents for napier-accommodation-arrears",
+      "validation_gates": [
+        "claim_evidence_support"
+      ]
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "finding_id": "F-001",
+      "risk_id": "R-001",
+      "text": "Without source documents, no evidence can be gathered, and the validation gate 'claim_evidence_support' cannot be satisfied."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Task T-003 (source_discovery) for matter napier-accommodation-arrears has no source_materials, artifacts, or evidence manifest entries. No documents were provided to gather or upload. The task cannot be executed without source documents. A follow-up task is proposed to locate and provide arrears-related records (tenancy agreement, rent statements, correspondence, payment records) before source discovery can proceed.",
+  "task_id": "T-003",
+  "uncertainties": [
+    {
+      "finding_id": "F-001",
+      "text": "No source documents were supplied; it is unknown what arrears-related records exist for this matter.",
+      "uncertainty_id": "U-001"
+    },
+    {
+      "finding_id": "F-002",
+      "text": "The task requires an upload action that cannot be performed by this worker; it is unclear how documents are to be provided.",
+      "uncertainty_id": "U-002"
+    }
+  ]
+}

@@ -1,0 +1,135 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "email body",
+      "quote": "The outstanding arrears for your accommodation are \u00a34605.55",
+      "target_id": "NAP-SRC-0021",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "email header",
+      "quote": "From Donnelly, Kathleen <K.Donnelly@napier.ac.uk> on behalf of fees <fees@napier.ac.uk> Date Wed 08/04/2026 13:29 To Elbushra, Anfal <40805511@live.napier.ac.uk>",
+      "target_id": "NAP-SRC-0021",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-003",
+      "locator": "email body",
+      "quote": "It has come to our attention that you are in arrears for your accommodation.",
+      "target_id": "NAP-SRC-0021",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-004",
+      "locator": "email body",
+      "quote": "If you have made payments, please send copies of your receipts.",
+      "target_id": "NAP-SRC-0021",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-005",
+      "locator": "email signature",
+      "quote": "Kathleen Donnelly Senior Finance Assistant Edinburgh Napier University Finance Sighthill Campus Sighthill Court Edinburgh EH11 4BN Tel 0131 455 6806",
+      "target_id": "NAP-SRC-0021",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001"
+      ],
+      "confidence": 0.85,
+      "finding_id": "f-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Email states accommodation arrears of \u00a34605.55."
+    },
+    {
+      "citation_ids": [
+        "cit-002"
+      ],
+      "confidence": 0.85,
+      "finding_id": "f-002",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Email sent by Kathleen Donnelly on behalf of fees@napier.ac.uk to Anfal Elbushra on 08/04/2026."
+    },
+    {
+      "citation_ids": [
+        "cit-003",
+        "cit-004"
+      ],
+      "confidence": 0.85,
+      "finding_id": "f-003",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Email notifies recipient of arrears and requests payment receipts if already paid."
+    },
+    {
+      "citation_ids": [
+        "cit-005"
+      ],
+      "confidence": 0.85,
+      "finding_id": "f-004",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Sender is Kathleen Donnelly, Senior Finance Assistant at Edinburgh Napier University."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "verification_report",
+      "content": "## Arrears Verification Report\n\n**Source:** NAP-SRC-0021 (email from Kathleen Donnelly to Anfal Elbushra, 08/04/2026)\n\n**Arrears Amount:** \u00a34605.55\n\n**Findings:**\n- The email states the outstanding arrears amount as \u00a34605.55.\n- The email requests payment or receipts if already paid.\n- No payment history or receipts are included in the source.\n\n**Uncertainties:**\n- No breakdown of the arrears amount.\n- No evidence of prior payments or disputes.\n- Single source; no independent verification.\n\n**Recommendation:** Obtain payment records from the university or the student to verify the arrears.",
+      "path": "candidate/T-09-001/verification-report.md",
+      "stage": "S2",
+      "title": "Arrears Verification Report"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Request payment history and receipts from the student (Anfal Elbushra) and/or Edinburgh Napier University finance department to verify the arrears amount and identify any payments made. Source dependencies: NAP-SRC-0021.",
+      "matter_scope": "napier-accommodation-arrears",
+      "stage": "S2",
+      "task_id": "T-09-002",
+      "task_type": "evidence_gathering",
+      "title": "Obtain payment history and receipts"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "confidence": 0.8,
+      "finding_id": "r-001",
+      "reasoning_status": "inferred",
+      "text": "No evidence of payment or dispute from the recipient; potential for escalation if arrears remain unpaid."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Verified arrears amount of \u00a34605.55 from email NAP-SRC-0021. No payment history or receipts provided. No contradictions found. Proposed follow-up to obtain payment records.",
+  "task_id": "T-09-001",
+  "uncertainties": [
+    {
+      "confidence": 0.9,
+      "finding_id": "u-001",
+      "reasoning_status": "uncertain",
+      "text": "No payment history or receipts are provided in the source; it is unknown whether any payments were made."
+    },
+    {
+      "confidence": 0.9,
+      "finding_id": "u-002",
+      "reasoning_status": "uncertain",
+      "text": "The email does not specify the accommodation period or breakdown of the arrears amount."
+    },
+    {
+      "confidence": 0.85,
+      "finding_id": "u-003",
+      "reasoning_status": "uncertain",
+      "text": "The source is a single email; no independent verification of the arrears claim exists in the provided materials."
+    }
+  ]
+}

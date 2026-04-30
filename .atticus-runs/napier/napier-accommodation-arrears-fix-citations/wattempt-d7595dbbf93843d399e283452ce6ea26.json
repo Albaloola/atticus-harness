@@ -1,0 +1,185 @@
+{
+  "citations": [
+    {
+      "citation_id": "C-001",
+      "locator": "extracted text: Tenancy Agreement header",
+      "quote": "Tenancy Agreement BETWEEN The Court of Edinburgh Napier University, PER Edinburgh Napier University Property & Facili",
+      "target_id": "NAP-SRC-0010",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "C-002",
+      "locator": "citation C-SYN-002",
+      "quote": "Rent Arrears: \u00a35526.66 Student Name: ANFAL ELBUSHRA As at: 20th April 2026 ... NTQ Date: 18th May 2026 ... Payment Reqd: 9th May 2026",
+      "target_id": "art-a788d9fd8e8849dba5da5cf7a1ef238f",
+      "target_type": "artifact"
+    },
+    {
+      "citation_id": "C-003",
+      "locator": "citation C-SYN-003",
+      "quote": "NOTICE TO QUIT ... 20 April 2026 ... ANFAL ELBUSHRA ... breached the Tenancy Agreement ... Clause 2 ... move from Bedroom B Flat 05 Castlelaw House",
+      "target_id": "art-a788d9fd8e8849dba5da5cf7a1ef238f",
+      "target_type": "artifact"
+    },
+    {
+      "citation_id": "C-004",
+      "locator": "extracted text: email subject",
+      "quote": "Accommodation Hardship Fund - payment date",
+      "target_id": "NAP-SRC-0022",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "C-005",
+      "locator": "extracted text: bank statement header",
+      "quote": "Personal Account statement 01/09/2025 - 28/04/2026",
+      "target_id": "NAP-SRC-0012",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "C-006",
+      "locator": "sections 2",
+      "quote": "Equality Act 2010 reasonable adjustments duty.",
+      "target_id": "auth-4f674054343440669658040cbf63c30b",
+      "target_type": "authority"
+    }
+  ],
+  "contradictions": [
+    {
+      "contradiction_id": "CON-001",
+      "description": "C-002 and C-003 cite an artifact not in allowed targets.",
+      "finding_ids": [
+        "F-001"
+      ],
+      "severity": "high"
+    },
+    {
+      "contradiction_id": "CON-002",
+      "description": "C-006 uses a summary quote instead of a verbatim statutory excerpt.",
+      "finding_ids": [
+        "F-002"
+      ],
+      "severity": "medium"
+    },
+    {
+      "contradiction_id": "CON-003",
+      "description": "C-007 and C-008 are fabricated citations.",
+      "finding_ids": [
+        "F-003"
+      ],
+      "severity": "critical"
+    }
+  ],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "C-002",
+        "C-003"
+      ],
+      "confidence": 0.95,
+      "finding_id": "F-001",
+      "finding_type": "contradiction",
+      "reasoning_status": "supported",
+      "text": "Citations C-002 and C-003 target artifact 'art-a788d9fd8e8849dba5da5cf7a1ef238f', which is not in the allowed artifact targets."
+    },
+    {
+      "citation_ids": [
+        "C-006"
+      ],
+      "confidence": 0.9,
+      "finding_id": "F-002",
+      "finding_type": "contradiction",
+      "reasoning_status": "supported",
+      "text": "Citation C-006 targets authority 'auth-4f674054343440669658040cbf63c30b' but the quote is a summary, not a verbatim excerpt from the statute."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-003",
+      "finding_type": "contradiction",
+      "reasoning_status": "supported",
+      "text": "Citations C-007 and C-008 are entirely fabricated; they do not correspond to any allowed target and have no supporting evidence."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.8,
+      "finding_id": "F-004",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "Proposed fixes: replace C-002/C-003 with allowed source citations or mark as uncertain; replace C-006 with a proper statutory quote; remove C-007/C-008."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "citation_fix_report",
+      "content": "## Citation Fix Report\n\n### Unsupported Citations\n- **C-002 and C-003**: Target artifact 'art-a788d9fd8e8849dba5da5cf7a1ef238f' is not in allowed targets. Replace with citations to NAP-SRC-0010 (tenancy agreement) for the existence of the tenancy, and mark the specific arrears/NTQ facts as uncertain pending source evidence.\n- **C-006**: Quote is a summary, not a verbatim excerpt. Replace with a direct quote from Equality Act 2010, s.91 or s.20, as appropriate.\n\n### Fabricated Citations\n- **C-007 and C-008**: No corresponding allowed target. Remove entirely; any claims relying on them must be marked uncertain or removed.\n\n### Recommended Actions\n1. Obtain the arrears notice and NTQ as sources to support C-002/C-003.\n2. Verify the exact statutory language for C-006.\n3. Conduct a full citation audit of the draft complaint.",
+      "path": "candidate/napier-accommodation-arrears-fix-citations/citation_fix_report.md",
+      "stage": "S7",
+      "title": "Citation Fix Report"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [
+        "art-0e6fe6dbf06942e19dc6c1baa3b40b6d"
+      ],
+      "instructions": "Perform a comprehensive audit of all citations in the draft complaint (art-0e6fe6dbf06942e19dc6c1baa3b40b6d). Verify each citation against allowed targets (NAP-SRC-0010, NAP-SRC-0012, NAP-SRC-0022, and authorities in the authority map). Flag any unsupported, fabricated, or inaccurate citations. Propose fixes or mark claims as uncertain.",
+      "matter_scope": "napier-accommodation-arrears",
+      "source_dependencies": [
+        "NAP-SRC-0010",
+        "NAP-SRC-0012",
+        "NAP-SRC-0022"
+      ],
+      "stage": "S7",
+      "task_id": "napier-accommodation-arrears-full-citation-audit",
+      "task_type": "citation_audit",
+      "title": "Full citation audit of draft complaint",
+      "validation_gates": [
+        "citation_integrity",
+        "fabricated_citation"
+      ]
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "description": "Fabricated citations (C-007, C-008) could undermine the credibility of the complaint and lead to adverse inferences.",
+      "risk_id": "R-001",
+      "severity": "critical"
+    },
+    {
+      "description": "Unsupported citations (C-002, C-003) may result in the complaint being dismissed or challenged.",
+      "risk_id": "R-002",
+      "severity": "high"
+    },
+    {
+      "description": "Inaccurate legal citation (C-006) could weaken the legal argument for reasonable adjustments.",
+      "risk_id": "R-003",
+      "severity": "medium"
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Audit of draft complaint citations reveals unsupported and fabricated references. Key issues: C-002 and C-003 cite an artifact not in allowed targets; C-006 cites an authority without a supporting quote; C-007 and C-008 are entirely fabricated. Proposed fixes replace unsupported citations with allowed source citations or mark as uncertain, and flag fabricated citations for removal.",
+  "task_id": "napier-accommodation-arrears-fix-citations",
+  "uncertainties": [
+    {
+      "description": "Exact content of the arrears notice and NTQ is not available in allowed sources; C-002 and C-003 cannot be directly replaced without further evidence.",
+      "finding_ids": [
+        "F-001"
+      ],
+      "uncertainty_id": "U-001"
+    },
+    {
+      "description": "The appropriate verbatim quote from the Equality Act 2010 for C-006 is not provided in the context; a proper citation requires the exact statutory text.",
+      "finding_ids": [
+        "F-002"
+      ],
+      "uncertainty_id": "U-002"
+    },
+    {
+      "description": "The draft complaint may contain additional unsupported claims beyond the audited citations; a full review is recommended.",
+      "finding_ids": [],
+      "uncertainty_id": "U-003"
+    }
+  ]
+}

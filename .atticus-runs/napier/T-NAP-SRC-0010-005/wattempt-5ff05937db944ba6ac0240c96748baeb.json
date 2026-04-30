@@ -1,0 +1,120 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "Rent clause 2(a)",
+      "quote": "The subsequent monthly sums due will be shown on the rent schedule to be provided separately to the Tenant.",
+      "target_id": "NAP-SRC-0010",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "Rent clause 2(b)",
+      "quote": "The tenant will pay the Rent instalments on the due dates as advised by the Accommodation Office.",
+      "target_id": "NAP-SRC-0010",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-003",
+      "locator": "Page 1, Rent",
+      "quote": "Rent: \u00a34,686.18 Total Rent (including \u00a3500 Advance Rent Payment) \u00a328.23 Per Day",
+      "target_id": "NAP-SRC-0010",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001"
+      ],
+      "confidence": 0.95,
+      "finding_id": "F-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "The tenancy agreement states a separate rent schedule will be provided to the tenant."
+    },
+    {
+      "citation_ids": [
+        "cit-002"
+      ],
+      "confidence": 0.9,
+      "finding_id": "F-002",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Rent instalment due dates are to be advised by the Accommodation Office, not set in the agreement."
+    },
+    {
+      "citation_ids": [
+        "cit-003"
+      ],
+      "confidence": 0.95,
+      "finding_id": "F-003",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Total rent is \u00a34,686.18 including a \u00a3500 advance payment, with a daily rate of \u00a328.23."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-004",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No separate rent schedule or payment records were found in the provided source materials or artifacts for NAP-SRC-0010."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "source_search_result",
+      "content": "## Source Search Result: Separate Rent Schedule and Payment Records for NAP-SRC-0010\n\n**Task:** T-NAP-SRC-0010-005\n\n**Source Reviewed:** NAP-SRC-0010 (Student Licence Agreement for MISS ANFAL ELBUSHRA)\n\n**Finding:** The tenancy agreement (clause 2(a)) explicitly states that a separate rent schedule will be provided to the tenant showing the monthly sums due. Clause 2(b) states that instalments are due on dates advised by the Accommodation Office. However, no separate rent schedule or payment records were found in the provided source materials or artifacts for this source.\n\n**Recommendation:** A follow-up task is proposed to search the matter's source inventory, records, and any related artifacts for the separate rent schedule and payment records associated with NAP-SRC-0010.",
+      "path": "candidate/T-NAP-SRC-0010-005/result.md",
+      "stage": "S2",
+      "title": "Source Search Result: Separate Rent Schedule and Payment Records for NAP-SRC-0010"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "cost_limit_usd": 0.01,
+      "expected_value": 0.8,
+      "instructions": "Search the matter's source inventory, records, and any related artifacts for the separate rent schedule and payment records associated with source NAP-SRC-0010 (MISS ANFAL ELBUSHRA Student Licence). The tenancy agreement (clause 2(a)) states a rent schedule will be provided separately. Look for any documents titled 'rent schedule', 'payment schedule', 'instalment plan', or similar in the matter's source list and artifacts.",
+      "matter_scope": "napier-accommodation-arrears",
+      "required_certifications": [],
+      "source_dependencies": [
+        "NAP-SRC-0010"
+      ],
+      "stage": "S2",
+      "task_dependencies": [
+        "T-NAP-SRC-0010-005"
+      ],
+      "task_id": "T-NAP-SRC-0010-006",
+      "task_type": "source_search",
+      "title": "Search matter inventory for separate rent schedule and payment records for NAP-SRC-0010",
+      "validation_gates": []
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "finding_id": "F-004",
+      "risk_id": "R-001",
+      "text": "Missing rent schedule may hinder verification of arrears calculations and payment due dates."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "The tenancy agreement (NAP-SRC-0010) states a separate rent schedule will be provided and that rent instalments are due on dates advised by the Accommodation Office. No separate rent schedule or payment records were found in the provided source materials or artifacts. A follow-up task is proposed to search the matter's source inventory and records for these documents.",
+  "task_id": "T-NAP-SRC-0010-005",
+  "uncertainties": [
+    {
+      "finding_id": "F-004",
+      "text": "The separate rent schedule referenced in clause 2(a) is not present in the provided evidence.",
+      "uncertainty_id": "U-001"
+    },
+    {
+      "finding_id": "F-002",
+      "text": "The specific due dates for rent instalments are not stated in the agreement; they are to be advised separately.",
+      "uncertainty_id": "U-002"
+    }
+  ]
+}

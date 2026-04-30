@@ -1,0 +1,46 @@
+{
+  "citations": [],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 0.0,
+      "finding_id": "F-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No source materials or artifacts were provided in this work order. The task 'Search for and ingest Napier accommodation arrears records' cannot be executed without evidence to ingest."
+    }
+  ],
+  "proposed_artifacts": [],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "instructions": "Locate and upload any Napier accommodation arrears records (e.g., ledgers, invoices, correspondence, or internal reports) as source materials into the matter 'napier-accommodation-arrears'. Once uploaded, re-issue this ingest task with the new source dependencies.",
+      "matter_scope": "napier-accommodation-arrears",
+      "source_dependencies": [],
+      "stage": "S4",
+      "task_dependencies": [],
+      "task_id": "TASK-CHRON-004E-SUB-FOLLOWUP",
+      "task_type": "ingest",
+      "title": "Upload Napier accommodation arrears records and re-run ingest"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "finding_id": "F-001",
+      "risk_type": "missing_evidence",
+      "text": "No source materials were provided; the ingest task cannot proceed. Human operator must locate and upload Napier accommodation arrears records."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "No source materials or artifacts were provided for the ingest task 'Search for and ingest Napier accommodation arrears records'. The task cannot be executed without evidence. A follow-up task is proposed to locate and upload the relevant records before re-running ingestion.",
+  "task_id": "TASK-CHRON-004E-SUB",
+  "uncertainties": [
+    {
+      "finding_id": "F-001",
+      "text": "It is unknown whether Napier accommodation arrears records exist in the matter or where they are stored."
+    }
+  ]
+}

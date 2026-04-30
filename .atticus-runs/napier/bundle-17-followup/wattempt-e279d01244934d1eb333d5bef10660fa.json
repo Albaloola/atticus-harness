@@ -1,0 +1,93 @@
+{
+  "citations": [],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No source materials or artifacts were provided in this work order; evidence gap analysis cannot proceed without evidence."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-002",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "The task type is evidence_gap_analysis but the evidence manifest and source_materials are empty; no arrears or breach evidence can be located."
+    }
+  ],
+  "proposed_artifacts": [],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "cost_limit_usd": 0.01,
+      "expected_value": 0.9,
+      "instructions": "Locate and upload the following documents for matter napier-accommodation-arrears: (1) the tenancy agreement or lease, (2) rent ledgers or account statements showing arrears, (3) any arrears notices or demands served on the tenant, (4) any breach notices or correspondence, and (5) any court documents (claim form, particulars of claim, possession order) if proceedings have been issued. After upload, re-run the evidence_gap_analysis task bundle-17-followup with the new sources.",
+      "matter_dependencies": [],
+      "matter_scope": "napier-accommodation-arrears",
+      "provider_policy": {},
+      "required_certifications": [],
+      "source_dependencies": [],
+      "stage": "S3",
+      "task_dependencies": [],
+      "task_id": "bundle-17-followup-upload",
+      "task_type": "evidence_collection",
+      "title": "Upload arrears and tenancy breach evidence for Bundle 17",
+      "validation_gates": []
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "R-001",
+      "reasoning_status": "uncertain",
+      "text": "No evidence of arrears or breach has been located; any legal action based on this gap may be premature or unsupported."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "R-002",
+      "reasoning_status": "uncertain",
+      "text": "Missing tenancy documentation may lead to adverse inferences or inability to prove terms, arrears, or breach in proceedings."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "R-003",
+      "reasoning_status": "uncertain",
+      "text": "Without source materials, any analysis is speculative; reliance on this output without evidence is a risk."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "No sources, artifacts, or authorities were provided for matter napier-accommodation-arrears. The task requests locating arrears and tenancy breach evidence, but the evidence manifest and source_materials are empty. No factual, legal, or procedural findings can be supported. A follow-up task is proposed to locate and upload relevant tenancy agreements, rent ledgers, arrears notices, and breach correspondence.",
+  "task_id": "bundle-17-followup",
+  "uncertainties": [
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "U-001",
+      "reasoning_status": "uncertain",
+      "text": "The existence, amount, and timeline of any accommodation arrears is unknown because no rent ledgers, demands, or account statements were provided."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "U-002",
+      "reasoning_status": "uncertain",
+      "text": "Whether a tenancy breach occurred and what notices were served is unknown because no tenancy agreement, breach notice, or correspondence was provided."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "U-003",
+      "reasoning_status": "uncertain",
+      "text": "The procedural posture of any possession or debt claim is unknown because no court documents, claim forms, or orders were provided."
+    }
+  ]
+}

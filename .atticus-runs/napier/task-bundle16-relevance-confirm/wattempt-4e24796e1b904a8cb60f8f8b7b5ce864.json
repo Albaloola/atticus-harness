@@ -1,0 +1,111 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "email body",
+      "quote": "You will be aware that we visited your flat recently for your flat inspection. The communal area was in a very clean and tidy condition and we graded it A+.",
+      "target_id": "NAP-SRC-0024",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "email body",
+      "quote": "Hallway \u2013 Main flat door doesn\u2019t self-close \u2013 job raised for maintenance to attend. Kitchen \u2013 Kitchen door VERY stiff to open \u2013 job raised for maintenance to attend.",
+      "target_id": "NAP-SRC-0024",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-003",
+      "locator": "email subject line",
+      "quote": "Santander Universities Enterprise Fund LIVE",
+      "target_id": "NAP-SRC-0064",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-004",
+      "locator": "email body",
+      "quote": "The Santander Universities Enterprise Fund is now open to Edinburgh Napier students, staff, and recent graduates (within 5 years of graduation,) with three awards of \u00a35,000 available to support business growth.",
+      "target_id": "NAP-SRC-0064",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001",
+        "cit-002"
+      ],
+      "confidence": 0.95,
+      "finding_id": "f-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "NAP-SRC-0024 is a flat inspection feedback email from Julieta Escribano to Castlelaw House Flat 5 residents, grading communal area A+ and noting maintenance issues."
+    },
+    {
+      "citation_ids": [
+        "cit-003",
+        "cit-004"
+      ],
+      "confidence": 0.95,
+      "finding_id": "f-002",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "NAP-SRC-0064 is a promotional email from Nick Fannin about the Santander Universities Enterprise Fund, offering \u00a35,000 awards for business growth."
+    },
+    {
+      "citation_ids": [
+        "cit-001",
+        "cit-002"
+      ],
+      "confidence": 0.8,
+      "finding_id": "f-003",
+      "finding_type": "inference",
+      "reasoning_status": "inferred",
+      "text": "NAP-SRC-0024 is relevant to accommodation arrears matter as it documents flat condition and maintenance issues that may relate to tenant obligations or property standards."
+    },
+    {
+      "citation_ids": [
+        "cit-003",
+        "cit-004"
+      ],
+      "confidence": 0.9,
+      "finding_id": "f-004",
+      "finding_type": "inference",
+      "reasoning_status": "inferred",
+      "text": "NAP-SRC-0064 is not relevant to accommodation arrears; it concerns a business funding opportunity unrelated to rent or accommodation."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "markdown",
+      "content": "# Bundle 16 Source Relevance Confirmation\n\n## Included Sources\n\n### NAP-SRC-0024 - Castlelaw 5 - Flat Inspection Feedback\n- **Relevance**: Relevant. Documents flat condition and maintenance issues, which may relate to tenant obligations or property standards in accommodation arrears context.\n- **Content**: Email from Julieta Escribano to residents of Castlelaw House Flat 5, grading communal area A+ and noting maintenance issues (door not self-closing, stiff kitchen door).\n\n### NAP-SRC-0064 - Santander Universities Enterprise Fund LIVE\n- **Relevance**: Not relevant. Concerns a business funding opportunity for students/staff, unrelated to accommodation or arrears.\n- **Content**: Promotional email about Santander Universities Enterprise Fund offering \u00a35,000 awards.\n\n## Recommendation\n- Include NAP-SRC-0024 in Bundle 16.\n- Exclude NAP-SRC-0064 from Bundle 16.\n\n## Notes\n- NAP-SRC-0024 contains personal contact information (email, phone) that may require redaction.",
+      "path": "candidate/task-bundle16-relevance-confirm/result.md",
+      "stage": "S3",
+      "title": "Bundle 16 Relevance Confirmation"
+    }
+  ],
+  "proposed_tasks": [],
+  "redaction_flags": [
+    {
+      "finding_id": "red-001",
+      "text": "NAP-SRC-0024 includes Julieta Escribano's email and phone number; may need redaction for data protection."
+    }
+  ],
+  "risk_flags": [
+    {
+      "finding_id": "r-001",
+      "text": "NAP-SRC-0024 contains personal email addresses and phone numbers of staff; consider redaction if shared externally."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Reviewed two sources for Bundle 16 relevance. NAP-SRC-0024 (flat inspection feedback) is relevant to accommodation arrears matter as it documents flat condition and maintenance issues. NAP-SRC-0064 (Santander enterprise fund) is not relevant; it concerns business funding opportunities. Both sources are included in the bundle.",
+  "task_id": "task-bundle16-relevance-confirm",
+  "uncertainties": [
+    {
+      "finding_id": "u-001",
+      "text": "The exact relationship between flat inspection findings and any arrears or tenancy breach is not explicitly stated in the source."
+    }
+  ]
+}

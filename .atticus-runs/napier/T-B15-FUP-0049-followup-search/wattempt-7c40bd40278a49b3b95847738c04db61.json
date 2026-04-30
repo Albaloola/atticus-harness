@@ -1,0 +1,105 @@
+{
+  "citations": [],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No source materials, artifacts, or memory entries were provided in the context pack for this task."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-002",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "The legal memory index is empty; no prior findings or records about a 2026-04-10 arrears discussion are available."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-003",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "The evidence manifest and source_materials sections are both empty; no sources are linked to this task."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-004",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No supported factual, legal, procedural, or risk findings about the 2026-04-10 arrears discussion can be made due to absence of evidence."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "evidence_gap_report",
+      "content": "## Evidence Gap Report for Task T-B15-FUP-0049\n\n**Task:** Search matter memory and list sources for 2026-04-10 arrears discussion\n\n**Status:** No evidence available. The context pack contained:\n- Empty evidence_manifest\n- Empty source_materials\n- Empty artifact_bundle\n- Empty legal_memory_index\n- No source dependencies\n\n**Recommendation:** Attach relevant sources (e.g., emails, notes, correspondence) or memory records to this task before further analysis can proceed.",
+      "path": "candidate/T-B15-FUP-0049-followup-search/evidence_gap_report.md",
+      "stage": "S2",
+      "title": "Evidence Gap Report for 2026-04-10 Arrears Discussion"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "cost_limit_usd": 0.01,
+      "expected_value": 0.9,
+      "instructions": "Locate and attach any matter sources (emails, correspondence, notes, transcripts) or legal memory entries that reference a discussion about arrears on or around 2026-04-10 within the napier-accommodation-arrears matter scope. Provide the source IDs or artifact paths so that a follow-up evidence review can be performed.",
+      "matter_dependencies": [],
+      "matter_scope": "napier-accommodation-arrears",
+      "provider_policy": {},
+      "required_certifications": [],
+      "source_dependencies": [],
+      "stage": "S2",
+      "task_dependencies": [],
+      "task_id": "T-B15-FUP-0049-attach-sources",
+      "task_type": "source_acquisition",
+      "title": "Attach sources and memory records for 2026-04-10 arrears discussion",
+      "validation_gates": []
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "risk_flag_id": "R-001",
+      "risk_type": "evidence_gap",
+      "text": "No evidence is available to support any finding about the 2026-04-10 arrears discussion; any conclusion would be speculative."
+    },
+    {
+      "risk_flag_id": "R-002",
+      "risk_type": "memory_gap",
+      "text": "The empty legal memory index may indicate that prior work on this matter has not been recorded or is not accessible."
+    },
+    {
+      "risk_flag_id": "R-003",
+      "risk_type": "task_completion_risk",
+      "text": "Without source materials or artifacts, the task cannot be completed as instructed."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "No source materials, artifacts, or memory entries were provided for this task. The task requests a search of matter memory and listing of sources for a 2026-04-10 arrears discussion, but the context pack contains no evidence, no source dependencies, no artifact bundle, and an empty legal memory index. No supported findings about the 2026-04-10 discussion can be made. A follow-up task is proposed to locate and attach relevant sources or memory records.",
+  "task_id": "T-B15-FUP-0049-followup-search",
+  "uncertainties": [
+    {
+      "reason": "No sources, artifacts, or memory entries were provided.",
+      "text": "Whether any matter records exist documenting a 2026-04-10 arrears discussion.",
+      "uncertainty_id": "U-001"
+    },
+    {
+      "reason": "No evidence available to support any claim.",
+      "text": "What the content or outcome of any 2026-04-10 arrears discussion was.",
+      "uncertainty_id": "U-002"
+    },
+    {
+      "reason": "No source dependencies or artifact bundle were supplied.",
+      "text": "Whether the matter scope 'napier-accommodation-arrears' contains any relevant communications, emails, or notes from April 2026.",
+      "uncertainty_id": "U-003"
+    }
+  ]
+}

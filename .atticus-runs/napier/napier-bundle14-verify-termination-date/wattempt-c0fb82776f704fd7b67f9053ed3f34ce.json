@@ -1,0 +1,62 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "extracted text",
+      "quote": "the said Court of Edinburgh Napier University holds the Tenancy Agreement as terminated as at 1.",
+      "target_id": "NAP-SRC-0020",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001"
+      ],
+      "confidence": 0.65,
+      "finding_id": "f-001",
+      "finding_type": "fact",
+      "reasoning_status": "uncertain",
+      "text": "The Notice to Quit states the tenancy is terminated 'as at 1.' but the full date is missing due to OCR truncation."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "report",
+      "content": "## Termination Date Verification for NAP-SRC-0020\n\n**Source:** NAP-SRC-0020 (WhatsApp Image 2026-04-28)\n**OCR Confidence:** 0.65\n\n### Finding\nThe Notice to Quit states the tenancy is terminated 'as at 1.' but the full date is not legible in the OCR output. The extracted text reads: 'the said Court of Edinburgh Napier University holds the Tenancy Agreement as terminated as at 1.'\n\n### Recommendation\nObtain a higher-quality image or manually review the original JPEG to determine the complete termination date. Consider re-extracting with a different OCR engine or human transcription.",
+      "path": "candidate/napier-bundle14-verify-termination-date/result.md",
+      "stage": "S3",
+      "title": "Termination Date Verification Result"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Manually review the original image NAP-SRC-0020 (WhatsApp Image 2026-04-28 at 12.34.22 PM.jpeg) to determine the full termination date. The OCR output shows only '1.' after 'as at'. Record the complete date and update the extraction artifact.",
+      "matter_scope": "napier-accommodation-arrears",
+      "stage": "S3",
+      "task_id": "napier-bundle14-human-review-termination-date",
+      "task_type": "review",
+      "title": "Human review of termination date in NAP-SRC-0020"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "risk_id": "risk-001",
+      "severity": "medium",
+      "text": "Low OCR confidence (0.65) may cause incorrect date extraction; human review of the original image is recommended."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "OCR-extracted text from NAP-SRC-0020 (a Notice to Quit) states termination as '1.' but the date is incomplete due to low OCR confidence (0.65). The termination date cannot be verified from this source alone.",
+  "task_id": "napier-bundle14-verify-termination-date",
+  "uncertainties": [
+    {
+      "source": "OCR confidence 0.65",
+      "text": "The exact termination date (day, month, year) is not legible in the OCR output; only '1.' is visible.",
+      "uncertainty_id": "u-001"
+    }
+  ]
+}

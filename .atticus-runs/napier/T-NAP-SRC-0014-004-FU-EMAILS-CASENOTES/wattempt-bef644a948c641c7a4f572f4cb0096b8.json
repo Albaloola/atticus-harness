@@ -1,0 +1,95 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "page 1",
+      "quote": "The accommodation support service can: ... Provide a dedicated member of staff to provide information and to answer any related queries, or signpost you to a person or service to help you further",
+      "target_id": "NAP-SRC-0014",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "page 1",
+      "quote": "ENSA Advice ... can offer ... Advice on how to find accommodation ... Look over leases and tenancy agreements ... Advice on tenant rights and responsibilities",
+      "target_id": "NAP-SRC-0014",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-003",
+      "locator": "page 1",
+      "quote": "Please contact privateaccommodation@napier.ac.uk with your enquiries.",
+      "target_id": "NAP-SRC-0014",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-004",
+      "locator": "page 1",
+      "quote": "Please contact ENSA Advice on 0131 229 8791 to arrange an appointment or email ensa.advice@napier.ac.uk",
+      "target_id": "NAP-SRC-0014",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001",
+        "cit-002",
+        "cit-003",
+        "cit-004"
+      ],
+      "confidence": 0.95,
+      "finding_id": "F-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "The Private Accommodation Brochure 2025 describes a private accommodation support service and ENSA Advice, including contact details and services offered."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.0,
+      "finding_id": "F-002",
+      "finding_type": "fact",
+      "reasoning_status": "uncertain",
+      "text": "No evidence in the provided source that the brochure was provided to Anfal or that Anfal accessed the support service or ENSA Advice."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-003",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "The source is a general brochure, not a record of individual interactions. Emails or case notes about Anfal's access to services are not included in this source."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "evidence_map",
+      "content": "## Evidence Map: Brochure Provision / Support Service Access by Anfal\n\n**Source Reviewed:** NAP-SRC-0014 (Private Accommodation Brochure 2025)\n\n**Findings:**\n- The brochure describes a private accommodation support service (privateaccommodation@napier.ac.uk) and ENSA Advice (ensa.advice@napier.ac.uk, 0131 229 8791).\n- No evidence in this source that the brochure was provided to Anfal or that Anfal accessed these services.\n\n**Gap:** Emails, case notes, or other records of individual interactions with Anfal are not present in this source. A targeted search of email and case note records is required.",
+      "path": "candidate/T-NAP-SRC-0014-004-FU-EMAILS-CASENOTES/evidence-map.md",
+      "stage": "S2",
+      "title": "Evidence Map for Brochure Provision / Support Service Access"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Search email and case note records (e.g., from accommodation@napier.ac.uk, privateaccommodation@napier.ac.uk, ENSA Advice) for any communication with or about Anfal regarding the provision of the Private Accommodation Brochure or access to the accommodation support service or ENSA Advice. Look for emails, case notes, appointment records, or references to Anfal's name, student ID, or email address. Report any evidence found or confirm absence.",
+      "matter_scope": "napier-accommodation-arrears",
+      "stage": "S2",
+      "task_id": "T-NAP-SRC-0014-005-FU-EMAILS-CASENOTES",
+      "task_type": "evidence_search",
+      "title": "Search email and case note records for brochure provision or support service access by Anfal"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Reviewed the Private Accommodation Brochure 2025 (NAP-SRC-0014) for evidence of brochure provision or support service access by Anfal. The brochure describes a private accommodation support service and ENSA Advice, but no emails, case notes, or records of Anfal's access to these services are present in the provided source. The source is a general guide, not a record of individual interactions. A follow-up task is proposed to search for actual email or case note records.",
+  "task_id": "T-NAP-SRC-0014-004-FU-EMAILS-CASENOTES",
+  "uncertainties": [
+    {
+      "finding_id": "F-002",
+      "reason": "The source is a general brochure; it does not contain any records of provision to or access by Anfal."
+    }
+  ]
+}

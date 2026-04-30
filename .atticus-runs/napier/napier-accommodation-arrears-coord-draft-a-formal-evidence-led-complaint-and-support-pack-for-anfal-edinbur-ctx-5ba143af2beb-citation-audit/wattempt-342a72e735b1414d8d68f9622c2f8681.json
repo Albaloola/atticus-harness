@@ -1,0 +1,158 @@
+{
+  "citations": [
+    {
+      "citation_id": "CIT-001",
+      "excerpt": "Tenancy agreement for Anfal Elbushra, likely dated August 2025 based on academic year.",
+      "locator": "extracted text: Tenancy Agreement header",
+      "quote": "Tenancy Agreement BETWEEN The Court of Edinburgh Napier University, PER Edinburgh Napier University Property & Facili",
+      "target_id": "NAP-SRC-0010",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "CIT-002",
+      "excerpt": "Email confirming hardship fund payment date.",
+      "locator": "extracted text: email subject",
+      "quote": "Accommodation Hardship Fund - payment date",
+      "target_id": "NAP-SRC-0022",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "CIT-003",
+      "excerpt": "Monzo bank statement covering relevant period.",
+      "locator": "extracted text: bank statement header",
+      "quote": "Personal Account statement 01/09/2025 - 28/04/2026",
+      "target_id": "NAP-SRC-0012",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "CIT-004",
+      "excerpt": "Fabricated citation with no locator or quote.",
+      "locator": "citation C-006 in draft",
+      "quote": "Equality Act 2010 reasonable adjustments duty.",
+      "target_id": "art-0e6fe6dbf06942e19dc6c1baa3b40b6d",
+      "target_type": "artifact"
+    },
+    {
+      "citation_id": "CIT-005",
+      "excerpt": "Evidence map synthesis of arrears notice.",
+      "locator": "citation C-SYN-002",
+      "quote": "Rent Arrears: \u00a35526.66 Student Name: ANFAL ELBUSHRA As at: 20th April 2026 ... NTQ Date: 18th May 2026 ... Payment Reqd: 9th May 2026",
+      "target_id": "art-a788d9fd8e8849dba5da5cf7a1ef238f",
+      "target_type": "artifact"
+    },
+    {
+      "citation_id": "CIT-006",
+      "excerpt": "Evidence map synthesis of Notice to Quit.",
+      "locator": "citation C-SYN-003",
+      "quote": "NOTICE TO QUIT ... 20 April 2026 ... ANFAL ELBUSHRA ... breached the Tenancy Agreement ... Clause 2 ... move from Bedroom B Flat 05 Castlelaw House",
+      "target_id": "art-a788d9fd8e8849dba5da5cf7a1ef238f",
+      "target_type": "artifact"
+    }
+  ],
+  "contradictions": [
+    {
+      "contradiction_id": "CON-001",
+      "description": "Citation C-006 is fabricated; no locator or quote provided, and the draft excerpt is insufficient to verify the claim.",
+      "finding_ids": [
+        "F-004"
+      ]
+    }
+  ],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "CIT-001"
+      ],
+      "confidence": 0.9,
+      "finding_id": "F-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Citation C-001 correctly references NAP-SRC-0010 for the tenancy agreement header."
+    },
+    {
+      "citation_ids": [
+        "CIT-002"
+      ],
+      "confidence": 0.9,
+      "finding_id": "F-002",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Citation C-004 correctly references NAP-SRC-0022 for hardship fund payment date email."
+    },
+    {
+      "citation_ids": [
+        "CIT-003"
+      ],
+      "confidence": 0.9,
+      "finding_id": "F-003",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Citation C-005 correctly references NAP-SRC-0012 for Monzo bank statement period."
+    },
+    {
+      "citation_ids": [
+        "CIT-004"
+      ],
+      "confidence": 1.0,
+      "finding_id": "F-004",
+      "finding_type": "contradiction",
+      "reasoning_status": "contradicted",
+      "text": "Citation C-006 claims Equality Act 2010 reasonable adjustments duty but provides no locator or quote; it is fabricated."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "citation_audit_report",
+      "content": "# Citation Audit Report\n\n## Overall Result: FAIL\n\n### Passed Citations\n- C-001: Supported by NAP-SRC-0010.\n- C-004: Supported by NAP-SRC-0022.\n- C-005: Supported by NAP-SRC-0012.\n\n### Failed Citations\n- C-006: Fabricated; no locator or quote.\n- C-002, C-003: Unsupported; rely on unallowed artifact art-a788d9fd8e8849dba5da5cf7a1ef238f.\n\n### Recommendations\n- Remove or replace C-006 with a valid authority citation.\n- Verify C-002 and C-003 against allowed sources or obtain the artifact.",
+      "path": "candidate/napier-accommodation-arrears-coord-draft-a-formal-evidence-led-complaint-and-support-pack-for-anfal-edinbur-ctx-5ba143af2beb-citation-audit/audit_report.md",
+      "stage": "S7",
+      "title": "Citation Audit Report"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "cost_limit_usd": 0.01,
+      "expected_value": 0.5,
+      "instructions": "Re-audit citations C-002 and C-003 after obtaining or verifying artifact art-a788d9fd8e8849dba5da5cf7a1ef238f. Confirm C-006 replacement with valid authority.",
+      "matter_dependencies": [],
+      "matter_scope": "napier-accommodation-arrears",
+      "provider_policy": {},
+      "required_certifications": [],
+      "source_dependencies": [],
+      "stage": "S7",
+      "task_dependencies": [],
+      "task_id": "napier-accommodation-arrears-coord-draft-a-formal-evidence-led-complaint-and-support-pack-for-anfal-edinbur-ctx-5ba143af2beb-citation-audit-followup",
+      "task_type": "citation_audit",
+      "title": "Follow-up citation audit for unsupported citations",
+      "validation_gates": [
+        "citation_integrity",
+        "fabricated_citation"
+      ]
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "description": "Fabricated citation C-006 undermines draft integrity and may lead to false legal claims.",
+      "risk_id": "RISK-001",
+      "severity": "high"
+    },
+    {
+      "description": "Unsupported citations C-002 and C-003 rely on an unallowed artifact; factual claims may be unverified.",
+      "risk_id": "RISK-002",
+      "severity": "medium"
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Audit of draft complaint citations reveals one fabricated citation (C-006) and two unsupported citations (C-002, C-003) relying on an unallowed artifact. C-001, C-004, C-005 are supported by allowed sources. Overall FAIL due to fabricated citation.",
+  "task_id": "napier-accommodation-arrears-coord-draft-a-formal-evidence-led-complaint-and-support-pack-for-anfal-edinbur-ctx-5ba143af2beb-citation-audit",
+  "uncertainties": [
+    {
+      "description": "Citations C-002 and C-003 rely on artifact art-a788d9fd8e8849dba5da5cf7a1ef238f, which is not in allowed_artifact_targets; their support is uncertain.",
+      "related_finding_ids": [],
+      "uncertainty_id": "UNC-001"
+    }
+  ]
+}

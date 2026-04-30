@@ -1,0 +1,47 @@
+{
+  "citations": [],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No source materials or artifacts were provided in this work order. The task requires locating and attaching specific documents, but no evidence is available to support any factual or legal findings."
+    }
+  ],
+  "proposed_artifacts": [],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "cost_limit_usd": 0.01,
+      "expected_value": 0.8,
+      "instructions": "Use the SearchLegalMemory and ListMatterSources tools to locate any existing references to the Napier accommodation tenancy agreement and arrears ledger. If found, retrieve the source IDs and propose a follow-up task to attach them. If not found, report the gap and recommend a human-directed search of external records.",
+      "matter_dependencies": [],
+      "matter_scope": "napier-accommodation-arrears",
+      "provider_policy": {},
+      "required_certifications": [],
+      "source_dependencies": [],
+      "stage": "S4",
+      "task_dependencies": [],
+      "task_id": "TASK-CHRON-003-SEARCH-MEMORY",
+      "task_type": "search",
+      "title": "Search matter memory and list existing sources for Napier accommodation documents",
+      "validation_gates": []
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "No source materials or artifacts were provided for this source acquisition task. The task is to locate and attach the Napier accommodation tenancy agreement and arrears ledger, but no evidence is available in this work order. No findings, citations, or artifacts can be produced. A follow-up task is proposed to search matter memory and list existing sources to locate the required documents.",
+  "task_id": "TASK-CHRON-003-FOLLOWUP-SEARCH-LOAD",
+  "uncertainties": [
+    {
+      "finding_id": "F-001",
+      "text": "It is uncertain whether the Napier accommodation tenancy agreement and arrears ledger exist in the matter record, as no sources or artifacts were provided.",
+      "uncertainty_id": "U-001"
+    }
+  ]
+}

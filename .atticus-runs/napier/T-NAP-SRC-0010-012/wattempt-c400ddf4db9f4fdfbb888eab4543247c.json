@@ -1,0 +1,128 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "page 1",
+      "quote": "Rent: \u00a34,686.18 Total Rent (including \u00a3500 Advance Rent Payment) \u00a328.23 Per Day",
+      "target_id": "NAP-SRC-0010",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "clause 2(a)",
+      "quote": "The subsequent monthly sums due will be shown on the rent schedule to be provided separately to the Tenant.",
+      "target_id": "NAP-SRC-0010",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-003",
+      "locator": "clause 2(b)",
+      "quote": "the Landlord will be entitled to issue a notice to quit this Tenancy Agreement",
+      "target_id": "NAP-SRC-0010",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-004",
+      "locator": "clause 2(c)",
+      "quote": "2% discount",
+      "target_id": "NAP-SRC-0010",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-005",
+      "locator": "clause 2(e)",
+      "quote": "you remain financially liable for the Accommodation fees for the full period",
+      "target_id": "NAP-SRC-0010",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-006",
+      "locator": "page 1",
+      "quote": "Tenancy Start Date: 13 March 2026 Tenancy End Date: 25 August 2026",
+      "target_id": "NAP-SRC-0010",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001",
+        "cit-006"
+      ],
+      "confidence": 0.95,
+      "finding_id": "f-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Total rent for the tenancy period (13 Mar 2026 \u2013 25 Aug 2026) is \u00a34,686.18, including a \u00a3500 advance payment."
+    },
+    {
+      "citation_ids": [
+        "cit-002"
+      ],
+      "confidence": 0.9,
+      "finding_id": "f-002",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "The tenancy agreement states a rent schedule will be provided separately; no such schedule is in the provided source."
+    },
+    {
+      "citation_ids": [
+        "cit-003"
+      ],
+      "confidence": 0.95,
+      "finding_id": "f-003",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "The landlord may issue a 28-day notice to quit if rent arrears reach two monthly instalments."
+    },
+    {
+      "citation_ids": [
+        "cit-004",
+        "cit-005"
+      ],
+      "confidence": 0.9,
+      "finding_id": "f-004",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "A 2% discount is available for early full payment; tenants remain liable for full fees if they vacate early."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "evidence_map",
+      "content": "## Rent Schedule and Payment Records Search\n\n### Source Reviewed\n- **NAP-SRC-0010**: Student Licence Agreement for Miss Anfal Elbushra (Castlelaw House).\n\n### Key Findings\n1. Total rent \u00a34,686.18 for 13 Mar 2026 \u2013 25 Aug 2026; \u00a3500 advance rent payment acknowledged.\n2. Rent schedule promised separately (clause 2(a)) \u2013 **not included** in this source.\n3. No payment records, receipts, or arrears statements found in this source.\n4. Notice-to-quit provision for arrears of two monthly instalments (clause 2(b)).\n\n### Gaps\n- The actual rent schedule (monthly instalment amounts and due dates) is missing.\n- No evidence of payments made or arrears accrued.\n- No correspondence or financial statements attached.\n\n### Recommendation\nSearch for separate rent schedule documents and payment records in other sources (e.g., correspondence, financial records).",
+      "path": "candidate/T-NAP-SRC-0010-012/evidence-map.md",
+      "stage": "S2",
+      "title": "Evidence Map: Rent Schedule and Payment Records"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Search for rent schedule documents, payment receipts, and arrears correspondence in sources of type 'correspondence' and 'financial' within matter napier-accommodation-arrears. Identify any documents showing monthly instalment amounts, due dates, payments made, or arrears balances.",
+      "matter_scope": "napier-accommodation-arrears",
+      "stage": "S2",
+      "task_id": "T-NAP-SRC-0010-013",
+      "task_type": "source_search",
+      "title": "Search for rent schedule and payment records in correspondence and financial sources"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "finding_id": "f-002",
+      "risk_type": "missing_evidence",
+      "text": "Rent schedule referenced in clause 2(a) is not present in the provided source; may affect calculation of arrears."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Reviewed NAP-SRC-0010 (Student Licence Agreement). Total rent \u00a34,686.18 for 13 Mar\u201325 Aug 2026, with \u00a3500 advance payment. Rent schedule promised separately but not included. No payment records or arrears evidence in this source. Proposed follow-up task to search correspondence and financial sources for the rent schedule and payment history.",
+  "task_id": "T-NAP-SRC-0010-012",
+  "uncertainties": [
+    {
+      "finding_id": "f-002",
+      "text": "The rent schedule with monthly instalment amounts and due dates is not present in the provided source; actual payment obligations are unconfirmed."
+    }
+  ]
+}

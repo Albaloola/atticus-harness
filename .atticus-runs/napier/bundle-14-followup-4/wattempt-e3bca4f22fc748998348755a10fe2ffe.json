@@ -1,0 +1,79 @@
+{
+  "citations": [],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No source materials or artifacts were provided in this work order. The task requires locating a certified Notice to Quit from Edinburgh Napier University, but no such document or any other evidence is available for review."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-002",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "The task type is evidence_acquisition, but no tools for external document requests (e.g., email, filing, upload) are configured or permitted. The task cannot be executed with the available resources."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "task_result",
+      "content": "## Task: Locate or request certified copy of Notice to Quit from Edinburgh Napier University\n\n**Status:** Cannot be completed with current resources.\n\n**Reasoning:** No source materials or artifacts were provided in this work order. The task requires locating a certified Notice to Quit, but no such document or any other evidence is available for review. Additionally, no external action tools (e.g., email, filing, upload) are configured or permitted, so a request cannot be made automatically.\n\n**Next Step:** A follow-up task has been proposed to locate the document through available matter channels (e.g., existing matter sources, memory, or human-directed request).",
+      "path": "candidate/bundle-14-followup-4/result.md",
+      "stage": "S2",
+      "title": "Task Result: Notice to Quit Not Located"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "cost_limit_usd": 0.01,
+      "expected_value": 0.8,
+      "instructions": "Search the matter's existing source records and artifacts for any Notice to Quit issued by Edinburgh Napier University. If not found, prepare a human-readable request for a certified copy, specifying the tenant name, property address, and approximate date. Do not send the request automatically; flag it for human action.",
+      "matter_dependencies": [],
+      "matter_scope": "napier-accommodation-arrears",
+      "provider_policy": {},
+      "required_certifications": [],
+      "source_dependencies": [],
+      "stage": "S2",
+      "task_dependencies": [],
+      "task_id": "bundle-14-followup-4-followup",
+      "task_type": "evidence_acquisition",
+      "title": "Locate Notice to Quit in matter records or request via human channels",
+      "validation_gates": []
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "finding_id": "F-001",
+      "risk_id": "R-001",
+      "text": "Without the Notice to Quit, the validity of any eviction or possession proceedings cannot be assessed. This is a critical gap in the evidence chain."
+    },
+    {
+      "finding_id": "F-002",
+      "risk_id": "R-002",
+      "text": "The absence of configured external request tools means the task cannot be completed automatically. Human intervention is required to obtain the document."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "No source materials or artifacts were provided for this evidence acquisition task. The task requests a certified copy of a Notice to Quit from Edinburgh Napier University, but no such document or any other evidence is available in the work order. No factual, legal, or procedural findings can be supported. The task cannot be completed without access to the relevant records or a mechanism to request them. A follow-up task is proposed to locate or request the document through available matter channels.",
+  "task_id": "bundle-14-followup-4",
+  "uncertainties": [
+    {
+      "finding_id": "F-001",
+      "text": "It is unknown whether a Notice to Quit exists in the matter records, what its contents are, or whether it has been certified.",
+      "uncertainty_id": "U-001"
+    },
+    {
+      "finding_id": "F-002",
+      "text": "It is unknown what process (if any) is available to request a certified copy from Edinburgh Napier University, as no external action tools are configured.",
+      "uncertainty_id": "U-002"
+    }
+  ]
+}

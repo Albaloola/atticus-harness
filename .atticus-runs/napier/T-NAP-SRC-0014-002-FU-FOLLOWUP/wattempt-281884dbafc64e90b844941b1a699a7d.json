@@ -1,0 +1,100 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "page 1",
+      "quote": "The accommodation support service can: ... Provide a dedicated member of staff to provide information and to answer any related queries, or signpost you to a person or service to help you further",
+      "target_id": "NAP-SRC-0014",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "page 1",
+      "quote": "ENSA Advice ... can offer the following: Advice on how to find accommodation ... Look over leases and tenancy agreements ... Advice on tenant rights and responsibilities",
+      "target_id": "NAP-SRC-0014",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001"
+      ],
+      "confidence": 0.95,
+      "finding_id": "F-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "NAP-SRC-0014 describes a Private Accommodation Support Service offering advice, flat viewings, and signposting."
+    },
+    {
+      "citation_ids": [
+        "cit-002"
+      ],
+      "confidence": 0.95,
+      "finding_id": "F-002",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "NAP-SRC-0014 describes ENSA Advice offering accommodation-finding help, lease review, and tenant rights advice."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.0,
+      "finding_id": "F-003",
+      "finding_type": "fact",
+      "reasoning_status": "uncertain",
+      "text": "No evidence in NAP-SRC-0014 that the brochure was provided to Anfal or that Anfal accessed any support service."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-004",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "Only one source (NAP-SRC-0014) was provided; no other matter sources were available to search for records of brochure provision or support service access by Anfal."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "evidence_map",
+      "content": "## Evidence Map: Brochure Provision / Support Service Access by Anfal\n\n### Source Reviewed\n- **NAP-SRC-0014** (Private Accommodation Brochure 2025): Describes support services but contains no records of provision to any individual.\n\n### Findings\n- F-001: Brochure describes Private Accommodation Support Service (supported, cit-001).\n- F-002: Brochure describes ENSA Advice (supported, cit-002).\n- F-003: No evidence of brochure provision to Anfal (uncertain).\n- F-004: Only one source provided; other matter sources not searched (drafting note).\n\n### Gaps\n- No records of brochure provision to Anfal.\n- No records of Anfal accessing support services.\n- Other matter sources (e.g., emails, case notes, tenancy records) not yet searched.\n\n### Proposed Next Step\n- Search other matter sources for records of brochure provision or support service access by Anfal (see proposed task).",
+      "path": "candidate/T-NAP-SRC-0014-002-FU-FOLLOWUP/evidence-map.md",
+      "stage": "S2",
+      "title": "Evidence Map for Brochure Provision / Support Service Access by Anfal"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Search all available matter sources (e.g., emails, case notes, tenancy records, correspondence logs) for any record that the Private Accommodation Brochure 2025 (NAP-SRC-0014) was provided to Anfal, or that Anfal accessed the Private Accommodation Support Service or ENSA Advice. Report any findings with citations.",
+      "matter_scope": "napier-accommodation-arrears",
+      "stage": "S2",
+      "task_id": "T-NAP-SRC-0014-002-FU-FOLLOWUP-SEARCH",
+      "task_type": "evidence_search",
+      "title": "Search other matter sources for records of brochure provision or support service access by Anfal",
+      "validation_gates": [
+        "claim_evidence_support"
+      ]
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "description": "Absence of evidence of brochure provision or support service access does not prove non-provision; other sources may exist."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Reviewed NAP-SRC-0014 (Private Accommodation Brochure 2025) for brochure provision or support service access by Anfal. The brochure describes a Private Accommodation Support Service and ENSA Advice but contains no records of provision to any individual, including Anfal. No other matter sources were provided in this work order. A follow-up task is proposed to search other matter sources for evidence of brochure provision or support service access by Anfal.",
+  "task_id": "T-NAP-SRC-0014-002-FU-FOLLOWUP",
+  "uncertainties": [
+    {
+      "description": "Whether the brochure was provided to Anfal is unknown; no records of provision exist in the reviewed source."
+    },
+    {
+      "description": "Whether Anfal accessed the Private Accommodation Support Service or ENSA Advice is unknown; no records of access exist in the reviewed source."
+    },
+    {
+      "description": "Other matter sources (e.g., emails, case notes, tenancy records) were not provided in this work order and may contain relevant evidence."
+    }
+  ]
+}

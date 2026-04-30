@@ -1,0 +1,92 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "page 1",
+      "quote": "Rent: \u00a34,686.18 Total Rent (including \u00a3500 Advance Rent Payment) \u00a328.23 Per Day",
+      "target_id": "NAP-SRC-0010",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "clause 2(a)",
+      "quote": "The subsequent monthly sums due will be shown on the rent schedule to be provided separately to the Tenant.",
+      "target_id": "NAP-SRC-0010",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-003",
+      "locator": "clause 2(b)",
+      "quote": "The tenant will pay the Rent instalments on the due dates as advised by the Accommodation Office.",
+      "target_id": "NAP-SRC-0010",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001"
+      ],
+      "confidence": 0.95,
+      "finding_id": "f-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Total rent for the tenancy is \u00a34,686.18, including a \u00a3500 advance payment, at \u00a328.23 per day."
+    },
+    {
+      "citation_ids": [
+        "cit-002"
+      ],
+      "confidence": 0.9,
+      "finding_id": "f-002",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "The rent schedule is referenced as a separate document not included in the provided source."
+    },
+    {
+      "citation_ids": [
+        "cit-003"
+      ],
+      "confidence": 0.9,
+      "finding_id": "f-003",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Payment due dates are to be advised by the Accommodation Office; no payment records are in the source."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "f-004",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "The source material does not contain the rent schedule or any payment records for Miss Elbushra."
+    }
+  ],
+  "proposed_artifacts": [],
+  "proposed_tasks": [
+    {
+      "instructions": "Search for the rent schedule referenced in clause 2(a) of the tenancy agreement (NAP-SRC-0010) and any payment records or account statements for Miss Anfal Elbushra. Check the matter's source inventory for documents such as 'rent schedule', 'payment history', or 'account statement' related to this tenant. If found, extract and summarize the rent instalment amounts, due dates, payments made, and any arrears.",
+      "matter_scope": "napier-accommodation-arrears",
+      "source_dependencies": [
+        "NAP-SRC-0010"
+      ],
+      "stage": "S2",
+      "task_id": "T-NAP-SRC-0010-017",
+      "task_type": "source_search",
+      "title": "Locate rent schedule and payment records for Miss Anfal Elbushra"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Reviewed student licence agreement NAP-SRC-0010 for Miss Anfal Elbushra. The agreement states total rent of \u00a34,686.18 including a \u00a3500 advance payment, with monthly instalments due per a separate rent schedule. No rent schedule or payment records were found in the provided source. A follow-up task is proposed to locate the rent schedule and payment history.",
+  "task_id": "T-NAP-SRC-0010-016",
+  "uncertainties": [
+    {
+      "finding_id": "f-004",
+      "text": "Rent schedule and payment records are absent from the provided source; their existence and content are unconfirmed."
+    }
+  ]
+}

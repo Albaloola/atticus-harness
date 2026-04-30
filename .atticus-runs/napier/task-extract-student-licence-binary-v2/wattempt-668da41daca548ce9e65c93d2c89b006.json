@@ -1,0 +1,86 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "extracted text",
+      "quote": "1 attachment (3 MB)\nMISS ANFAL ELBUSHRA Student Licence.pdf;",
+      "target_id": "NAP-SRC-0028",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "extracted text",
+      "quote": "1 attachment (3 MB)\nMISS ANFAL ELBUSHRA Student Licence.pdf;",
+      "target_id": "NAP-SRC-0029",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001",
+        "cit-002"
+      ],
+      "confidence": 0.85,
+      "finding_id": "f-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "NAP-SRC-0028 and NAP-SRC-0029 contain an email from accommodation@napier.ac.uk to Anfal Elbushra dated 12/03/2026 with an attached file named 'MISS ANFAL ELBUSHRA Student Licence.pdf' (3 MB)."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "f-002",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "The extracted text does not contain the binary content of the embedded Student Licence PDF. A binary extraction tool is required to extract the PDF from the source files."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "extraction_result",
+      "content": "## Binary Extraction Result\n\n**Task:** Binary extraction of embedded Student Licence PDF from NAP-SRC-0028 and NAP-SRC-0029\n\n**Status:** Extracted text confirms the attachment 'MISS ANFAL ELBUSHRA Student Licence.pdf' (3 MB) exists in both source files. Binary extraction was not performed in this task; the extracted text only shows the email metadata and body, not the embedded PDF binary.\n\n**Next Step:** Use a binary extraction tool (e.g., `pdfdetach`, `mutool`, or custom script) to extract the embedded PDF from the source files NAP-SRC-0028 and NAP-SRC-0029.",
+      "path": "candidate/task-extract-student-licence-binary-v2/result.md",
+      "stage": "S1",
+      "title": "Binary extraction result for Student Licence PDF"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "cost_limit_usd": 0.01,
+      "expected_value": 0.9,
+      "instructions": "Use a binary extraction tool (e.g., pdfdetach, mutool, or custom script) to extract the embedded PDF attachment named 'MISS ANFAL ELBUSHRA Student Licence.pdf' from the source files NAP-SRC-0028 and NAP-SRC-0029. The extracted text confirms the attachment exists but does not contain the binary data. Extract the PDF and save it as a candidate artifact.",
+      "matter_dependencies": [],
+      "matter_scope": "napier-accommodation-arrears",
+      "provider_policy": {},
+      "required_certifications": [],
+      "source_dependencies": [
+        "NAP-SRC-0028",
+        "NAP-SRC-0029"
+      ],
+      "stage": "S1",
+      "task_dependencies": [],
+      "task_id": "task-extract-student-licence-binary-v3",
+      "task_type": "extraction",
+      "title": "Binary extraction of embedded Student Licence PDF from NAP-SRC-0028 and NAP-SRC-0029 using binary tool",
+      "validation_gates": []
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Extracted text from NAP-SRC-0028 and NAP-SRC-0029 shows an email from Edinburgh Napier University to Anfal Elbushra dated 12/03/2026 with an attached file named 'MISS ANFAL ELBUSHRA Student Licence.pdf' (3 MB). The extracted text does not contain the binary content of the embedded PDF. A binary extraction tool is required to extract the Student Licence PDF from the source PDF files. No binary extraction was performed in this task; the extracted text confirms the attachment exists but cannot extract it.",
+  "task_id": "task-extract-student-licence-binary-v2",
+  "uncertainties": [
+    {
+      "description": "The binary content of the embedded Student Licence PDF was not extracted in this task. The extracted text only confirms the attachment exists but cannot extract the PDF binary data.",
+      "related_finding_ids": [
+        "f-002"
+      ],
+      "uncertainty_id": "u-001"
+    }
+  ]
+}

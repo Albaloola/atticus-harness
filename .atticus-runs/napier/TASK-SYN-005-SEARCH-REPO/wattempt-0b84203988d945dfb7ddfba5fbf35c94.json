@@ -1,0 +1,53 @@
+{
+  "citations": [],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No source materials or artifacts were supplied in this work order for napier-accommodation-arrears. The evidence_manifest and source_materials sections are empty, so no records could be located or attached."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-002",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "The matter scope 'napier-accommodation-arrears' suggests a dispute about student accommodation arrears at a Scottish university. Relevant authorities include the Private Housing (Tenancies) (Scotland) Act 2016 and the Housing (Scotland) Act 1988, but no source evidence is available to apply them."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "evidence_map",
+      "content": "## Evidence Map for napier-accommodation-arrears\n\n**Status:** No source records located in this work order.\n\n**Required Records (not yet attached):**\n1. Tenancy agreement or occupancy licence for the student accommodation.\n2. Arrears statements or rent ledgers.\n3. Correspondence between the university/accommodation provider and the student regarding arrears.\n4. Any notice served (e.g., notice to quit, notice of arrears).\n5. Any correspondence referencing disability, reasonable adjustments, or equality issues.\n\n**Next Step:** Search the matter's source repository and legal memory for these records. If none exist, request the records from the client or relevant party.",
+      "path": "candidate/TASK-SYN-005-SEARCH-REPO/evidence_map.md",
+      "stage": "S2",
+      "title": "Evidence Map for napier-accommodation-arrears"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Search the matter repository and legal memory for records related to napier-accommodation-arrears. Specifically look for: (1) tenancy agreement or occupancy licence, (2) arrears statements or rent ledgers, (3) correspondence about arrears, (4) any notices served, (5) any disability or equality-related correspondence. Attach any found records as source materials and update the evidence map.",
+      "matter_scope": "napier-accommodation-arrears",
+      "stage": "S2",
+      "task_id": "TASK-SYN-005-SEARCH-REPO-FOLLOWUP",
+      "task_type": "evidence_gathering",
+      "title": "Follow-up search for napier-accommodation-arrears records"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "No source materials or artifacts were supplied in this work order for napier-accommodation-arrears. The evidence_manifest and source_materials sections are empty. The prior evidence map (art-56c3a3b49f1f44c1a67c5d3afa4ec8fe) also found no records. A follow-up task is proposed to search the matter repository and legal memory for required records such as tenancy agreements, arrears statements, correspondence, and notices.",
+  "task_id": "TASK-SYN-005-SEARCH-REPO",
+  "uncertainties": [
+    {
+      "description": "No source materials or artifacts were supplied in this work order for napier-accommodation-arrears. The evidence_manifest and source_materials sections are empty, so no records could be located or attached.",
+      "uncertainty_id": "U-001"
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "citations": [],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "f-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No source materials or artifacts were provided for ingestion. Task cannot proceed without documents."
+    }
+  ],
+  "proposed_artifacts": [],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "instructions": "Locate and upload the Napier accommodation source documents (e.g., tenancy agreements, arrears notices, correspondence) to the matter evidence store. Provide at least one source document for ingestion.",
+      "matter_scope": "napier-accommodation-arrears",
+      "source_dependencies": [],
+      "stage": "S3",
+      "task_dependencies": [],
+      "task_id": "task-followup-012-upload-sources",
+      "task_type": "source_upload",
+      "title": "Upload Napier accommodation source documents"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "No source materials or artifacts were provided for the Napier accommodation arrears ingestion task. No documents to ingest. A follow-up task is proposed to upload the necessary source documents before ingestion can proceed.",
+  "task_id": "task-followup-011-ingest",
+  "uncertainties": [
+    {
+      "description": "No source materials or artifacts were provided; cannot determine what documents exist for ingestion.",
+      "finding_id": "u-001"
+    }
+  ]
+}

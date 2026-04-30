@@ -1,0 +1,104 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "extracted text, line 5",
+      "quote": "1 attachment (63 KB)\n2026-27 RA Application Pack.docx;",
+      "target_id": "NAP-SRC-0046",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "extracted text, body",
+      "quote": "complete the RA Application Pack and email it to Reslife@napier.ac.uk by 5pm 12 April 2026. You can also find the RA Application Pack attached to this email for easy access.",
+      "target_id": "NAP-SRC-0046",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001"
+      ],
+      "confidence": 0.95,
+      "finding_id": "F-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "NAP-SRC-0046 is a PDF email from Callum Abbot (Napier) to all residents, with an embedded .docx attachment named '2026-27 RA Application Pack.docx' (63 KB)."
+    },
+    {
+      "citation_ids": [
+        "cit-002"
+      ],
+      "confidence": 0.95,
+      "finding_id": "F-002",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "The email invites RA applications for 2026/27, offering a 55% rent reduction, and directs applicants to complete the attached pack and email it by 5pm 12 April 2026."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-003",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "The embedded .docx attachment was not extracted because the harness lacks pdfdetach or Tika. The extracted text only confirms its presence."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-004",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No tool for detaching embedded files from PDFs is available in the current harness. A follow-up task is needed once such a tool is configured."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "extraction_report",
+      "content": "## Extraction Status for NAP-SRC-0046\n\n**Source:** NAP-SRC-0046 (PDF email)\n**Embedded attachment:** 2026-27 RA Application Pack.docx (63 KB)\n\n**Status:** Not extracted. The harness does not have pdfdetach or Apache Tika configured. The extracted text confirms the attachment exists but cannot retrieve its content.\n\n**Next step:** Configure a tool (e.g., pdfdetach, Tika) to detach the embedded .docx, then re-run extraction to obtain the full content of the RA Application Pack.",
+      "path": "candidate/T-B07-005-followup/extraction-status.md",
+      "stage": "S2",
+      "title": "Extraction status for NAP-SRC-0046 embedded .docx"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "cost_limit_usd": 0.01,
+      "expected_value": 0.8,
+      "instructions": "Use pdfdetach or Apache Tika to detach the embedded file '2026-27 RA Application Pack.docx' from source NAP-SRC-0046 (PDF). Extract the .docx content as plain text and store it as a new source or artifact. If the tool is not available, request human setup.",
+      "matter_dependencies": [],
+      "matter_scope": "napier-accommodation-arrears",
+      "required_certifications": [],
+      "source_dependencies": [
+        "NAP-SRC-0046"
+      ],
+      "stage": "S2",
+      "task_dependencies": [],
+      "task_id": "T-B07-005-extract-docx",
+      "task_type": "extraction",
+      "title": "Extract embedded .docx from NAP-SRC-0046 using pdfdetach or Tika",
+      "validation_gates": []
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "description": "Missing extraction of the embedded .docx may cause loss of relevant evidence (e.g., application terms, rent reduction conditions)."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Source NAP-SRC-0046 is a PDF email with an embedded .docx attachment (2026-27 RA Application Pack.docx). The extracted text confirms the attachment but does not extract its content. The task requires a tool like pdfdetach or Apache Tika to detach the embedded .docx. No such tool is available in the current harness. A follow-up task is proposed to perform the extraction once the tool is configured.",
+  "task_id": "T-B07-005-followup",
+  "uncertainties": [
+    {
+      "description": "The content of the embedded .docx attachment (2026-27 RA Application Pack.docx) is unknown because it was not extracted."
+    },
+    {
+      "description": "It is uncertain whether the .docx contains terms, conditions, or application questions relevant to the accommodation arrears matter."
+    }
+  ]
+}

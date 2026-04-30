@@ -1,0 +1,63 @@
+{
+  "citations": [],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No source materials or artifacts were provided in this work order; the evidence_manifest and source_materials sections are empty."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-002",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "The task requests searching for sources related to a 2026-04-10 arrears discussion, but no repository records, transcripts, or OCR output are available in context to support any factual finding."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "evidence_map",
+      "content": "No source materials were provided in this work order. The task requires locating matter repository sources related to a 2026-04-10 arrears discussion. A follow-up task is proposed to search the matter repository and attach the relevant source materials.",
+      "path": "candidate/T-B15-FUP-0049-find-sources-followup-v2/evidence_map.md",
+      "stage": "S2",
+      "title": "Evidence Map for napier-accommodation-arrears 2026-04-10 arrears discussion"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "cost_limit_usd": 0.01,
+      "expected_value": 0.9,
+      "instructions": "Search the matter repository for napier-accommodation-arrears using the date 2026-04-10 and keywords 'arrears', 'discussion', 'accommodation'. Attach any found source materials (transcripts, emails, PDFs, OCR output) as source dependencies for this task. If no sources are found, report that no records exist.",
+      "matter_dependencies": [],
+      "matter_scope": "napier-accommodation-arrears",
+      "provider_policy": {},
+      "required_certifications": [],
+      "source_dependencies": [],
+      "stage": "S2",
+      "task_dependencies": [],
+      "task_id": "T-B15-FUP-0049-find-sources-followup-v2-followup",
+      "task_type": "source_acquisition",
+      "title": "Locate and attach source materials for napier-accommodation-arrears 2026-04-10 arrears discussion",
+      "validation_gates": []
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "No source materials or artifacts were provided in this work order. The task requests searching the matter repository for sources related to a 2026-04-10 arrears discussion, but no evidence, transcripts, or repository records are available in context. No supported factual, legal, or procedural findings can be made. A follow-up task is proposed to locate and attach the relevant source materials.",
+  "task_id": "T-B15-FUP-0049-find-sources-followup-v2",
+  "uncertainties": [
+    {
+      "reasoning_status": "needs_research",
+      "text": "No source materials or artifacts were provided; it is unknown whether the matter repository contains records of the 2026-04-10 arrears discussion.",
+      "uncertainty_id": "U-001"
+    }
+  ]
+}

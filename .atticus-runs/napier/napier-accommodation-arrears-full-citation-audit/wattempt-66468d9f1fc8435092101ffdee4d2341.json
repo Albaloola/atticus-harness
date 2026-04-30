@@ -1,0 +1,196 @@
+{
+  "citations": [
+    {
+      "citation_id": "C-001",
+      "locator": "extracted text: Tenancy Agreement header",
+      "quote": "Tenancy Agreement BETWEEN The Court of Edinburgh Napier University, PER Edinburgh Napier University Property & Facili",
+      "target_id": "NAP-SRC-0010",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "C-002",
+      "locator": "citation C-SYN-002",
+      "quote": "Rent Arrears: \u00a35526.66 Student Name: ANFAL ELBUSHRA As at: 20th April 2026 ... NTQ Date: 18th May 2026 ... Payment Reqd: 9th May 2026",
+      "target_id": "art-a788d9fd8e8849dba5da5cf7a1ef238f",
+      "target_type": "artifact"
+    },
+    {
+      "citation_id": "C-003",
+      "locator": "citation C-SYN-003",
+      "quote": "NOTICE TO QUIT ... 20 April 2026 ... ANFAL ELBUSHRA ... breached the Tenancy Agreement ... Clause 2 ... move from Bedroom B Flat 05 Castlelaw House",
+      "target_id": "art-a788d9fd8e8849dba5da5cf7a1ef238f",
+      "target_type": "artifact"
+    },
+    {
+      "citation_id": "C-004",
+      "locator": "extracted text: email subject",
+      "quote": "Accommodation Hardship Fund - payment date",
+      "target_id": "NAP-SRC-0022",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "C-005",
+      "locator": "extracted text: bank statement header",
+      "quote": "Personal Account statement 01/09/2025 - 28/04/2026",
+      "target_id": "NAP-SRC-0012",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "C-006",
+      "excerpt": "Equality Act 2010 reasonable adjustments duty.",
+      "locator": "draft complaint excerpt",
+      "quote": "Equality Act 2010 reasonable adjustments duty.",
+      "target_id": "art-0e6fe6dbf06942e19dc6c1baa3b40b6d",
+      "target_type": "artifact"
+    }
+  ],
+  "contradictions": [
+    {
+      "citation_ids": [
+        "C-006"
+      ],
+      "contradiction_detail": "Citation C-006 references Equality Act 2010 sections 20-21 but the draft excerpt shows 'sections 2' which is incomplete and likely fabricated. The authority map includes sections 20-21, but the draft does not properly cite them.",
+      "finding_id": "F-001"
+    }
+  ],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "C-006"
+      ],
+      "confidence": 0.95,
+      "finding_id": "F-001",
+      "finding_type": "contradiction",
+      "reasoning_status": "contradicted",
+      "text": "Citation C-006 claims Equality Act 2010 sections 20-21, but the draft excerpt shows 'sections 2' which is incomplete and likely fabricated."
+    },
+    {
+      "citation_ids": [
+        "C-002"
+      ],
+      "confidence": 0.7,
+      "finding_id": "F-002",
+      "finding_type": "fact",
+      "reasoning_status": "uncertain",
+      "text": "Arrears amount of \u00a35526.66 cited from evidence-map synthesis (art-a788d9fd8e8849dba5da5cf7a1ef238f) lacks direct source support in provided materials."
+    },
+    {
+      "citation_ids": [
+        "C-003"
+      ],
+      "confidence": 0.7,
+      "finding_id": "F-003",
+      "finding_type": "fact",
+      "reasoning_status": "uncertain",
+      "text": "Notice to Quit details (date 20 April 2026, breach of Clause 2) cited from evidence-map synthesis, not from an original NTQ document."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.9,
+      "finding_id": "F-004",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "Draft complaint relies on evidence-map synthesis (art-a788d9fd8e8849dba5da5cf7a1ef238f) for key facts; original source documents should be obtained and cited directly."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "citation_audit_report",
+      "content": "# Citation Audit Report\n\n## Task: Full citation audit of draft complaint (art-0e6fe6dbf06942e19dc6c1baa3b40b6d)\n\n### Findings\n1. **Fabricated Citation (C-006)**: The draft cites Equality Act 2010 sections 20-21 but the excerpt shows 'sections 2'. This is likely a fabrication. The authority map confirms sections 20-21 exist, but the draft does not properly cite them.\n2. **Unsupported Arrears Amount (C-002)**: The arrears figure of \u00a35526.66 is from an evidence-map synthesis artifact not provided. Original arrears notice or NTQ document needed.\n3. **Unsupported NTQ Details (C-003)**: NTQ date and breach clause are from the same synthesis artifact; original NTQ document required.\n4. **Drafting Note**: The complaint relies on a synthesis artifact for key facts; direct source citations should be used.\n\n### Recommendations\n- Obtain and verify original arrears notice and NTQ document.\n- Correct or remove fabricated citation C-006.\n- Replace synthesis artifact citations with direct source citations where possible.\n- Review redaction needs for personal data in exhibits.",
+      "path": "candidate/napier-accommodation-arrears-full-citation-audit/audit_report.md",
+      "stage": "S7",
+      "title": "Citation Audit Report for Draft Complaint"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "cost_limit_usd": 0.02,
+      "expected_value": 0.8,
+      "instructions": "Locate and extract the original arrears notice and Notice to Quit document for Anfal Elbushra. Verify the arrears amount (\u00a35526.66), NTQ date (18 May 2026), and breach clause (Clause 2). Provide direct citations from the original documents.",
+      "matter_dependencies": [],
+      "matter_scope": "napier-accommodation-arrears",
+      "provider_policy": {},
+      "required_certifications": [],
+      "source_dependencies": [],
+      "stage": "S2",
+      "task_dependencies": [],
+      "task_id": "verify-arrears-ntq-documents",
+      "task_type": "source_verification",
+      "title": "Verify arrears amount and NTQ from original documents",
+      "validation_gates": [
+        "citation_integrity"
+      ]
+    }
+  ],
+  "redaction_flags": [
+    {
+      "citation_ids": [
+        "C-005"
+      ],
+      "redaction_concern": "Personal data in bank statement (NAP-SRC-0012) may need redaction in complaint; ensure only necessary details are included."
+    },
+    {
+      "citation_ids": [
+        "C-004"
+      ],
+      "redaction_concern": "Student ID and email in hardship fund email (NAP-SRC-0022) may need redaction."
+    },
+    {
+      "citation_ids": [
+        "C-001"
+      ],
+      "redaction_concern": "Tenancy agreement (NAP-SRC-0010) contains personal details; redact as appropriate for filing."
+    }
+  ],
+  "risk_flags": [
+    {
+      "citation_ids": [
+        "C-006"
+      ],
+      "detail": "Citation C-006 appears to fabricate a legal authority reference; the draft excerpt shows 'sections 2' which is not a valid citation for the Equality Act 2010.",
+      "risk_type": "fabricated_citation"
+    },
+    {
+      "citation_ids": [
+        "C-002",
+        "C-003"
+      ],
+      "detail": "Arrears amount and NTQ details are unsupported by provided sources; they rely on an unverified synthesis artifact.",
+      "risk_type": "unsupported_claim"
+    },
+    {
+      "citation_ids": [
+        "C-002",
+        "C-003"
+      ],
+      "detail": "The evidence-map synthesis artifact may be stale or based on incomplete extraction; original documents should be reviewed.",
+      "risk_type": "stale_evidence"
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Audit of draft complaint citations reveals one fabricated authority (C-006) and several unsupported or uncertain claims. Key risks include reliance on unverified evidence-map synthesis and missing source for arrears amount. Proposed follow-up task to verify arrears figure and secure original NTQ/arrears notice.",
+  "task_id": "napier-accommodation-arrears-full-citation-audit",
+  "uncertainties": [
+    {
+      "citation_ids": [
+        "C-002"
+      ],
+      "finding_id": "F-002",
+      "uncertainty_detail": "Arrears amount of \u00a35526.66 is cited from an evidence-map synthesis artifact not provided in this work order. The original arrears notice or NTQ document is not available to verify the figure."
+    },
+    {
+      "citation_ids": [
+        "C-003"
+      ],
+      "finding_id": "F-003",
+      "uncertainty_detail": "NTQ details are from the same synthesis artifact; the original NTQ document is not in the source materials. Dates and breach clause need verification."
+    },
+    {
+      "citation_ids": [],
+      "finding_id": "F-004",
+      "uncertainty_detail": "The draft complaint's reliance on a synthesis artifact for core facts introduces risk; original documents should be obtained and cited directly."
+    }
+  ]
+}

@@ -1,0 +1,78 @@
+{
+  "citations": [],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 0.0,
+      "finding_id": "F-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No source materials or artifacts were provided in this work order. The task requires locating and ingesting source records, but no records are available to review."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.0,
+      "finding_id": "F-002",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "The evidence manifest and source_materials sections are empty. Without source records, no factual findings about Napier accommodation arrears can be made."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.0,
+      "finding_id": "F-003",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "The task title indicates a follow-up to locate sources, but no prior task output or source list is included in context. Cannot determine what sources were previously identified."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.0,
+      "finding_id": "F-004",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No tools for external search or document retrieval are available. The task cannot be completed without source records or a mechanism to obtain them."
+    }
+  ],
+  "proposed_artifacts": [],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "instructions": "Locate and ingest source records related to Napier accommodation arrears. Check matter memory, prior task outputs, and any external repositories (e.g., university housing records, correspondence, payment ledgers). If records exist but are not yet ingested, use available tools to add them as source materials. If no records are found, document the gap and request human assistance to obtain records.",
+      "matter_scope": "napier-accommodation-arrears",
+      "source_dependencies": [],
+      "stage": "S4",
+      "task_dependencies": [],
+      "task_id": "TASK-CHRON-004D-LOCATE-SOURCES-FOLLOWUP-2",
+      "task_type": "ingest",
+      "title": "Ingest Napier accommodation arrears source records from available repositories"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "description": "No source materials or artifacts are present in the work order. The task cannot proceed without records.",
+      "risk_type": "missing_evidence",
+      "severity": "high"
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "No source materials or artifacts were provided for this task. The evidence manifest and source_materials sections are empty. Without records, no factual findings about Napier accommodation arrears can be made. A follow-up task is proposed to locate and ingest source records from matter memory or external repositories. If records are unavailable, human assistance is needed.",
+  "task_id": "TASK-CHRON-004D-LOCATE-SOURCES-FOLLOWUP",
+  "uncertainties": [
+    {
+      "description": "No source records are available in this work order. It is unknown whether records exist elsewhere in the matter.",
+      "finding_id": "F-001"
+    },
+    {
+      "description": "The scope and content of prior task outputs related to locating sources are unknown.",
+      "finding_id": "F-003"
+    },
+    {
+      "description": "No tools for external document retrieval are configured; it is uncertain how to obtain records.",
+      "finding_id": "F-004"
+    }
+  ]
+}

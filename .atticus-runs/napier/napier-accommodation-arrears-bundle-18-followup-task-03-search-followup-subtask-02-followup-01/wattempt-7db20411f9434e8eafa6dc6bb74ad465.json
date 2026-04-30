@@ -1,0 +1,53 @@
+{
+  "citations": [],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 0,
+      "finding_id": "f-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No source materials or artifacts were provided in this work order. The task requires locating SAAS award letter and Chemist4U records, but no evidence is available to support any factual or legal finding."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "evidence_gap_report",
+      "content": "## Evidence Gap Report\n\n**Task:** Locate and ingest SAAS award letter and Chemist4U records\n\n**Status:** No source materials or artifacts were provided in this work order. The task cannot be completed without access to the relevant records.\n\n**Required Records:**\n1. SAAS (Student Awards Agency Scotland) award letter for the relevant period.\n2. Chemist4U prescription/order records for the relevant period.\n\n**Next Steps:**\n- Request that the human operator or a tool-configured search task locate and upload the SAAS award letter and Chemist4U records as source materials.\n- Once ingested, a follow-up task can extract and analyze the relevant dates, amounts, and any disability-related accommodations or medical evidence.",
+      "path": "candidate/napier-accommodation-arrears-bundle-18-followup-task-03-search-followup-subtask-02-followup-01/evidence_gap_report.md",
+      "stage": "S3",
+      "title": "Evidence Gap Report for SAAS and Chemist4U Records"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Locate and upload the SAAS award letter and Chemist4U prescription/order records for the relevant period in the Napier accommodation arrears matter. These records are needed to assess the tenant's financial circumstances and any disability-related accommodations. Once uploaded, trigger a follow-up task to extract and analyze the content.",
+      "matter_scope": "napier-accommodation-arrears",
+      "stage": "S3",
+      "task_id": "napier-accommodation-arrears-bundle-18-followup-task-03-search-followup-subtask-02-followup-01-ingest",
+      "task_type": "evidence_gathering",
+      "title": "Ingest SAAS award letter and Chemist4U records"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "description": "No SAAS award letter or Chemist4U records have been provided. Without these records, the tenant's financial circumstances and any disability-related accommodations cannot be verified.",
+      "risk_id": "risk-001",
+      "risk_type": "missing_evidence",
+      "severity": "high"
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "No source materials or artifacts were provided for this task. The task requires locating SAAS award letter and Chemist4U records, but no evidence is available. A proposed task requests human/tool ingestion of these records.",
+  "task_id": "napier-accommodation-arrears-bundle-18-followup-task-03-search-followup-subtask-02-followup-01",
+  "uncertainties": [
+    {
+      "description": "The SAAS award letter and Chemist4U records are not present in the provided context. Their content, dates, and relevance to the matter are unknown.",
+      "source": "task_contract",
+      "uncertainty_id": "u-001"
+    }
+  ]
+}

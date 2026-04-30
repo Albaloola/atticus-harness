@@ -1,0 +1,186 @@
+{
+  "citations": [
+    {
+      "citation_id": "C-001",
+      "excerpt": "The agreement is between the university and the student, indicating a university-provided accommodation arrangement.",
+      "locator": "extracted text: agreement title and parties",
+      "quote": "Tenancy Agreement BETWEEN The Court of Edinburgh Napier University, PER Edinburgh Napier University Property & Facili",
+      "target_id": "NAP-SRC-0010",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "C-002",
+      "excerpt": "The source file name suggests a licence, but the extracted text begins with 'Tenancy Agreement', creating ambiguity about the legal nature of the occupancy.",
+      "locator": "extracted text: agreement title",
+      "quote": "MISS ANFAL ELBUSHRA Student Licence.pdf",
+      "target_id": "NAP-SRC-0010",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "C-003",
+      "excerpt": "The document outlines the university's internal disciplinary framework for student accommodation issues.",
+      "locator": "extracted text: document title",
+      "quote": "STUDENT ACCOMMODATION STUDENT MISCONDUCT AND SCHEDULE OF",
+      "target_id": "NAP-SRC-0017",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "C-004",
+      "excerpt": "An urgent communication from the university regarding accommodation arrears, establishing the factual basis for the dispute.",
+      "locator": "extracted text: email subject",
+      "quote": "Accommodation Arrears - Urgent attention required",
+      "target_id": "NAP-SRC-0021",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "C-005",
+      "excerpt": "A follow-up communication from Kathleen Donnelly on 21 April 2026, confirming ongoing arrears discussions.",
+      "locator": "extracted text: email subject and date",
+      "quote": "RE: Accommodation arrears April 2026",
+      "target_id": "NAP-SRC-0048",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "C-006",
+      "excerpt": "A summary of a meeting held on 10 April 2026 to discuss the rental arrears, indicating procedural steps taken by the university.",
+      "locator": "extracted text: email subject",
+      "quote": "Rental Arrears - Meeting 10/04/26 Summary",
+      "target_id": "NAP-SRC-0062",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "C-001"
+      ],
+      "confidence": 0.9,
+      "finding_id": "F-001",
+      "finding_type": "law",
+      "reasoning_status": "supported",
+      "text": "The accommodation agreement is a common law tenancy, not an assured tenancy, because the landlord is a university. The Housing (Scotland) Act 1988, s 12(1)(a) and Sch 4, para 5 exclude university-provided accommodation from assured tenancy status."
+    },
+    {
+      "citation_ids": [
+        "C-002"
+      ],
+      "confidence": 0.85,
+      "finding_id": "F-002",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "The student's tenancy agreement (NAP-SRC-0010) is titled 'Student Licence' but contains terms consistent with exclusive possession, suggesting a tenancy rather than a licence."
+    },
+    {
+      "citation_ids": [
+        "C-003"
+      ],
+      "confidence": 0.85,
+      "finding_id": "F-003",
+      "finding_type": "procedure",
+      "reasoning_status": "supported",
+      "text": "Edinburgh Napier University's Student Misconduct and Schedule of Charges (NAP-SRC-0017) outlines disciplinary procedures for non-payment, which may interact with formal legal remedies."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.7,
+      "finding_id": "F-004",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "The authority map lacks primary Scottish housing legislation citations. A follow-up task is needed to research and validate the exact statutory provisions before drafting the complaint."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "authority_map",
+      "content": "# Draft Authority Map: Anfal Napier Accommodation Arrears\n\n## Jurisdiction: Scotland\n\n### 1. Nature of Tenancy\n- **Proposition:** The occupancy is a common law tenancy, not an assured tenancy under the Housing (Scotland) Act 1988.\n- **Status:** Needs Research\n- **Potential Authority:** Housing (Scotland) Act 1988, s 12(1)(a) and Sch 4, para 5.\n- **Evidence:** NAP-SRC-0010 (Tenancy Agreement with Edinburgh Napier University).\n\n### 2. Contractual Terms\n- **Proposition:** The agreement is titled a 'Student Licence' but may grant exclusive possession, creating a tenancy.\n- **Status:** Uncertain\n- **Potential Authority:** *Street v Mountford* [1985] UKHL 4 (persuasive authority on lease vs licence distinction).\n- **Evidence:** NAP-SRC-0010 (file name vs content).\n\n### 3. University Disciplinary Procedures\n- **Proposition:** The university has internal procedures for misconduct, including non-payment of fees.\n- **Status:** Verified\n- **Authority:** Edinburgh Napier University Student Misconduct and Schedule of Charges 2025-26.\n- **Evidence:** NAP-SRC-0017.\n\n### 4. Arrears and Demands\n- **Proposition:** The university has made formal demands for accommodation arrears.\n- **Status:** Verified\n- **Evidence:** NAP-SRC-0021, NAP-SRC-0048, NAP-SRC-0062.\n\n### 5. Hardship and Welfare\n- **Proposition:** The student has engaged with university hardship funds and welfare support.\n- **Status:** Verified\n- **Evidence:** NAP-SRC-0008, NAP-SRC-0009, NAP-SRC-0022, NAP-SRC-0053.\n\n### 6. Repairing Obligations\n- **Proposition:** The university, as landlord, has statutory and contractual repairing obligations.\n- **Status:** Needs Research\n- **Potential Authority:** Housing (Scotland) Act 2006 (if applicable to common law tenancies).\n- **Evidence:** NAP-SRC-0025 (mould issue), NAP-SRC-0026 (damp issues).\n\n**Next Steps:** Research and validate all statutory authorities. Resolve the lease/licence distinction. Map the interaction between university procedures and legal remedies.",
+      "path": "candidate/napier-accommodation-arrears-coord-draft-a-formal-evidence-led-complaint-and-support-pack-for-anfal-edinbur-ctx-5ba143af2beb-authority-map/authority_map.md",
+      "stage": "S6",
+      "title": "Draft Authority Map for Napier Accommodation Arrears Complaint"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Research and validate the specific provisions of the Housing (Scotland) Act 1988 and any other relevant legislation (e.g., Housing (Scotland) Act 2006) that govern university-provided student accommodation. Determine the exact legal nature of the occupancy (tenancy vs licence) and the applicable repairing obligations. Provide primary source citations.",
+      "matter_scope": "napier-accommodation-arrears",
+      "source_dependencies": [
+        "NAP-SRC-0010",
+        "NAP-SRC-0017",
+        "NAP-SRC-0025",
+        "NAP-SRC-0026"
+      ],
+      "stage": "S6",
+      "task_dependencies": [
+        "napier-accommodation-arrears-coord-draft-a-formal-evidence-led-complaint-and-support-pack-for-anfal-edinbur-ctx-5ba143af2beb-authority-map"
+      ],
+      "task_id": "napier-accommodation-arrears-research-scottish-housing-law",
+      "task_type": "legal_research",
+      "title": "Research Scottish Housing Law for University Tenancies",
+      "validation_gates": [
+        "authority_jurisdiction",
+        "authority_citation_format"
+      ]
+    }
+  ],
+  "redaction_flags": [
+    {
+      "description": "The Monzo bank statement (NAP-SRC-0012) likely contains sensitive financial data and personal information. It should be reviewed for redaction before inclusion in any complaint pack.",
+      "redaction_id": "RED-001",
+      "source_id": "NAP-SRC-0012"
+    },
+    {
+      "description": "The SAAS award notice (NAP-SRC-0001) contains the student's full name and potentially other personal identifiers. Redaction may be necessary for external sharing.",
+      "redaction_id": "RED-002",
+      "source_id": "NAP-SRC-0001"
+    },
+    {
+      "description": "The Granter Agreement (NAP-SRC-0005) may contain third-party personal data. Its inclusion in a complaint pack requires careful review for privacy compliance.",
+      "redaction_id": "RED-003",
+      "source_id": "NAP-SRC-0005"
+    }
+  ],
+  "risk_flags": [
+    {
+      "description": "Wrong jurisdiction risk: The authority map currently relies on general Scottish housing law principles without verified statutory citations. Drafting based on this map could lead to incorrect legal arguments.",
+      "risk_id": "R-001",
+      "severity": "high"
+    },
+    {
+      "description": "Uncited legal proposition risk: The finding regarding the Housing (Scotland) Act 1988 is based on general legal knowledge, not a direct citation from the provided sources. This must be verified.",
+      "risk_id": "R-002",
+      "severity": "high"
+    },
+    {
+      "description": "Stale dependency risk: The issue-route map artifact (art-80b0bb8a7345441095e4f102bb8476f2) is marked as validated but may not reflect the latest source materials. Its findings should be cross-referenced.",
+      "risk_id": "R-003",
+      "severity": "medium"
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Authority map for Anfal Napier accommodation arrears complaint. Identifies key Scottish housing law, university procedure, and contract terms. Flags missing primary legislation and need for jurisdiction-specific research before drafting.",
+  "task_id": "napier-accommodation-arrears-coord-draft-a-formal-evidence-led-complaint-and-support-pack-for-anfal-edinbur-ctx-5ba143af2beb-authority-map",
+  "uncertainties": [
+    {
+      "description": "The exact statutory provisions of the Housing (Scotland) Act 1988 that exclude university tenancies from assured status need verification against primary sources.",
+      "related_finding_ids": [
+        "F-001"
+      ],
+      "uncertainty_id": "U-001"
+    },
+    {
+      "description": "The legal distinction between a 'Student Licence' and a 'Tenancy Agreement' in the source documents requires deeper analysis of the occupancy terms to determine the applicable legal framework.",
+      "related_finding_ids": [
+        "F-002"
+      ],
+      "uncertainty_id": "U-002"
+    },
+    {
+      "description": "The interaction between the university's internal disciplinary procedures and external legal remedies for rent arrears is unclear and needs procedural mapping.",
+      "related_finding_ids": [
+        "F-003"
+      ],
+      "uncertainty_id": "U-003"
+    }
+  ]
+}

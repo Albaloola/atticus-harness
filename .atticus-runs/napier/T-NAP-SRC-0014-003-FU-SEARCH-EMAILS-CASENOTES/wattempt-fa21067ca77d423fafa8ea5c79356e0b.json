@@ -1,0 +1,93 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "page 1",
+      "quote": "The accommodation support service can: \u2022 Offer advice and information on finding a flat in the private sector \u2022 Set up flat viewings by calling estate agents on your behalf \u2022 Provide a dedicated member of staff to provide information and to answer any related queries, or signpost you to a person or service to help you further",
+      "target_id": "NAP-SRC-0014",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "page 1",
+      "quote": "Please contact privateaccommodation@napier.ac.uk with your enquiries.",
+      "target_id": "NAP-SRC-0014",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-003",
+      "locator": "page 1",
+      "quote": "ENSA Advice ... Please contact ENSA Advice on 0131 229 8791 to arrange an appointment or email ensa.advice@napier.ac.uk",
+      "target_id": "NAP-SRC-0014",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001",
+        "cit-002",
+        "cit-003"
+      ],
+      "confidence": 0.95,
+      "finding_id": "F-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "The Private Accommodation Brochure describes a support service reachable via privateaccommodation@napier.ac.uk and ENSA Advice via phone or email."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.0,
+      "finding_id": "F-002",
+      "finding_type": "fact",
+      "reasoning_status": "uncertain",
+      "text": "No emails, case notes, or records showing brochure provision or support service access by Anfal are present in the provided context."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-003",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "Task requires email and case note records not included in this work order; cannot complete evidence search without those sources."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "evidence_map",
+      "content": "## Evidence Map: Brochure Provision / Support Service Access by Anfal\n\n**Source Reviewed:** NAP-SRC-0014 (Private Accommodation Brochure 2025)\n\n**Findings:**\n- The brochure describes a support service (privateaccommodation@napier.ac.uk) and ENSA Advice (0131 229 8791 / ensa.advice@napier.ac.uk).\n- No evidence in this context pack shows that Anfal received the brochure or contacted either service.\n\n**Gap:** Emails, case notes, or other records documenting Anfal's receipt of the brochure or use of the support service are absent. A follow-up task is required to locate and review those records.",
+      "path": "candidate/T-NAP-SRC-0014-003-FU-SEARCH-EMAILS-CASENOTES/evidence-map.md",
+      "stage": "S2",
+      "title": "Evidence Map for Brochure Provision / Support Service Access"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Locate and review email records and case notes from the matter napier-accommodation-arrears that document whether Anfal received the Private Accommodation Brochure (NAP-SRC-0014) or accessed the accommodation support service (privateaccommodation@napier.ac.uk) or ENSA Advice. Search for communications to/from Anfal referencing the brochure, support service, or related queries. Report any evidence of provision, access, or referral.",
+      "matter_scope": "napier-accommodation-arrears",
+      "stage": "S2",
+      "task_id": "T-NAP-SRC-0014-004-FU-EMAILS-CASENOTES",
+      "task_type": "evidence_search",
+      "title": "Search email and case note records for brochure provision or support service access by Anfal"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "description": "Critical evidence (emails, case notes) not provided; task cannot be completed without them.",
+      "finding_id": "F-003",
+      "risk_type": "missing_evidence"
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Task requires searching email and case note records for evidence that Anfal received the Private Accommodation Brochure or accessed the support service. Only source NAP-SRC-0014 (the brochure itself) was provided; no emails, case notes, or records of Anfal's interactions are in context. No evidence of brochure provision or support service access by Anfal can be found in the supplied materials. A follow-up task is proposed to locate and review the relevant email and case note records.",
+  "task_id": "T-NAP-SRC-0014-003-FU-SEARCH-EMAILS-CASENOTES",
+  "uncertainties": [
+    {
+      "finding_id": "F-002",
+      "reason": "No emails, case notes, or records of Anfal's interactions with the accommodation support service or brochure were supplied in the context pack."
+    }
+  ]
+}

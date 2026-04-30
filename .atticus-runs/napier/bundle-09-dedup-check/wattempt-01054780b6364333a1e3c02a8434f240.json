@@ -1,0 +1,158 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "extracted text",
+      "quote": "Meeting Confirmation - 1pm Friday 10th April\nFrom Srebrzynska, Nika <N.Srebrzynska@napier.ac.uk>\nDate Wed 08/04/2026 15:23\nTo Elbushra, Anfal <40805511@live.napier.ac.uk>",
+      "target_id": "NAP-SRC-0011",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "extracted text",
+      "quote": "Meeting Confirmation - 1pm Friday 10th April\nFrom Srebrzynska, Nika <N.Srebrzynska@napier.ac.uk>\nDate Wed 08/04/2026 15:23\nTo Elbushra, Anfal <40805511@live.napier.ac.uk>",
+      "target_id": "NAP-SRC-0041",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-003",
+      "locator": "extraction artifact metadata",
+      "quote": "text_sha256: 8c8185998bc10ffa5129fa940ee73a7f153b2d0037d5a6c5fe46308b459ca176",
+      "target_id": "NAP-SRC-0011",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-004",
+      "locator": "extraction artifact metadata",
+      "quote": "text_sha256: 8c8185998bc10ffa5129fa940ee73a7f153b2d0037d5a6c5fe46308b459ca176",
+      "target_id": "NAP-SRC-0041",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-005",
+      "locator": "source provenance",
+      "quote": "sha256: b2a586fd16dd00157d57cdeff24f51bf07db7c2d060eca97c79c4edc5b83d6a2",
+      "target_id": "NAP-SRC-0011",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-006",
+      "locator": "source provenance",
+      "quote": "sha256: 1e4855d6d6b39070cccfe7133eedd3553515520f3994b70cd71bd8b6ffb21a38",
+      "target_id": "NAP-SRC-0041",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001",
+        "cit-002"
+      ],
+      "confidence": 0.95,
+      "finding_id": "f-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Both NAP-SRC-0011 and NAP-SRC-0041 are meeting confirmation emails from Nika Srebrzynska to Anfal Elbushra, dated 8 April 2026, for a meeting on 10 April 2026 at Bainfield Reception."
+    },
+    {
+      "citation_ids": [
+        "cit-003",
+        "cit-004"
+      ],
+      "confidence": 0.99,
+      "finding_id": "f-002",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "The extracted text of both sources has identical SHA-256 hash (8c8185998bc10ffa5129fa940ee73a7f153b2d0037d5a6c5fe46308b459ca176), confirming the textual content is exactly the same."
+    },
+    {
+      "citation_ids": [
+        "cit-005",
+        "cit-006"
+      ],
+      "confidence": 0.95,
+      "finding_id": "f-003",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "The PDF files have different SHA-256 hashes (b2a586fd... vs 1e4855d6...), indicating separate file copies despite identical content."
+    },
+    {
+      "citation_ids": [
+        "cit-001",
+        "cit-002",
+        "cit-003",
+        "cit-004",
+        "cit-005",
+        "cit-006"
+      ],
+      "confidence": 0.9,
+      "finding_id": "f-004",
+      "finding_type": "inference",
+      "reasoning_status": "inferred",
+      "text": "NAP-SRC-0011 and NAP-SRC-0041 are duplicate sources of the same email, likely imported as separate file copies."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "dedup_report",
+      "content": "{\n  \"dedup_pair\": [\"NAP-SRC-0011\", \"NAP-SRC-0041\"],\n  \"dedup_verdict\": \"confirmed_duplicate\",\n  \"retained_source_id\": \"NAP-SRC-0011\",\n  \"suppressed_source_id\": \"NAP-SRC-0041\",\n  \"evidence\": \"Identical extracted text SHA-256 (8c818599...). Both are meeting confirmation emails from Nika Srebrzynska to Anfal Elbushra, 8 Apr 2026, for 10 Apr 2026 meeting. PDF SHA-256 differ (b2a586fd vs 1e4855d6) indicating separate file copies.\",\n  \"action\": \"Suppress NAP-SRC-0041 as duplicate; retain NAP-SRC-0011 as canonical. Update file inventory and chain of custody records.\"\n}",
+      "path": "/home/alba/atticus-harness/matters/napier-accommodation-arrears/03-working/dedup/bundle-09-dedup-report.json",
+      "stage": "S3",
+      "title": "Dedup Report for NAP-SRC-0011 and NAP-SRC-0041"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [
+        "bundle-09-dedup-report"
+      ],
+      "instructions": "Based on dedup report, suppress NAP-SRC-0041 as duplicate of NAP-SRC-0011. Update file inventory, chain of custody records, and any evidence maps to reflect retention of NAP-SRC-0011 as canonical. Confirm no other references to NAP-SRC-0041 remain active.",
+      "matter_scope": "napier-accommodation-arrears",
+      "source_dependencies": [
+        "NAP-SRC-0011",
+        "NAP-SRC-0041"
+      ],
+      "stage": "S3",
+      "task_id": "bundle-09-dedup-resolution",
+      "task_type": "validation",
+      "title": "Resolve duplicate sources NAP-SRC-0011 and NAP-SRC-0041",
+      "validation_gates": [
+        "production_mapping",
+        "chain_of_custody"
+      ]
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "citation_ids": [
+        "cit-001",
+        "cit-002"
+      ],
+      "confidence": 0.9,
+      "finding_id": "risk-001",
+      "finding_type": "risk",
+      "reasoning_status": "supported",
+      "text": "Duplicate sources may cause confusion in evidence mapping and chain of custody if not resolved."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "NAP-SRC-0011 and NAP-SRC-0041 are duplicate sources. Both are meeting confirmation emails from Nika Srebrzynska to Anfal Elbushra dated 8 April 2026 for a 10 April 2026 meeting at Bainfield Reception. Extracted text is identical (same SHA-256). File sizes differ (163066 vs 163066 bytes) but SHA-256 of PDFs differ, suggesting separate file copies of the same email. Recommend deduplication and retention of one canonical copy.",
+  "task_id": "bundle-09-dedup-check",
+  "uncertainties": [
+    {
+      "citation_ids": [
+        "cit-005",
+        "cit-006"
+      ],
+      "confidence": 0.7,
+      "finding_id": "u-001",
+      "finding_type": "uncertainty",
+      "reasoning_status": "uncertain",
+      "text": "The reason for two separate PDF copies (different SHA-256) is unknown; they may be from different email exports or system saves."
+    }
+  ]
+}

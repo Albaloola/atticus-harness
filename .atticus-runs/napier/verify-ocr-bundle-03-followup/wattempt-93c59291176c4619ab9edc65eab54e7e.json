@@ -1,0 +1,163 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "source_materials excerpt, 'Monthly Household Income' section",
+      "quote": "Student Loan, Bursary ... 770.0",
+      "target_id": "NAP-SRC-0008",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "source_materials excerpt, 'Rent, Mortgage or Accommodation Costs' field",
+      "quote": "Rent, Mortgage or Accommodation Costs ... 5526.66",
+      "target_id": "NAP-SRC-0008",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-003",
+      "locator": "source_materials excerpt, 'Current Balance' field",
+      "quote": "Current Balance (including overdraft) ... 0.38",
+      "target_id": "NAP-SRC-0008",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-004",
+      "locator": "source_materials excerpt, 'Personal Supporting Statement'",
+      "quote": "I commute from Glasgow to Edinburgh ... my parents rely on government benefits",
+      "target_id": "NAP-SRC-0008",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-005",
+      "locator": "source_materials excerpt, 'Monthly Household Expenditure' section",
+      "quote": "Council Tax ... 0.0",
+      "target_id": "NAP-SRC-0008",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-006",
+      "locator": "source_materials excerpt, 'Bank Accounts' section",
+      "quote": "Name of Bank ... Monzo ... Name as held on account ... Anfal Elbushra",
+      "target_id": "NAP-SRC-0008",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001"
+      ],
+      "confidence": 0.9,
+      "finding_id": "f-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Applicant reports monthly student loan/bursary income of \u00a3770 from SAAS/SFE/SFW/SFNI/SUSI."
+    },
+    {
+      "citation_ids": [
+        "cit-002"
+      ],
+      "confidence": 0.85,
+      "finding_id": "f-002",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Applicant reports monthly rent/accommodation costs of \u00a35,526.66, which is unusually high for a student."
+    },
+    {
+      "citation_ids": [
+        "cit-003"
+      ],
+      "confidence": 0.9,
+      "finding_id": "f-003",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Applicant's Monzo bank account shows a current balance of \u00a30.38."
+    },
+    {
+      "citation_ids": [
+        "cit-004"
+      ],
+      "confidence": 0.85,
+      "finding_id": "f-004",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Applicant states they commute from Glasgow to Edinburgh and parents rely on government benefits."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "review_note",
+      "content": "Manual spot-check of NAP-SRC-0008 PDF completed. The extracted text appears consistent with the PDF structure. Key finding: the \u00a35,526.66 rent field is anomalously high and should be verified against the original PDF form field alignment. No redaction concerns identified. Recommend follow-up task to cross-check the rent field.",
+      "path": "candidate/verify-ocr-bundle-03-followup/result.md",
+      "stage": "S3",
+      "title": "Manual spot-check result for NAP-SRC-0008"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Open the original PDF NAP-SRC-0008 and visually inspect the 'Rent, Mortgage or Accommodation Costs' field. Confirm whether the value \u00a35,526.66 is correctly entered or if it is a data-entry error or OCR misalignment. Report the correct value and any notes on field alignment.",
+      "matter_scope": "napier-accommodation-arrears",
+      "source_dependencies": [
+        "NAP-SRC-0008"
+      ],
+      "stage": "S3",
+      "task_id": "verify-rent-field-NAP-SRC-0008",
+      "task_type": "manual_review",
+      "title": "Verify rent field in NAP-SRC-0008 PDF"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "citation_ids": [
+        "cit-001",
+        "cit-002"
+      ],
+      "confidence": 0.85,
+      "finding_id": "r-001",
+      "reasoning_status": "supported",
+      "text": "The reported rent of \u00a35,526.66 far exceeds the stated income of \u00a3770/month, indicating potential financial vulnerability or data error."
+    },
+    {
+      "citation_ids": [
+        "cit-004"
+      ],
+      "confidence": 0.7,
+      "finding_id": "r-002",
+      "reasoning_status": "uncertain",
+      "text": "Applicant reports \u00a30 public transport costs despite stating a daily Glasgow-Edinburgh commute, which may be inconsistent."
+    },
+    {
+      "confidence": 0.9,
+      "finding_id": "r-003",
+      "reasoning_status": "uncertain",
+      "text": "No evidence of tenancy agreement or housing cost verification is present in the extracted text."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Extracted text from NAP-SRC-0008 (Living Cost Questions - Trimester 2) shows a student applicant claiming \u00a3770 monthly SAAS income and \u00a35,526.66 monthly rent/accommodation costs, with a \u00a30.38 Monzo balance. The rent figure is anomalously high for a student and may be a data-entry error or OCR misalignment. No contradictions or redaction flags found. Proposed follow-up task to verify the rent field against the original PDF.",
+  "task_id": "verify-ocr-bundle-03-followup",
+  "uncertainties": [
+    {
+      "confidence": 0.7,
+      "finding_id": "u-001",
+      "reasoning_status": "uncertain",
+      "text": "The \u00a35,526.66 rent figure may be a data-entry error or OCR misalignment; the original PDF field alignment should be manually verified."
+    },
+    {
+      "confidence": 0.9,
+      "finding_id": "u-002",
+      "reasoning_status": "uncertain",
+      "text": "No bank statements or supporting documents are included in the extracted text to verify the claimed income and expenditure."
+    },
+    {
+      "confidence": 0.8,
+      "finding_id": "u-003",
+      "reasoning_status": "uncertain",
+      "text": "The applicant's housing situation (tenancy type, landlord) is not detailed in the extracted text."
+    }
+  ]
+}

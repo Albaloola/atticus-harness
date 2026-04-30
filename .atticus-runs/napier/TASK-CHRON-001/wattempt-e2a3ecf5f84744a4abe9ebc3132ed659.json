@@ -1,0 +1,156 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "source_materials entry",
+      "quote": "Tenancy Agreement\nBETWEEN\nThe Court of Edinburgh Napier University, PER\nEdinburgh Napier University\nProperty & Facilities\nStudent",
+      "target_id": "NAP-SRC-0018",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "source_materials entry",
+      "quote": "RE: Accommodation arrears\n\nFrom Donnelly, Kathleen <K.Donnelly@napier.ac.uk>\n     on behalf of\n     fees <fees@napier.a",
+      "target_id": "NAP-SRC-0049",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-003",
+      "locator": "source_materials entry",
+      "quote": "Accommodation Hardship Fund - payment date\n\nFrom Edinburgh Napier University <findafund@napier.ac.uk>\nDate Wed 26/11/20",
+      "target_id": "NAP-SRC-0022",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-004",
+      "locator": "source_materials entry",
+      "quote": "Re: Flat Transfer\n\nFrom Elbushra, Anfal <40805511@live.napier.ac.uk>\nDate Wed 11/03/2026 15:10\nTo   Srebrzynska, Nika <",
+      "target_id": "NAP-SRC-0058",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-005",
+      "locator": "source_materials entry",
+      "quote": "Castlelaw Flat 5 - Mould issue\n\nFrom Escribano, Julieta <J.Escribano@napier.ac.uk>\nDate Fri 20/03/2026 16:50",
+      "target_id": "NAP-SRC-0025",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-006",
+      "locator": "source_materials entry",
+      "quote": "Damp issues - update\n\nFrom Escribano, Julieta <J.Escribano@napier.ac.uk>\nDate Thu 23/04/2026 14:55",
+      "target_id": "NAP-SRC-0026",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001"
+      ],
+      "confidence": 0.85,
+      "finding_id": "F-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Tenancy agreement for 2025-26 between Edinburgh Napier University and Anfal Elbushra exists."
+    },
+    {
+      "citation_ids": [
+        "cit-002"
+      ],
+      "confidence": 0.85,
+      "finding_id": "F-002",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Accommodation arrears correspondence sent by fees department (Kathleen Donnelly) to Anfal Elbushra."
+    },
+    {
+      "citation_ids": [
+        "cit-003"
+      ],
+      "confidence": 0.85,
+      "finding_id": "F-003",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Accommodation Hardship Fund payment date email sent 26 Nov 2025."
+    },
+    {
+      "citation_ids": [
+        "cit-004",
+        "cit-005",
+        "cit-006"
+      ],
+      "confidence": 0.85,
+      "finding_id": "F-004",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Flat transfer requested 11 Mar 2026; mould issue reported 20 Mar 2026; damp update 23 Apr 2026."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "chronology",
+      "content": "## Chronology Events (Candidate)\n\n| Date | Event | Source |\n|------|-------|--------|\n| Sep 2025 (approx) | Tenancy start (2025-26 agreement) | NAP-SRC-0018 |\n| 26 Nov 2025 | Accommodation Hardship Fund payment date email | NAP-SRC-0022 |\n| 27 Nov 2025 | Potential new flatmate action required | NAP-SRC-0044 |\n| 27 Nov 2025 | Potential new flatmate important information | NAP-SRC-0045 |\n| 18 Dec 2025 | FW: Hello and today's offer of appointment | NAP-SRC-0032 |\n| 7 Jan 2026 | Fire risk assessment access required | NAP-SRC-0039 |\n| 9 Feb 2026 | Reminder - No Smoking or Vaping Policy | NAP-SRC-0060 |\n| 21 Feb 2026 | Find-a-Fund Application | NAP-SRC-0033 |\n| 24 Feb 2026 | Wifinity survey | NAP-SRC-0068 |\n| 25 Feb 2026 | Private Sector Accommodation Fair | NAP-SRC-0031 |\n| 5 Mar 2026 | Baillie Gifford Scholarships email | NAP-SRC-0023 |\n| 5 Mar 2026 | No Resident Assistant on duty | NAP-SRC-0042 |\n| 9 Mar 2026 | RA Applications are now open! | NAP-SRC-0046 |\n| 11 Mar 2026 | Flat transfer request by Anfal Elbushra | NAP-SRC-0058 |\n| 12 Mar 2026 | RE: Flat transfer - Next steps | NAP-SRC-0052 |\n| 16 Mar 2026 | Help Us Upgrade the Common Room! | NAP-SRC-0036 |\n| 16 Mar 2026 | Slateford Road Trimester 2 Full Flat Inspections | NAP-SRC-0066 |\n| 20 Mar 2026 | Castlelaw Flat 5 - Mould issue | NAP-SRC-0025 |\n| 26 Mar 2026 | Castlelaw 5 - Flat Inspection Feedback | NAP-SRC-0024 |\n| 30 Mar 2026 | Maintenance access | NAP-SRC-0040 |\n| 1 Apr 2026 | IMPORTANT: Fire Safety and Smoking Policy | NAP-SRC-0038 |\n| 8 Apr 2026 | Santander Universities Enterprise Fund LIVE | NAP-SRC-0064 |\n| 10 Apr 2026 | Meeting Confirmation - 1pm Friday 10th April | NAP-SRC-0041 |\n| 17 Apr 2026 | RE: extension request form | NAP-SRC-0056 |\n| 23 Apr 2026 | Damp issues - update | NAP-SRC-0026 |\n| 24 Apr 2026 | ENSA Advice | NAP-SRC-0027 |\n| 24 Apr 2026 | Optional PDT Drop-in Meeting on 29 April | NAP-SRC-0043 |\n| 26 Apr 2026 | Re: Placement Attendance \u2013 Please Respond Urgently | NAP-SRC-0059 |\n| 28 Apr 2026 | Bank statement end date (Monzo) | NAP-SRC-0012 |\n| (undated) | Accommodation arrears correspondence | NAP-SRC-0049 |\n| (undated) | RE: Certificates | NAP-SRC-0050 |\n| (undated) | RE: Drawer top shelf broken | NAP-SRC-0051 |\n| (undated) | RE: Transferring fee | NAP-SRC-0054 |\n| (undated) | RE: Urgent Support Request \u2013 Accommodation and Wellbeing | NAP-SRC-0055 |\n| (undated) | RE: hello CRM:00380000000541 | NAP-SRC-0057 |\n| (undated) | RE: Absence | NAP-SRC-0047 |\n| (undated) | Reminder to book initial appointment | NAP-SRC-0061 |\n| (undated) | Settled into your accommodation? Check your cover. | NAP-SRC-0065 |\n| (undated) | Visit from Potential New Flatmate \u2013 Wednesday 3 December | NAP-SRC-0067 |\n| (undated) | Student newsletter (RA jobs, Varsity 2026) | NAP-SRC-0016, NAP-SRC-0063 |\n| (undated) | Student Misconduct and Schedule of Charges 2025-26 | NAP-SRC-0017 |\n| (undated) | Edinburgh Short Term Stays and Transport | NAP-SRC-0004 |\n| (undated) | Private Accommodation Brochure 2025 | NAP-SRC-0014 |\n| (undated) | Private Accommodation Contract Checking Guide | NAP-SRC-0015 |\n| (undated) | Edinburgh Letting Agents, Websites, and Private Student Accommodation 2025 | NAP-SRC-0003 |\n| (undated) | NHS Lothian Student User ID Request Form | NAP-SRC-0013 |\n| (undated) | SAAS notification (forwarded) | NAP-SRC-0034, NAP-SRC-0035 |\n| (undated) | Granter Agreement | NAP-SRC-0005 |\n| (undated) | Living Cost Questions Trimester 1 and 2 | NAP-SRC-0008, NAP-SRC-0009 |\n| (undated) | Coursework Extension Form RE1 | NAP-SRC-0002 |\n| (undated) | Payment Confirmation (Ref: ENU447436) | NAP-SRC-0007 |\n| (undated) | IMG_0303.jpeg, IMG_0304.jpeg (hand-delivered notices) | NAP-SRC-0006, NAP-SRC-0007 |\n| (undated) | WhatsApp images (hand-delivered notices) | NAP-SRC-0019, NAP-SRC-0020 |\n| (undated) | Christmas closure 2025 | NAP-SRC-0037 |\n| (undated) | Post-fair information (Private Sector Accommodation Fair 2026) | NAP-SRC-0030 |\n\n**Note:** Dates marked \"(undated)\" require full source text review to extract precise dates.",
+      "path": "candidate/TASK-CHRON-001/chronology_events.md",
+      "stage": "S4",
+      "title": "Expanded Chronology Events"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Extract precise dates, amounts, and outcomes from the full text of sources NAP-SRC-0018 (tenancy agreement), NAP-SRC-0049 (arrears), NAP-SRC-0022 (hardship fund), NAP-SRC-0055 (urgent support request), and NAP-SRC-0012 (bank statement). Update chronology with exact values.",
+      "matter_scope": "napier-accommodation-arrears",
+      "stage": "S4",
+      "task_id": "TASK-CHRON-002",
+      "task_type": "chronology_event_extraction",
+      "title": "Extract precise dates and amounts from key sources"
+    }
+  ],
+  "redaction_flags": [
+    {
+      "finding_id": "RED-001",
+      "text": "Source NAP-SRC-0001 contains SAAS correspondence with personal data (name, address)."
+    },
+    {
+      "finding_id": "RED-002",
+      "text": "Source NAP-SRC-0012 contains bank statement with financial transactions."
+    },
+    {
+      "finding_id": "RED-003",
+      "text": "Source NAP-SRC-0002 contains coursework extension request with personal details."
+    }
+  ],
+  "risk_flags": [
+    {
+      "finding_id": "R-001",
+      "text": "Arrears correspondence may indicate potential eviction or debt recovery action."
+    },
+    {
+      "finding_id": "R-002",
+      "text": "Mould and damp issues could affect habitability and tenant rights."
+    },
+    {
+      "finding_id": "R-003",
+      "text": "Flat transfer request suggests possible dissatisfaction or need for alternative accommodation."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Extracted key chronology events from 62 source materials for matter napier-accommodation-arrears. Identified tenancy start (Sep 2025), arrears correspondence (Apr 2026), hardship fund application (Nov 2025), flat transfer request (Mar 2026), and mould/damp issues (Mar-Apr 2026). Proposed follow-up task to extract precise dates and amounts from full source text.",
+  "task_id": "TASK-CHRON-001",
+  "uncertainties": [
+    {
+      "finding_id": "U-001",
+      "text": "Exact arrears amount and due dates not extractable from source_material excerpts alone."
+    },
+    {
+      "finding_id": "U-002",
+      "text": "Hardship fund payment amount and outcome not specified in excerpt."
+    },
+    {
+      "finding_id": "U-003",
+      "text": "Full tenancy start and end dates not confirmed from excerpt; need full text of NAP-SRC-0018."
+    }
+  ]
+}

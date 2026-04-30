@@ -1,0 +1,60 @@
+{
+  "citations": [],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No source materials or artifacts were provided in this work order; the task cannot be executed without source documents."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-002",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "External upload actions are blocked by Atticus policy; this worker cannot perform file uploads or contact workflows."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "drafting_note",
+      "content": "This ingest task cannot be completed because no source documents were provided in the work order. The worker is blocked from performing external uploads. A human operator or upstream task should attach the relevant source documents (e.g., tenancy agreements, arrears statements, correspondence) to the matter before re-running this task.",
+      "path": "candidate/TASK-CHRON-004B-UPLOAD-SOURCES/result.md",
+      "stage": "S4",
+      "title": "Upload task result note"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Locate the Napier accommodation arrears source documents (e.g., tenancy agreements, arrears statements, correspondence, university accommodation policies). Attach them as source materials to the matter so that TASK-CHRON-004B-UPLOAD-SOURCES can proceed.",
+      "matter_scope": "napier-accommodation-arrears",
+      "stage": "S4",
+      "task_id": "TASK-CHRON-004B-FETCH-SOURCES",
+      "task_type": "ingest",
+      "title": "Obtain and attach source documents for Napier accommodation arrears"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "confidence": 1.0,
+      "risk_flag_id": "RF-001",
+      "text": "Task cannot proceed without source documents; missing evidence may delay the matter."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Task is an ingest/upload step for Napier accommodation arrears. No source materials, artifacts, or evidence were provided in this work order. No upload, email, or external action can be performed. The task cannot be completed without source documents. A follow-up task is proposed to obtain and attach source documents.",
+  "task_id": "TASK-CHRON-004B-UPLOAD-SOURCES",
+  "uncertainties": [
+    {
+      "confidence": 1.0,
+      "text": "No source documents were supplied; the location or identity of the Napier accommodation arrears documents is unknown.",
+      "uncertainty_id": "U-001"
+    }
+  ]
+}

@@ -1,0 +1,91 @@
+{
+  "citations": [],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No source materials or artifacts were supplied in the work order; the evidence manifest is empty."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-002",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "The task requires searching the matter repository for Napier accommodation arrears documents, but no repository index or source list is available in context."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "report",
+      "content": "## Repository Search Result\n\n**Task:** TASK-CHRON-004C-SEARCH-REPO\n**Matter Scope:** napier-accommodation-arrears\n**Stage:** S4\n\n### Outcome\nNo source materials or artifacts were available in the work order context. The evidence manifest and source_materials sections were empty. Therefore, no documents related to Napier accommodation arrears could be identified or cited from the provided context.\n\n### Next Steps\nA follow-up task (TASK-CHRON-004D-LOCATE-SOURCES) is proposed to locate and ingest the relevant source records from the matter repository. Once sources are available, a subsequent search and extraction task can be performed.",
+      "path": "candidate/TASK-CHRON-004C-SEARCH-REPO/result.md",
+      "stage": "S4",
+      "title": "Napier accommodation arrears repository search result"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "cost_limit_usd": 0.01,
+      "expected_value": 0.9,
+      "instructions": "Identify the source repository or storage system holding Napier accommodation arrears documents. Use the ListMatterSources tool to enumerate available sources. If sources exist, ingest them into the matter context so that subsequent search and extraction tasks can proceed. If no sources are found, report the gap and request human assistance to locate the records.",
+      "matter_dependencies": [],
+      "matter_scope": "napier-accommodation-arrears",
+      "provider_policy": {},
+      "required_certifications": [],
+      "source_dependencies": [],
+      "stage": "S4",
+      "task_dependencies": [],
+      "task_id": "TASK-CHRON-004D-LOCATE-SOURCES",
+      "task_type": "ingest",
+      "title": "Locate and ingest Napier accommodation arrears source records",
+      "validation_gates": []
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "finding_ids": [
+        "F-001",
+        "F-002"
+      ],
+      "risk_flag_id": "RISK-001",
+      "text": "No source materials were provided; the task cannot be completed without locating and ingesting relevant documents."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "No source materials or artifacts were provided in this work order. The task is to search the matter source repository for Napier accommodation arrears documents, but the evidence manifest and source_materials sections are empty. No documents, citations, or findings can be supported from the available context. A follow-up task is proposed to locate and ingest relevant source records.",
+  "task_id": "TASK-CHRON-004C-SEARCH-REPO",
+  "uncertainties": [
+    {
+      "finding_ids": [
+        "F-001",
+        "F-002"
+      ],
+      "text": "Which source repository or storage system holds the Napier accommodation arrears documents is unknown from the provided context.",
+      "uncertainty_id": "U-001"
+    },
+    {
+      "finding_ids": [
+        "F-001",
+        "F-002"
+      ],
+      "text": "The scope and volume of documents related to Napier accommodation arrears within the matter is unknown.",
+      "uncertainty_id": "U-002"
+    },
+    {
+      "finding_ids": [
+        "F-001",
+        "F-002"
+      ],
+      "text": "Whether any OCR or extraction has been performed on Napier accommodation arrears documents is unknown.",
+      "uncertainty_id": "U-003"
+    }
+  ]
+}

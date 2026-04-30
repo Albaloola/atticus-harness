@@ -1,0 +1,90 @@
+{
+  "citations": [],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No source materials or artifacts were provided in this work order. The evidence manifest and source_materials sections are empty."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-002",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "The task requires searching the matter source repository and legal memory for arrears-related documents, but no repository access or memory entries were provided."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-003",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "The authority map includes relevant Scottish housing statutes (e.g., Private Housing (Tenancies) (Scotland) Act 2016, Housing (Scotland) Acts) and Equality Act 2010 provisions, but no facts or legal claims can be supported without source evidence."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "evidence_map",
+      "content": "## Evidence Map for napier-accommodation-arrears (T-005)\n\n### Sources Reviewed\n- None provided in this work order.\n\n### Key Gaps\n- No tenancy agreement, arrears ledger, correspondence, or notice documents were available.\n- No legal memory entries were available.\n\n### Relevant Authorities (not yet applied)\n- Private Housing (Tenancies) (Scotland) Act 2016, schedule 1 (excludes student accommodation)\n- Housing (Scotland) Act 1988, s.12 and schedule 4 (assured tenancy exclusions)\n- Housing (Scotland) Act 2001, s.7 (minimum notice)\n- Equality Act 2010, ss.20, 21, 91 (reasonable adjustments, discrimination)\n- Scottish Public Services Ombudsman Act 2002 (complaint jurisdiction)\n\n### Next Steps\n- Search matter source repository for arrears-related documents.\n- Search legal memory for prior findings or procedural history.",
+      "path": "candidate/T-005/evidence_map.md",
+      "stage": "S2",
+      "title": "Evidence Map for napier-accommodation-arrears"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "instructions": "Use the ListMatterSources and SearchLegalMemory tools to locate any tenancy agreements, arrears ledgers, correspondence, notices, or other documents related to accommodation arrears in the napier-accommodation-arrears matter. Retrieve and include the full text or relevant excerpts of any found documents as source materials for further analysis.",
+      "matter_dependencies": [],
+      "matter_scope": "napier-accommodation-arrears",
+      "source_dependencies": [],
+      "stage": "S2",
+      "task_dependencies": [],
+      "task_id": "T-005-followup",
+      "task_type": "source_discovery",
+      "title": "Search matter source repository and legal memory for arrears-related documents",
+      "validation_gates": [
+        "claim_evidence_support"
+      ]
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "finding_id": "F-001",
+      "risk_flag_id": "RF-001",
+      "text": "Absence of source materials may indicate incomplete evidence collection; cannot support claim_evidence_support validation gate."
+    },
+    {
+      "finding_id": "F-002",
+      "risk_flag_id": "RF-002",
+      "text": "No memory entries available; prior work or procedural context is unknown."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "No source materials or artifacts were provided in this work order. The matter scope is napier-accommodation-arrears. No arrears-related documents, tenancy agreements, correspondence, or financial records were available for review. The authority map includes relevant Scottish housing and equality statutes. A follow-up task is proposed to search the matter source repository and legal memory for arrears-related documents.",
+  "task_id": "T-005",
+  "uncertainties": [
+    {
+      "finding_id": "F-001",
+      "text": "No source materials or artifacts were provided; cannot determine if arrears-related documents exist in the matter repository.",
+      "uncertainty_id": "U-001"
+    },
+    {
+      "finding_id": "F-002",
+      "text": "Legal memory index is empty; no prior findings or procedural history are available.",
+      "uncertainty_id": "U-002"
+    },
+    {
+      "finding_id": "F-003",
+      "text": "Without source evidence, no factual or legal conclusions about arrears, tenancy type, or applicable law can be drawn.",
+      "uncertainty_id": "U-003"
+    }
+  ]
+}

@@ -1,0 +1,72 @@
+{
+  "citations": [],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No source materials or artifacts were provided in this work order. The task requires uploading a tenancy agreement and arrears correspondence, but no documents are available for review or ingestion."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-002",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "The task type is 'source_ingestion' and stage is S3, indicating an operational upload step. This worker cannot perform external uploads or contact workflows. Human or tool setup is required to obtain the documents."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "report",
+      "content": "## Task Result: Upload Napier accommodation tenancy agreement and arrears correspondence\n\n**Status:** Cannot execute. No source materials or artifacts were provided in the work order. The task requires uploading a tenancy agreement and arrears correspondence, but no documents are available for review or ingestion.\n\n**Next Step:** A follow-up task has been proposed to locate and retrieve the required documents from the matter record or external sources (e.g., client, university housing office).",
+      "path": "candidate/task-followup-006/result.md",
+      "stage": "S3",
+      "title": "Task result: no documents available for upload"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "cost_limit_usd": 0.01,
+      "expected_value": 0.9,
+      "instructions": "Search the matter record for any existing references or artifacts related to the Napier accommodation tenancy agreement and arrears correspondence. If not found, request the documents from the client or relevant university housing office. Once obtained, upload them as source materials for the matter scope 'napier-accommodation-arrears'.",
+      "matter_scope": "napier-accommodation-arrears",
+      "required_certifications": [],
+      "source_dependencies": [],
+      "stage": "S3",
+      "task_dependencies": [],
+      "task_id": "task-followup-007",
+      "task_type": "source_ingestion",
+      "title": "Locate and retrieve Napier accommodation tenancy agreement and arrears correspondence",
+      "validation_gates": []
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "risk_id": "R-001",
+      "risk_type": "evidence_gap",
+      "text": "Without the tenancy agreement and arrears correspondence, no legal analysis or evidence review can be performed for the Napier accommodation arrears matter."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Task requires uploading a Napier accommodation tenancy agreement and arrears correspondence. No source materials or artifacts were provided in this work order. The matter scope is 'napier-accommodation-arrears' and the stage is S3 (source ingestion). No evidence is available to support any factual or legal findings. The task appears to be an operational upload step that cannot be executed by this worker. A follow-up task is proposed to obtain the required documents from the matter record.",
+  "task_id": "task-followup-006",
+  "uncertainties": [
+    {
+      "reasoning_status": "needs_research",
+      "text": "The location and availability of the Napier accommodation tenancy agreement and arrears correspondence are unknown. No source materials or artifact references were provided.",
+      "uncertainty_id": "U-001"
+    },
+    {
+      "reasoning_status": "needs_research",
+      "text": "It is unclear whether the required documents exist in the matter record or need to be obtained from an external source (e.g., client, university housing office).",
+      "uncertainty_id": "U-002"
+    }
+  ]
+}

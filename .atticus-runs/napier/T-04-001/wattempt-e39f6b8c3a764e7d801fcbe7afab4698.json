@@ -1,0 +1,129 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "entire document",
+      "quote": "Edinburgh Napier University have not vetted the any of the premises contained within this document and cannot be held responsible for the experience of guests at these premises.",
+      "target_id": "NAP-SRC-0004",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "entire document",
+      "quote": "Most students who rent within the private sector should have a \u201cPrivate Residential Tenancy\u201d (although there are some exceptions, e.g., if you live with a resident landlord or in University Accommodation.",
+      "target_id": "NAP-SRC-0015",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-003",
+      "locator": "entire document",
+      "quote": "Rent increase notices must be served a minimum of 3 months in advance of any increase and this can only happen once every 12 months.",
+      "target_id": "NAP-SRC-0015",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-004",
+      "locator": "entire document",
+      "quote": "If you and your flatmates are all listed on one contract, be aware that you will have a joint tenancy. This means that you are all jointly responsible for the whole rent and for any damage you or your flatmates cause.",
+      "target_id": "NAP-SRC-0015",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001"
+      ],
+      "confidence": 0.95,
+      "finding_id": "F-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "NAP-SRC-0004 is a general guide to short-term accommodation and transport in Edinburgh, with no reference to Anfal, her tenancy, or any arrears."
+    },
+    {
+      "citation_ids": [
+        "cit-002",
+        "cit-003",
+        "cit-004"
+      ],
+      "confidence": 0.95,
+      "finding_id": "F-002",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "NAP-SRC-0015 is a general student guide to private rental contracts in Scotland; it does not mention Anfal, her specific tenancy, or any arrears."
+    },
+    {
+      "citation_ids": [
+        "cit-001",
+        "cit-002"
+      ],
+      "confidence": 0.9,
+      "finding_id": "F-003",
+      "finding_type": "inference",
+      "reasoning_status": "inferred",
+      "text": "Neither source contains evidence directly relevant to Anfal's accommodation arrears claim; both are generic informational documents."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-004",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "Task scope limited to verifying relevance of two sources; no claim-specific evidence was found. Further review of Anfal's actual tenancy agreement and arrears correspondence is needed."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "analysis",
+      "content": "## Relevance Assessment\n\n**Task:** Verify relevance of NAP-SRC-0004 and NAP-SRC-0015 to Anfal's case.\n\n**NAP-SRC-0004** (Edinburgh Short Term Stays and Transport): This is a general guide listing hostels, B&Bs, hotels, and transport options in Edinburgh. It contains no information about Anfal, her tenancy, rent arrears, or any contractual obligations. **Irrelevant.**\n\n**NAP-SRC-0015** (Private Accommodation Contract Checking Guide): This is a student-oriented guide explaining Scottish private rental law (e.g., Private Residential Tenancies, notice periods, rent increases, joint tenancies). While it provides general legal context, it does not reference Anfal, her specific tenancy, or any arrears. **Irrelevant to the specific facts of the case.**\n\n**Conclusion:** Neither source provides direct evidence for or against any claim in Anfal's accommodation arrears dispute. Further review of Anfal's actual tenancy agreement and related correspondence is required.",
+      "path": "candidate/T-04-001/relevance-assessment.md",
+      "stage": "S2",
+      "title": "Relevance Assessment for NAP-SRC-0004 and NAP-SRC-0015"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "instructions": "Locate and review Anfal's actual tenancy agreement (if available) and any correspondence related to the alleged arrears (e.g., demand letters, emails, payment records). Assess the terms of the tenancy, the amount claimed, and any defenses. Cite all relevant sources.",
+      "matter_scope": "napier-accommodation-arrears",
+      "source_dependencies": [],
+      "stage": "S2",
+      "task_id": "T-04-002",
+      "task_type": "evidence_verification",
+      "title": "Review Anfal's tenancy agreement and arrears correspondence",
+      "validation_gates": [
+        "claim_evidence_support"
+      ]
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "confidence": 0.95,
+      "finding_id": "R-001",
+      "text": "Reliance on these generic sources alone would be insufficient to support or defend any claim in Anfal's case."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "NAP-SRC-0004 (Edinburgh Short Term Stays and Transport) is a general accommodation and transport guide for Edinburgh Napier University visitors; it contains no information about Anfal's tenancy, arrears, or specific contractual obligations. NAP-SRC-0015 (Private Accommodation Contract Checking Guide) is a student guide to checking private rental contracts; it provides general legal information about Scottish private residential tenancies, notice periods, rent increases, and joint tenancies, but does not reference Anfal, her specific tenancy, or any arrears. Neither source directly supports or contradicts any claim in Anfal's case. Both are irrelevant to the specific facts of Anfal's accommodation arrears dispute.",
+  "task_id": "T-04-001",
+  "uncertainties": [
+    {
+      "confidence": 0.95,
+      "finding_id": "U-001",
+      "text": "The specific terms of Anfal's tenancy agreement (e.g., rent amount, due dates, arrears amount) are not present in either source."
+    },
+    {
+      "confidence": 0.95,
+      "finding_id": "U-002",
+      "text": "Whether Anfal's tenancy is a Private Residential Tenancy, joint tenancy, or other type is not addressed in these sources."
+    },
+    {
+      "confidence": 0.95,
+      "finding_id": "U-003",
+      "text": "No evidence of any communication, notice, or demand related to Anfal's arrears is found in either source."
+    }
+  ]
+}

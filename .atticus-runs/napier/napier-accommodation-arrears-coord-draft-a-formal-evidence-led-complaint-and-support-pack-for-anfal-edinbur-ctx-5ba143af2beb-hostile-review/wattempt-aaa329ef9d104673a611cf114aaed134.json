@@ -1,0 +1,153 @@
+{
+  "citations": [
+    {
+      "citation_id": "C-001",
+      "excerpt": "Synthesis of arrears notice; original source not directly cited.",
+      "locator": "citation C-SYN-002",
+      "quote": "Rent Arrears: \u00a35526.66 Student Name: ANFAL ELBUSHRA As at: 20th April 2026 ... NTQ Date: 18th May 2026 ... Payment Reqd: 9th May 2026",
+      "target_id": "art-0e6fe6dbf06942e19dc6c1baa3b40b6d",
+      "target_type": "artifact"
+    },
+    {
+      "citation_id": "C-002",
+      "excerpt": "Tenancy agreement for Anfal Elbushra, likely dated August 2025 based on academic year.",
+      "locator": "extracted text: Tenancy Agreement header",
+      "quote": "Tenancy Agreement BETWEEN The Court of Edinburgh Napier University, PER Edinburgh Napier University Property & Facili",
+      "target_id": "NAP-SRC-0010",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "C-003",
+      "excerpt": "Equality Act 2010 reasonable adjustments duty.",
+      "locator": "sections 20 and 21",
+      "quote": "Duty to make reasonable adjustments and failure to comply with that duty",
+      "target_id": "auth-eb5f2cefd7674cf18e27c08f2af3960c",
+      "target_type": "authority"
+    },
+    {
+      "citation_id": "C-004",
+      "excerpt": "Private Housing (Tenancies) (Scotland) Act 2016 exclusion.",
+      "locator": "schedule 1",
+      "quote": "Tenancies which cannot be private residential tenancies, including student accommodation provided by a university or other educational institution",
+      "target_id": "auth-195c733fb83b4278ac5ed01e9e573fec",
+      "target_type": "authority"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "C-001"
+      ],
+      "confidence": 0.7,
+      "finding_id": "F-001",
+      "finding_type": "fact",
+      "reasoning_status": "uncertain",
+      "text": "The draft complaint asserts arrears of \u00a35,526.66 as of 20 April 2026, but the cited source is a synthesis artifact, not the original arrears notice."
+    },
+    {
+      "citation_ids": [
+        "C-002"
+      ],
+      "confidence": 0.6,
+      "finding_id": "F-002",
+      "finding_type": "fact",
+      "reasoning_status": "needs_research",
+      "text": "The draft relies on a tenancy agreement (NAP-SRC-0010) but does not provide its date or key terms, weakening the breach claim."
+    },
+    {
+      "citation_ids": [
+        "C-003"
+      ],
+      "confidence": 0.5,
+      "finding_id": "F-003",
+      "finding_type": "law",
+      "reasoning_status": "uncertain",
+      "text": "Equality Act 2010 reasonable adjustments duty is cited, but the draft lacks evidence of a disability or a request for adjustments."
+    },
+    {
+      "citation_ids": [
+        "C-004"
+      ],
+      "confidence": 0.8,
+      "finding_id": "F-004",
+      "finding_type": "risk",
+      "reasoning_status": "supported",
+      "text": "The complaint may be procedurally defective if the tenancy is excluded from private residential tenancy protections under the 2016 Act."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "hostile_review_report",
+      "content": "# Hostile Review Report\n\n## Overview\nThis review identifies critical weaknesses in the draft complaint, including unsupported factual claims, missing evidence, and legal overstatement. The draft is not ready for submission without further verification.\n\n## Key Weaknesses\n1. **Arrears Amount**: The claimed \u00a35,526.66 is cited from a synthesis artifact, not the original notice. The original source (likely NAP-SRC-0021) must be verified.\n2. **Tenancy Agreement**: The draft references NAP-SRC-0010 but does not extract its date or key terms, making breach allegations speculative.\n3. **Equality Act Claim**: No evidence of a disability or adjustment request is provided, rendering the reasonable adjustments argument unsupported.\n4. **Procedural Risk**: The tenancy may be excluded from private residential tenancy protections under the Private Housing (Tenancies) (Scotland) Act 2016, schedule 1, limiting available remedies.\n\n## Recommendations\n- Verify the arrears notice and cross-reference with bank statements.\n- Extract and cite specific tenancy terms.\n- Gather medical or disability evidence and correspondence requesting adjustments.\n- Assess the tenancy type to determine applicable legal framework.",
+      "path": "candidate/napier-accommodation-arrears-coord-draft-a-formal-evidence-led-complaint-and-support-pack-for-anfal-edinbur-ctx-5ba143af2beb-hostile-review/review_report.md",
+      "stage": "S7",
+      "title": "Hostile Review Report"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "cost_limit_usd": 0.01,
+      "expected_value": 0.8,
+      "instructions": "Locate and extract the original arrears notice (likely NAP-SRC-0021 or similar) to confirm the exact amount, date, and calculation. Cross-reference with bank statements (NAP-SRC-0012) and payment records.",
+      "matter_dependencies": [],
+      "matter_scope": "napier-accommodation-arrears",
+      "provider_policy": {},
+      "required_certifications": [],
+      "source_dependencies": [
+        "NAP-SRC-0021",
+        "NAP-SRC-0012"
+      ],
+      "stage": "S7",
+      "task_dependencies": [],
+      "task_id": "verify-arrears-notice",
+      "task_type": "source_verification",
+      "title": "Verify original arrears notice",
+      "validation_gates": [
+        "hostile_review",
+        "overstatement_risk",
+        "authority_support"
+      ]
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "description": "Arrears amount may be challenged if the original notice is not produced.",
+      "risk_id": "R-001",
+      "severity": "high"
+    },
+    {
+      "description": "Equality Act claim is vulnerable to dismissal for lack of prima facie evidence.",
+      "risk_id": "R-002",
+      "severity": "high"
+    },
+    {
+      "description": "Procedural risk if the tenancy is not a private residential tenancy, limiting statutory protections.",
+      "risk_id": "R-003",
+      "severity": "medium"
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Hostile review of complaint draft identifies weak factual support for arrears amount, missing tenancy agreement, overstatement of Equality Act claims, and procedural risks. Key evidence gaps require follow-up.",
+  "task_id": "napier-accommodation-arrears-coord-draft-a-formal-evidence-led-complaint-and-support-pack-for-anfal-edinbur-ctx-5ba143af2beb-hostile-review",
+  "uncertainties": [
+    {
+      "description": "The exact arrears amount and calculation method are unverified; the draft cites a synthesis, not the original notice.",
+      "severity": "high",
+      "uncertainty_id": "U-001"
+    },
+    {
+      "description": "The tenancy agreement date and key terms (e.g., rent, duration) are not extracted, making breach assessment speculative.",
+      "severity": "high",
+      "uncertainty_id": "U-002"
+    },
+    {
+      "description": "No evidence of a disability or reasonable adjustment request is provided, undermining the Equality Act claim.",
+      "severity": "high",
+      "uncertainty_id": "U-003"
+    }
+  ]
+}

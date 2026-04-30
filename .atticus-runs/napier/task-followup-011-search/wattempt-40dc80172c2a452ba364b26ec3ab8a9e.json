@@ -1,0 +1,70 @@
+{
+  "citations": [],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No source materials, artifacts, or memory entries were supplied in the context pack for this task. The evidence manifest and source_materials sections are empty."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-002",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "The task title 'Search matter for existing Napier accommodation records' cannot be executed because no records or search tools are available in the current context. The available tools include SearchLegalMemory and ListMatterSources, but no search query or source identifiers were provided."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "report",
+      "content": "## Task: Search for Existing Napier Accommodation Records\n\n**Status:** No records found in current context.\n\n**Context Provided:**\n- Evidence manifest: empty\n- Source materials: empty\n- Artifact bundle: empty\n- Legal memory index: empty\n- Open contradictions: none\n\n**Available Authorities (not yet applied):**\n- Private Housing (Tenancies) (Scotland) Act 2016, schedule 1 (student accommodation exclusion)\n- Housing (Scotland) Act 1988, s.12 and schedule 4 (assured tenancy exclusions)\n- Equality Act 2010, ss.20, 21, 91 (reasonable adjustments, discrimination in education)\n- Scottish Public Services Ombudsman Act 2002 (complaint handling)\n\n**Next Steps:**\n1. Locate and ingest any source documents related to Napier accommodation (e.g., tenancy agreements, correspondence, arrears notices).\n2. Use SearchLegalMemory or ListMatterSources with relevant keywords once sources are available.\n3. Assess tenancy type and applicable statutory protections.\n4. Evaluate any arrears claim in light of the identified authorities.",
+      "path": "candidate/task-followup-011-search/result.md",
+      "stage": "S3",
+      "title": "Napier Accommodation Records Search Report"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Locate and ingest any source documents related to Napier accommodation arrears, including tenancy agreements, correspondence, arrears notices, and any prior legal or administrative filings. Use the matter scope 'napier-accommodation-arrears'. After ingestion, re-run the search task to identify and analyze the records.",
+      "matter_scope": "napier-accommodation-arrears",
+      "stage": "S3",
+      "task_id": "task-followup-011-ingest",
+      "task_type": "source_ingestion",
+      "title": "Ingest Napier accommodation source documents"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "finding_id": "R-001",
+      "text": "Absence of source materials may indicate that relevant records have not yet been ingested into the matter. This could delay assessment of the arrears claim."
+    },
+    {
+      "finding_id": "R-002",
+      "text": "Without source documents, any legal analysis of the tenancy type or applicable statutory protections (e.g., Equality Act 2010 s.91, Housing (Scotland) Act 1988) would be speculative."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "No source materials, artifacts, or memory entries were provided for the Napier accommodation arrears matter. The task is to search for existing Napier accommodation records, but the context pack contains no evidence, documents, or prior records. No supported findings about the existence or content of such records can be made. A follow-up task is proposed to locate and ingest relevant source documents.",
+  "task_id": "task-followup-011-search",
+  "uncertainties": [
+    {
+      "finding_id": "U-001",
+      "text": "It is unknown whether any Napier accommodation records exist in the matter because no sources, artifacts, or memory entries were provided."
+    },
+    {
+      "finding_id": "U-002",
+      "text": "The legal status of any potential Napier accommodation (e.g., whether it is excluded from assured tenancy under the Private Housing (Tenancies) (Scotland) Act 2016 schedule 1) cannot be assessed without source documents."
+    },
+    {
+      "finding_id": "U-003",
+      "text": "No information is available about the parties, dates, amounts, or procedural history of any alleged accommodation arrears."
+    }
+  ]
+}

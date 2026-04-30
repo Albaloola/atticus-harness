@@ -1,0 +1,86 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "entire document",
+      "quote": "Edinburgh Naplev\n\nBY HAND UNIVERSITY\nANFAL ELBUSHRA Facilities Services\nBedroom B Flat 05 Castlelaw House Student Accommogaton\n1E Slateford Road,Edinburgh,City of Sghi Camgs.\nEdinburgh,EH11 1FE,United Kingdom Sioniin ceir\nIl\nEDINBURGH EH11 48N\nTel: 0131 455 3713\naccommi\n20 April 2026 Fax: 01314088728\nDear ANFAL ELBUSHRA\n\nStudent Number: 40805511\n\nNOTICE TO QUIT\nTHE COURT OF EDINBURGH NAPIER UNIVERSITY\n\nFor and on behalf of your Landlord, The Court of Edinburgh Napier Unive\nhereby intimate to you that in respect that you have breached the\nTenancy Agreement in respect of the above property, in that you ha\nClause 2 of the said Tenancy Agreement, the said Court of Edinb\nUniversity holds the Tenancy Agreement as terminated as at 1.\nrequires you to move from Bedroom B Flat 05 Castlelaw Hol\n\ndate. i\n\nAn Accommodation Officer will make arrangements |\nYours sincerely,\nBrydon Connolly\nStudent Accommod.",
+      "target_id": "NAP-SRC-0020",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001"
+      ],
+      "confidence": 0.65,
+      "finding_id": "f-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "NAP-SRC-0020 is a Notice to Quit from Edinburgh Napier University to ANFAL ELBUSHRA, dated 20 April 2026, citing breach of Clause 2 of the Tenancy Agreement."
+    },
+    {
+      "citation_ids": [
+        "cit-001"
+      ],
+      "confidence": 0.65,
+      "finding_id": "f-002",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "The notice requires the tenant to vacate Bedroom B, Flat 05, Castlelaw House, and states an Accommodation Officer will make arrangements."
+    },
+    {
+      "citation_ids": [
+        "cit-001"
+      ],
+      "confidence": 0.65,
+      "finding_id": "f-003",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "The notice is signed by Brydon Connolly, Student Accommodation, with contact details including Tel: 0131 455 3713 and Fax: 0131 408 8728."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "f-004",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "OCR confidence is low (0.65); the termination date and exact wording of Clause 2 are illegible. A corrected text artifact is proposed."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "corrected_text",
+      "content": "Edinburgh Napier University\n\nBY HAND\n\nANFAL ELBUSHRA\nFacilities Services\nBedroom B, Flat 05, Castlelaw House\nStudent Accommodation\n1E Slateford Road\nEdinburgh, City of Edinburgh\nEH11 1FE, United Kingdom\n\nEDINBURGH EH11 4SN\nTel: 0131 455 3713\n\n20 April 2026\nFax: 0131 408 8728\n\nDear ANFAL ELBUSHRA\n\nStudent Number: 40805511\n\nNOTICE TO QUIT\nTHE COURT OF EDINBURGH NAPIER UNIVERSITY\n\nFor and on behalf of your Landlord, The Court of Edinburgh Napier University hereby intimate to you that in respect that you have breached the Tenancy Agreement in respect of the above property, in that you have breached Clause 2 of the said Tenancy Agreement, the said Court of Edinburgh Napier University holds the Tenancy Agreement as terminated as at [date illegible] and requires you to move from Bedroom B, Flat 05, Castlelaw House on that date.\n\nAn Accommodation Officer will make arrangements.\n\nYours sincerely,\nBrydon Connolly\nStudent Accommodation",
+      "path": "candidate/napier-bundle14-correct-text/corrected-text-NAP-SRC-0020.md",
+      "stage": "S3",
+      "title": "Corrected text for NAP-SRC-0020"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Review the original image NAP-SRC-0020 (WhatsApp Image 2026-04-28 at 12.34.22 PM.jpeg) to determine the exact termination date stated in the Notice to Quit. The OCR could not read it. Report the date or confirm it remains illegible.",
+      "matter_scope": "napier-accommodation-arrears",
+      "source_dependencies": [
+        "NAP-SRC-0020"
+      ],
+      "stage": "S3",
+      "task_id": "napier-bundle14-verify-termination-date",
+      "task_type": "extraction",
+      "title": "Verify termination date in NAP-SRC-0020"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "OCR-extracted text from NAP-SRC-0020 (a WhatsApp image of a Notice to Quit from Edinburgh Napier University) contains numerous errors. The corrected text is proposed as a candidate artifact. The source is a Notice to Quit addressed to ANFAL ELBUSHRA, citing breach of tenancy Clause 2, terminating the tenancy as at a date (illegible in OCR) and requiring vacating Bedroom B, Flat 05, Castlelaw House. The OCR confidence is low (0.65), and several fields (date, clause details) remain uncertain.",
+  "task_id": "napier-bundle14-correct-text",
+  "uncertainties": [
+    {
+      "finding_id": "f-004",
+      "reason": "OCR errors obscure the termination date and the precise language of Clause 2 breach."
+    }
+  ]
+}

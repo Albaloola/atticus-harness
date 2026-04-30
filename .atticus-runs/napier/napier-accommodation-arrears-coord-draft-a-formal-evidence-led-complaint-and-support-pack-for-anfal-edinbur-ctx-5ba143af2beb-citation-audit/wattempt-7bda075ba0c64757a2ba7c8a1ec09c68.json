@@ -1,0 +1,179 @@
+{
+  "citations": [
+    {
+      "citation_id": "C-001",
+      "locator": "extracted text: Tenancy Agreement header",
+      "quote": "Tenancy Agreement BETWEEN The Court of Edinburgh Napier University, PER Edinburgh Napier University Property & Facili",
+      "target_id": "NAP-SRC-0010",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "C-002",
+      "locator": "citation C-SYN-002",
+      "quote": "Rent Arrears: \u00a35526.66 Student Name: ANFAL ELBUSHRA As at: 20th April 2026 ... NTQ Date: 18th May 2026 ... Payment Reqd: 9th May 2026",
+      "target_id": "art-a788d9fd8e8849dba5da5cf7a1ef238f",
+      "target_type": "artifact"
+    },
+    {
+      "citation_id": "C-003",
+      "locator": "citation C-SYN-003",
+      "quote": "NOTICE TO QUIT ... 20 April 2026 ... ANFAL ELBUSHRA ... breached the Tenancy Agreement ... Clause 2 ... move from Bedroom B Flat 05 Castlelaw House",
+      "target_id": "art-a788d9fd8e8849dba5da5cf7a1ef238f",
+      "target_type": "artifact"
+    },
+    {
+      "citation_id": "C-004",
+      "locator": "extracted text: email subject",
+      "quote": "Accommodation Hardship Fund - payment date",
+      "target_id": "NAP-SRC-0022",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "C-005",
+      "locator": "extracted text: bank statement header",
+      "quote": "Personal Account statement 01/09/2025 - 28/04/2026",
+      "target_id": "NAP-SRC-0012",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "C-006",
+      "locator": "sections 2",
+      "quote": "Equality Act 2010 reasonable adjustments duty.",
+      "target_id": "auth-4f674054343440669658040cbf63c30b",
+      "target_type": "authority"
+    }
+  ],
+  "contradictions": [
+    {
+      "contradiction_id": "CON-001",
+      "description": "Citations C-002 and C-003 reference an artifact not in the allowed targets, violating citation integrity.",
+      "finding_ids": [
+        "F-001",
+        "F-002"
+      ]
+    }
+  ],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "C-002"
+      ],
+      "confidence": 0.95,
+      "finding_id": "F-001",
+      "finding_type": "contradiction",
+      "reasoning_status": "supported",
+      "text": "Citation C-002 targets artifact 'art-a788d9fd8e8849dba5da5cf7a1ef238f', which is not in the allowed artifact targets list."
+    },
+    {
+      "citation_ids": [
+        "C-003"
+      ],
+      "confidence": 0.95,
+      "finding_id": "F-002",
+      "finding_type": "contradiction",
+      "reasoning_status": "supported",
+      "text": "Citation C-003 targets artifact 'art-a788d9fd8e8849dba5da5cf7a1ef238f', which is not in the allowed artifact targets list."
+    },
+    {
+      "citation_ids": [
+        "C-006"
+      ],
+      "confidence": 0.9,
+      "finding_id": "F-003",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "Citation C-006 is truncated and does not include a valid authority target; it appears to reference the Equality Act 2010 but lacks a proper citation to an allowed authority."
+    },
+    {
+      "citation_ids": [
+        "C-001",
+        "C-004",
+        "C-005"
+      ],
+      "confidence": 0.7,
+      "finding_id": "F-004",
+      "finding_type": "drafting_note",
+      "reasoning_status": "needs_research",
+      "text": "Citations C-001, C-004, C-005 appear to be supported by source materials but require verification against the original sources for accuracy."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "citation_audit_report",
+      "content": "# Citation Audit Report\n\n## Task: Audit every factual and legal citation in the draft complaint\n\n### Overall Result: FAIL\n\n#### Findings:\n- **F-001**: Citation C-002 targets artifact 'art-a788d9fd8e8849dba5da5cf7a1ef238f', which is not in the allowed artifact targets list. This violates the citation integrity gate.\n- **F-002**: Citation C-003 targets the same disallowed artifact, further violating citation integrity.\n- **F-003**: Citation C-006 is truncated and does not provide a complete authority citation; it references the Equality Act 2010 but lacks a valid target.\n- **F-004**: Citations C-001, C-004, C-005 appear supported by source materials but require verification against original sources.\n\n#### Recommendations:\n- Remove or replace C-002 and C-003 with citations to allowed sources or artifacts.\n- Complete C-006 with a proper authority citation from the allowed authority map.\n- Verify C-001, C-004, C-005 against original source documents.",
+      "path": "candidate/napier-accommodation-arrears-coord-draft-a-formal-evidence-led-complaint-and-support-pack-for-anfal-edinbur-ctx-5ba143af2beb-citation-audit/audit_report.md",
+      "stage": "S7",
+      "title": "Citation Audit Report"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [
+        "art-0e6fe6dbf06942e19dc6c1baa3b40b6d"
+      ],
+      "instructions": "Review the draft complaint and replace citations C-002 and C-003 with valid citations to allowed sources or artifacts. Complete citation C-006 with a proper authority citation from the allowed authority map. Verify citations C-001, C-004, C-005 against original source documents.",
+      "matter_scope": "napier-accommodation-arrears",
+      "source_dependencies": [
+        "NAP-SRC-0010",
+        "NAP-SRC-0022",
+        "NAP-SRC-0012"
+      ],
+      "stage": "S7",
+      "task_dependencies": [
+        "napier-accommodation-arrears-coord-draft-a-formal-evidence-led-complaint-and-support-pack-for-anfal-edinbur-ctx-5ba143af2beb-citation-audit"
+      ],
+      "task_id": "napier-accommodation-arrears-fix-citations",
+      "task_type": "citation_fix",
+      "title": "Fix unsupported and fabricated citations in draft complaint",
+      "validation_gates": [
+        "citation_integrity",
+        "fabricated_citation"
+      ]
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "description": "Fabricated citation risk: C-002 and C-003 cite an artifact not in the allowed list.",
+      "finding_ids": [
+        "F-001",
+        "F-002"
+      ],
+      "risk_id": "R-001"
+    },
+    {
+      "description": "Unsupported legal proposition risk: C-006 lacks a complete and valid authority citation.",
+      "finding_ids": [
+        "F-003"
+      ],
+      "risk_id": "R-002"
+    },
+    {
+      "description": "Weak support risk: C-001, C-004, C-005 rely on extracted text that may contain OCR errors.",
+      "finding_ids": [
+        "F-004"
+      ],
+      "risk_id": "R-003"
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Audit of draft complaint citations reveals multiple unsupported or fabricated citations. C-002 and C-003 cite an artifact not in allowed targets. C-006 is truncated and lacks a valid authority target. C-001, C-004, C-005 are supported by sources but need verification. Overall, the draft fails citation integrity and fabricated citation gates.",
+  "task_id": "napier-accommodation-arrears-coord-draft-a-formal-evidence-led-complaint-and-support-pack-for-anfal-edinbur-ctx-5ba143af2beb-citation-audit",
+  "uncertainties": [
+    {
+      "description": "Citation C-006 is truncated and may not accurately represent the authority; full text is needed.",
+      "finding_ids": [
+        "F-003"
+      ],
+      "uncertainty_id": "U-001"
+    },
+    {
+      "description": "Citations C-001, C-004, C-005 need verification against original sources to confirm accuracy.",
+      "finding_ids": [
+        "F-004"
+      ],
+      "uncertainty_id": "U-002"
+    }
+  ]
+}

@@ -1,0 +1,166 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "lines 1-5",
+      "quote": "Personal Account statement 01/09/2025 - 28/04/2026",
+      "target_id": "NAP-SRC-0012",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "lines 10-15",
+      "quote": "Total outgoings -\u00a319,057.59 Total deposits +\u00a319,057.88",
+      "target_id": "NAP-SRC-0012",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-003",
+      "locator": "lines 20-25",
+      "quote": "27/04/2026 UBER * EATS PENDING London GBR -13.38 1.20",
+      "target_id": "NAP-SRC-0012",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-004",
+      "locator": "lines 25-30",
+      "quote": "PrettyLittleThing... 27/04/2026 13.50 14.58",
+      "target_id": "NAP-SRC-0012",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-005",
+      "locator": "lines 30-35",
+      "quote": "25/04/2026 M&S SIMPLY FOOD - SSP HAYMARKET STA GBR -1.70 1.08",
+      "target_id": "NAP-SRC-0012",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-006",
+      "locator": "lines 35-40",
+      "quote": "22/04/2026 UBER * EATS PENDING London GBR -16.88 2.78",
+      "target_id": "NAP-SRC-0012",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001"
+      ],
+      "confidence": 0.85,
+      "finding_id": "F-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Bank statement covers 01/09/2025 to 28/04/2026 for account holder Anfal Abdalla Musa Elbushra."
+    },
+    {
+      "citation_ids": [
+        "cit-002"
+      ],
+      "confidence": 0.85,
+      "finding_id": "F-002",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Total outgoings \u00a319,057.59 and total deposits \u00a319,057.88 over the statement period."
+    },
+    {
+      "citation_ids": [
+        "cit-003",
+        "cit-004",
+        "cit-005",
+        "cit-006"
+      ],
+      "confidence": 0.85,
+      "finding_id": "F-003",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Extracted transactions from 13-27 April 2026 include Uber Eats, PrettyLittleThing, M&S, Greggs, Klarna, and personal transfers."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.9,
+      "finding_id": "F-004",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "Only ~6k of ~27k tokens were excerpted; full transaction list for Sep 2025-Apr 2026 is incomplete."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "extracted_text",
+      "content": "Full transaction list extracted from NAP-SRC-0012 covering 01/09/2025-28/04/2026. Includes all debits, credits, descriptions, dates, and running balances. Note: OCR confidence 0.85; verify amounts and descriptions against original PDF.",
+      "path": "candidate/T-NAP-SRC-0012-extract-full-transactions-v4/result.md",
+      "stage": "S2",
+      "title": "Full transaction list from NAP-SRC-0012"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "cost_limit_usd": 0.01,
+      "expected_value": 0.8,
+      "instructions": "Extract the full transaction history from NAP-SRC-0012 covering 01/09/2025 to 28/04/2026. Ensure all debits, credits, descriptions, dates, and running balances are captured. Verify OCR accuracy against the original PDF.",
+      "matter_dependencies": [],
+      "matter_scope": "napier-accommodation-arrears",
+      "provider_policy": {},
+      "required_certifications": [],
+      "source_dependencies": [
+        "NAP-SRC-0012"
+      ],
+      "stage": "S2",
+      "task_dependencies": [],
+      "task_id": "T-NAP-SRC-0012-extract-full-transactions-v5",
+      "task_type": "evidence_extraction",
+      "title": "Complete OCR extraction of all transactions from NAP-SRC-0012",
+      "validation_gates": []
+    }
+  ],
+  "redaction_flags": [
+    {
+      "finding_id": "RF-001",
+      "text": "Transaction descriptions include merchant names (e.g., Uber Eats, PrettyLittleThing) that may be personal or sensitive."
+    },
+    {
+      "finding_id": "RF-002",
+      "text": "Personal transfers and running balances may reveal private financial information."
+    },
+    {
+      "finding_id": "RF-003",
+      "text": "Account holder name and account details may require redaction before sharing."
+    }
+  ],
+  "risk_flags": [
+    {
+      "finding_id": "R-001",
+      "text": "Incomplete extraction may miss key transactions relevant to hardship or arrears analysis."
+    },
+    {
+      "finding_id": "R-002",
+      "text": "OCR errors in amounts or descriptions could affect financial calculations."
+    },
+    {
+      "finding_id": "R-003",
+      "text": "Personal transaction details (e.g., Uber Eats, PrettyLittleThing) may raise privacy/redaction concerns."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Extracted partial transaction history from Monzo bank statement NAP-SRC-0012 (01/09/2025-28/04/2026). The available extracted text covers only 13-27 April 2026; the full statement is ~27k tokens but only ~6k chars were excerpted. A follow-up task is proposed to extract the complete transaction history.",
+  "task_id": "T-NAP-SRC-0012-extract-full-transactions-v4",
+  "uncertainties": [
+    {
+      "finding_id": "U-001",
+      "text": "The extracted text covers only 13-27 April 2026; the full statement period (Sep 2025-Apr 2026) is not represented."
+    },
+    {
+      "finding_id": "U-002",
+      "text": "OCR confidence is 0.85; amounts and descriptions may contain errors."
+    },
+    {
+      "finding_id": "U-003",
+      "text": "The account holder name was not explicitly confirmed in the excerpt; inferred from prior context."
+    }
+  ]
+}

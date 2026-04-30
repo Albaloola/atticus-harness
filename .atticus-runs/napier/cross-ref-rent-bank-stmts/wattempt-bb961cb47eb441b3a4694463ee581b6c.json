@@ -1,0 +1,114 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "Living Cost Questions - Trimester 2, Monthly Household Expenditure > Housing > Rent, Mortgage or Accommodation Costs",
+      "quote": "Rent, Mortgage or Accommodation Costs 5526.66",
+      "target_id": "NAP-SRC-0008",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "Living Cost Questions - Trimester 2, Monthly Household Income > Student Loan, Bursary",
+      "quote": "Student Loan, Bursary SAAS, SFE, SFW, SFNI or SUSI (please enter the monthly amount paid to you) 770.0",
+      "target_id": "NAP-SRC-0008",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-003",
+      "locator": "Living Cost Questions - Trimester 2, Bank Accounts > 1. Name of Bank",
+      "quote": "Name of Bank Monzo",
+      "target_id": "NAP-SRC-0008",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-004",
+      "locator": "Living Cost Questions - Trimester 2, Bank Accounts > 3. Current Balance (including overdraft)",
+      "quote": "Current Balance (including overdraft) 0.38",
+      "target_id": "NAP-SRC-0008",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001"
+      ],
+      "confidence": 0.85,
+      "finding_id": "f-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Applicant reported monthly accommodation costs of \u00a35,526.66 in the hardship application."
+    },
+    {
+      "citation_ids": [
+        "cit-002"
+      ],
+      "confidence": 0.85,
+      "finding_id": "f-002",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Applicant reported monthly student loan/bursary income of \u00a3770.00 from SAAS/SFE/SFW/SFNI/SUSI."
+    },
+    {
+      "citation_ids": [
+        "cit-003",
+        "cit-004"
+      ],
+      "confidence": 0.85,
+      "finding_id": "f-003",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Applicant holds a Monzo bank account with a current balance of \u00a30.38."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.0,
+      "finding_id": "f-004",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No bank statement or tenancy agreement provided in this work order to cross-reference the reported accommodation cost."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "cross_reference_report",
+      "content": "## Cross-Reference: Accommodation Cost vs. Bank Statements and Tenancy Agreement\n\n**Source:** NAP-SRC-0008 (Living Cost Questions - Trimester 2)\n\n**Reported Accommodation Cost:** \u00a35,526.66 per month\n\n**Reported Student Loan/Bursary Income:** \u00a3770.00 per month\n\n**Bank Account:** Monzo, balance \u00a30.38\n\n**Finding:** The reported accommodation cost (\u00a35,526.66) far exceeds the reported student loan income (\u00a3770.00) and the bank balance (\u00a30.38). No bank statement or tenancy agreement was available in this work order to verify the accommodation cost. A follow-up task is needed to obtain and cross-reference the actual bank statements and tenancy agreement.",
+      "path": "candidate/cross-ref-rent-bank-stmts/cross_reference_report.md",
+      "stage": "S3",
+      "title": "Accommodation Cost Cross-Reference Report"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Obtain the applicant's Monzo bank statements (last 30 days) and the tenancy agreement for the accommodation. Cross-reference the actual rent payment transactions with the reported accommodation cost of \u00a35,526.66. Verify the tenancy agreement terms, including rent amount, parties, and property address. Flag any discrepancies.",
+      "matter_scope": "napier-accommodation-arrears",
+      "stage": "S3",
+      "task_id": "obtain-bank-stmts-tenancy",
+      "task_type": "evidence_gathering",
+      "title": "Obtain bank statements and tenancy agreement for accommodation cost verification"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "description": "Reported accommodation cost (\u00a35,526.66) is extremely high relative to student loan income (\u00a3770.00) and bank balance (\u00a30.38), suggesting possible data entry error or need for verification.",
+      "risk_type": "data_integrity"
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Applicant reported monthly accommodation costs of \u00a35,526.66 and student loan income of \u00a3770.00, with a Monzo bank balance of \u00a30.38. No bank statements or tenancy agreement were provided in this work order to verify the accommodation cost. A follow-up task is proposed to obtain and cross-reference these documents.",
+  "task_id": "cross-ref-rent-bank-stmts",
+  "uncertainties": [
+    {
+      "description": "No bank statement or tenancy agreement was available in this work order to verify the reported accommodation cost of \u00a35,526.66.",
+      "impact": "Cannot confirm the accuracy of the reported accommodation cost or the terms of the tenancy."
+    },
+    {
+      "description": "The reported accommodation cost (\u00a35,526.66) is unusually high and may be a data entry error (e.g., entered as annual instead of monthly).",
+      "impact": "The financial picture may be materially misstated."
+    }
+  ]
+}

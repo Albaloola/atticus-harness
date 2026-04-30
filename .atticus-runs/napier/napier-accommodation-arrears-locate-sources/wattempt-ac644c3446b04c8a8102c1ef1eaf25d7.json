@@ -1,0 +1,66 @@
+{
+  "citations": [],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No source documents or source_materials were supplied in this work order. The task cannot locate or upload sources without evidence to review."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-002",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "The matter scope includes Scottish housing statutes (Private Housing (Tenancies) (Scotland) Act 2016, Housing (Scotland) Acts) and Equality Act 2010 provisions, but no case-specific documents are available."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "markdown",
+      "content": "# Source Location Status for Anfal Elbushra Accommodation Arrears\n\n**Task:** napier-accommodation-arrears-locate-sources\n**Stage:** S2\n**Date:** (candidate)\n\n## Summary\nNo source documents were provided in this work order. The matter involves potential accommodation arrears by Anfal Elbushra, with applicable Scottish housing and equality law. To proceed, the worker must first identify what sources already exist in the matter.\n\n## Recommended Next Steps\n1. Search legal memory for any prior references to Anfal Elbushra or the accommodation arrears.\n2. List all existing matter sources using the ListMatterSources tool.\n3. If no sources exist, request the operator to upload relevant documents (e.g., tenancy agreement, arrears statement, correspondence, complaint records).\n4. Once sources are available, review for key facts: tenancy type, arrears amount, dates, notice periods, and any disability or discrimination context.\n\n## Applicable Law (for reference)\n- Private Housing (Tenancies) (Scotland) Act 2016, schedule 1 (excluded tenancies)\n- Housing (Scotland) Act 1988, s.12 & schedule 4 (assured tenancy exclusions)\n- Housing (Scotland) Act 2001, s.7 (occupancy terms)\n- Equality Act 2010, ss.20-21, 91 (reasonable adjustments, discrimination in education)\n- Scottish Public Services Ombudsman Act 2002 (complaint jurisdiction)",
+      "path": "candidate/napier-accommodation-arrears-locate-sources/source-location-status.md",
+      "stage": "S2",
+      "title": "Source Location Status Report"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Use the SearchLegalMemory tool to find any prior references to Anfal Elbushra or accommodation arrears in the matter. Then use ListMatterSources to enumerate all uploaded source documents. Report what is found and identify gaps. If no sources exist, request the operator to upload relevant documents such as the tenancy agreement, arrears ledger, correspondence, and any complaint or ombudsman records.",
+      "matter_scope": "napier-accommodation-arrears",
+      "stage": "S2",
+      "task_id": "napier-accommodation-arrears-search-memory-and-sources",
+      "task_type": "evidence_review",
+      "title": "Search legal memory and list existing sources for Anfal Elbushra accommodation arrears"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "finding_id": "R-001",
+      "text": "No evidence is available to assess the merits of the accommodation arrears claim or any potential defences."
+    },
+    {
+      "finding_id": "R-002",
+      "text": "Without source documents, the worker cannot verify whether the accommodation is excluded from private residential tenancy status under schedule 1 of the 2016 Act."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "No source documents or source_materials were provided in this work order for the Anfal Elbushra accommodation arrears matter. The task is to locate and upload sources, but no evidence, artifacts, or source dependencies are available. The matter scope includes Scottish housing and equality statutes. A follow-up task is proposed to search the matter's legal memory and list existing sources to identify what is already on record before requesting new uploads.",
+  "task_id": "napier-accommodation-arrears-locate-sources",
+  "uncertainties": [
+    {
+      "finding_id": "U-001",
+      "text": "It is unknown what source documents (e.g., tenancy agreement, arrears ledger, correspondence, complaint letters) exist for Anfal Elbushra's accommodation arrears matter."
+    },
+    {
+      "finding_id": "U-002",
+      "text": "It is unknown whether any sources have already been uploaded to the matter but were not included in this work order's evidence manifest."
+    }
+  ]
+}

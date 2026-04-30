@@ -1,0 +1,65 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "extracted text",
+      "quote": "1 attachment (63 KB)\n2026-27 RA Application Pack.docx;",
+      "target_id": "NAP-SRC-0046",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001"
+      ],
+      "confidence": 0.95,
+      "finding_id": "F-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "NAP-SRC-0046 is a PDF email from Callum Abbot to Napier University accommodation residents, dated 09/03/2026, with an embedded .docx attachment named '2026-27 RA Application Pack.docx' (63 KB)."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-002",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "The extracted text does not contain the .docx binary. pdfdetach or Tika are required to extract the embedded file but are not available in the current harness."
+    }
+  ],
+  "proposed_artifacts": [],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "cost_limit_usd": 0.01,
+      "expected_value": 0.8,
+      "instructions": "Use pdfdetach or Apache Tika to extract the embedded file '2026-27 RA Application Pack.docx' from source NAP-SRC-0046 (PDF). Save the extracted .docx as a candidate artifact and then extract its text content.",
+      "matter_dependencies": [],
+      "matter_scope": "napier-accommodation-arrears",
+      "provider_policy": {},
+      "required_certifications": [],
+      "source_dependencies": [
+        "NAP-SRC-0046"
+      ],
+      "stage": "S2",
+      "task_dependencies": [],
+      "task_id": "T-B07-005-extract-docx-sub",
+      "task_type": "extraction",
+      "title": "Extract embedded .docx from NAP-SRC-0046 using pdfdetach or Tika",
+      "validation_gates": []
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Source NAP-SRC-0046 is a PDF email with an embedded .docx attachment (2026-27 RA Application Pack.docx). The extracted text confirms the attachment but does not contain the .docx binary. The task requires pdfdetach or Tika to extract the embedded file; these tools are not available in the current harness. A follow-up task is proposed to perform the extraction using a configured tool.",
+  "task_id": "T-B07-005-extract-docx",
+  "uncertainties": [
+    {
+      "description": "The embedded .docx file content is not available in the extracted text; it must be extracted using pdfdetach or Tika."
+    }
+  ]
+}

@@ -1,0 +1,191 @@
+{
+  "citations": [
+    {
+      "citation_id": "C1",
+      "excerpt": "The outstanding arrears for your accommodation are \u00a34605.55",
+      "locator": "email body",
+      "quote": "The outstanding arrears for your accommodation are \u00a34605.55",
+      "target_id": "NAP-SRC-0021",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "C2",
+      "excerpt": "Accommodation Arrears as of 10th April \u00a35,526.66",
+      "locator": "letter dated 20/04/2026",
+      "quote": "Accommodation Arrears as of 10th April \u00a35,526.66",
+      "target_id": "NAP-SRC-0048",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "C3",
+      "excerpt": "No transaction description matching 'Napier', 'accommodation', or 'rent' found in excerpt.",
+      "locator": "bank statement transactions",
+      "quote": "No transaction description matching 'Napier', 'accommodation', or 'rent' found in excerpt.",
+      "target_id": "NAP-SRC-0012",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "C4",
+      "excerpt": "I am fully committed to collaborate on a payment plan. However, I am afraid that securing \u00a35,526.66 by 5 days is not feasible.",
+      "locator": "email from Anfal Elbushra dated 20/04/2026",
+      "quote": "I am fully committed to collaborate on a payment plan. However, I am afraid that securing \u00a35,526.66 by 5 days is not feasible.",
+      "target_id": "NAP-SRC-0048",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "C5",
+      "excerpt": "I have a meeting today with nika at 1pm to discuss the arrears",
+      "locator": "email from Anfal Elbushra dated 10/04/2026",
+      "quote": "I have a meeting today with nika at 1pm to discuss the arrears",
+      "target_id": "NAP-SRC-0049",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "C6",
+      "excerpt": "Total outgoings -\u00a319,057.59, Total deposits +\u00a319,057.88",
+      "locator": "statement summary",
+      "quote": "Total outgoings -\u00a319,057.59, Total deposits +\u00a319,057.88",
+      "target_id": "NAP-SRC-0012",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [
+    {
+      "contradiction_id": "CON1",
+      "description": "Arrears amount differs between 8 April (\u00a34,605.55) and 20 April (\u00a35,526.66).",
+      "finding_ids": [
+        "F1",
+        "F2"
+      ],
+      "resolution_status": "unresolved"
+    }
+  ],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "C1"
+      ],
+      "confidence": 0.85,
+      "finding_id": "F1",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "University stated arrears of \u00a34,605.55 on 8 April 2026."
+    },
+    {
+      "citation_ids": [
+        "C2"
+      ],
+      "confidence": 0.85,
+      "finding_id": "F2",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "University stated arrears of \u00a35,526.66 on 20 April 2026."
+    },
+    {
+      "citation_ids": [
+        "C3"
+      ],
+      "confidence": 0.7,
+      "finding_id": "F3",
+      "finding_type": "fact",
+      "reasoning_status": "uncertain",
+      "text": "Bank statement (Sep 2025\u2013Apr 2026) shows no payments to Edinburgh Napier University or accommodation provider."
+    },
+    {
+      "citation_ids": [
+        "C1",
+        "C2"
+      ],
+      "confidence": 0.8,
+      "finding_id": "F4",
+      "finding_type": "contradiction",
+      "reasoning_status": "contradicted",
+      "text": "Arrears amount increased from \u00a34,605.55 to \u00a35,526.66 within 12 days without explanation in sources."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "analysis_summary",
+      "content": "## Financial Review Summary\n\n### Arrears Amounts\n- 8 April 2026: \u00a34,605.55 (NAP-SRC-0021)\n- 20 April 2026: \u00a35,526.66 (NAP-SRC-0048)\n- Discrepancy of \u00a3921.11 unexplained.\n\n### Payment History\n- Bank statement (NAP-SRC-0012) from 01/09/2025 to 28/04/2026 shows no payments to Edinburgh Napier University or accommodation provider.\n- Total outgoings: \u00a319,057.59; total deposits: \u00a319,057.88; balance: \u00a31.20.\n- High discretionary spending observed (e.g., Uber Eats, Klarna, retail).\n\n### Key Communications\n- 10 April: Anfal informed finance of meeting to discuss arrears (NAP-SRC-0049).\n- 20 April: Anfal requested payment plan, stated inability to pay \u00a35,526.66 in 5 days (NAP-SRC-0048).\n- 21 April: Finance acknowledged different deadline (9 May) due to notice to quit (NAP-SRC-0048).\n\n### Risks\n- No evidence of payments made.\n- Spending patterns may weaken hardship claim.\n- Enforcement action possible if arrears not resolved.\n\n### Next Steps\n- Reconcile arrears figures with tenancy agreement.\n- Obtain full bank statement and payment receipts.\n- Verify any funding applications or support arrangements.",
+      "path": "candidate/napier-accommodation-arrears-coord-draft-a-formal-evidence-led-complaint-and-support-pack-for-anfal-edinbur-ctx-5ba143af2beb-financial-review/result.md",
+      "stage": "S5",
+      "title": "Financial Review Summary"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "cost_limit_usd": 0.05,
+      "expected_value": 0.8,
+      "instructions": "Cross-reference all arrears statements (NAP-SRC-0021, NAP-SRC-0048) with tenancy agreement and payment schedule to determine correct arrears. Request full bank statement and any payment receipts from Anfal. Identify any additional charges or corrections.",
+      "matter_dependencies": [],
+      "matter_scope": "napier-accommodation-arrears",
+      "provider_policy": {},
+      "required_certifications": [],
+      "source_dependencies": [
+        "NAP-SRC-0021",
+        "NAP-SRC-0048",
+        "NAP-SRC-0012"
+      ],
+      "stage": "S5",
+      "task_dependencies": [],
+      "task_id": "reconcile-arrears-amount",
+      "task_type": "evidence_review",
+      "title": "Reconcile arrears amounts and verify payment obligations",
+      "validation_gates": [
+        "claim_evidence_support",
+        "chronology_citations"
+      ]
+    }
+  ],
+  "redaction_flags": [
+    {
+      "redaction_id": "RD1",
+      "target": "NAP-SRC-0012",
+      "text": "Bank statement contains personal transactions and third-party names; redact before sharing beyond legal team."
+    },
+    {
+      "redaction_id": "RD2",
+      "target": "NAP-SRC-0021, NAP-SRC-0048, NAP-SRC-0049",
+      "text": "Email addresses and phone numbers in sources may need redaction for privacy."
+    }
+  ],
+  "risk_flags": [
+    {
+      "risk_id": "R1",
+      "severity": "high",
+      "text": "Arrears amount disputed or evolving; reliance on a single figure without reconciliation may undermine complaint accuracy."
+    },
+    {
+      "risk_id": "R2",
+      "severity": "medium",
+      "text": "Bank statement shows high discretionary spending (e.g., Uber Eats, Klarna) which could weaken hardship arguments."
+    },
+    {
+      "risk_id": "R3",
+      "severity": "high",
+      "text": "No evidence of payment plan or funding application outcome; risk of enforcement action per notice to quit."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Reviewed financial sources: arrears stated as \u00a34,605.55 (8 Apr), \u00a35,526.66 (20 Apr), and \u00a35,526.66 (21 Apr). Bank statement shows no accommodation payments, low balance, and high spending on non-essentials. Contradiction in arrears amounts over time; no payment receipts found. Proposed follow-up to reconcile amounts and verify payment obligations.",
+  "task_id": "napier-accommodation-arrears-coord-draft-a-formal-evidence-led-complaint-and-support-pack-for-anfal-edinbur-ctx-5ba143af2beb-financial-review",
+  "uncertainties": [
+    {
+      "source": "NAP-SRC-0012 excerpt",
+      "text": "Bank statement coverage may be incomplete; only excerpt provided, and no transactions explicitly labeled as rent or accommodation payments.",
+      "uncertainty_id": "U1"
+    },
+    {
+      "source": "NAP-SRC-0021, NAP-SRC-0048",
+      "text": "Reason for arrears increase from \u00a34,605.55 to \u00a35,526.66 not explained in sources; could be additional charges or correction.",
+      "uncertainty_id": "U2"
+    },
+    {
+      "source": "NAP-SRC-0021",
+      "text": "No payment receipts or proof of payment provided by Anfal, despite university request.",
+      "uncertainty_id": "U3"
+    }
+  ]
+}

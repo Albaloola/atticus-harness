@@ -1,0 +1,84 @@
+{
+  "citations": [],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No source materials or artifacts were provided in this work order to locate Anfal's tenancy agreement or arrears correspondence."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-002",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "The evidence manifest and source_materials sections are empty; no documents are available for citation or attachment."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "evidence_map",
+      "content": "## Evidence Map: Anfal's Tenancy Agreement and Arrears Correspondence\n\n**Task:** T-04-002-followup\n**Stage:** S2\n**Status:** No documents located in this work order.\n\n### Required Documents\n1. **Tenancy Agreement** \u2013 Not provided. Must be located in matter sources or artifacts.\n2. **Arrears Correspondence** \u2013 Not provided. Must be located in matter sources or artifacts.\n\n### Next Steps\n- Search matter sources (ListMatterSources) and artifacts (ListMatterArtifacts) for documents matching \"Anfal\", \"tenancy agreement\", \"lease\", \"arrears\", or \"rent statement\".\n- If found, attach to this task and update the evidence map.\n- If not found, request human operator to upload or identify the documents.",
+      "path": "candidate/T-04-002-followup/evidence_map.md",
+      "stage": "S2",
+      "title": "Evidence Map for Anfal's Tenancy Agreement and Arrears Correspondence"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "cost_limit_usd": 0.01,
+      "expected_value": 0.9,
+      "instructions": "Use ListMatterSources and ListMatterArtifacts to search for documents related to Anfal, including tenancy agreement, lease, rent statement, arrears letter, or notice of arrears. If found, attach them to task T-04-002-followup and update the evidence map. If not found, report the gap and request human operator assistance.",
+      "matter_dependencies": [],
+      "matter_scope": "napier-accommodation-arrears",
+      "provider_policy": {},
+      "required_certifications": [],
+      "source_dependencies": [],
+      "stage": "S2",
+      "task_dependencies": [],
+      "task_id": "T-04-002-search",
+      "task_type": "evidence_collection",
+      "title": "Search matter sources and artifacts for Anfal's tenancy agreement and arrears correspondence",
+      "validation_gates": []
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "risk_id": "R-001",
+      "risk_type": "legal_uncertainty",
+      "text": "Without the tenancy agreement, the applicable statutory regime (e.g., Private Housing (Tenancies) (Scotland) Act 2016, Housing (Scotland) Act 1988) cannot be confirmed, risking incorrect legal analysis."
+    },
+    {
+      "risk_id": "R-002",
+      "risk_type": "evidentiary_gap",
+      "text": "Absence of arrears correspondence may indicate missing evidence of demand, notice, or communication history, which could affect any possession or debt claim."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "No source materials or artifacts were provided for this evidence collection task. The task requires locating Anfal's tenancy agreement and arrears correspondence, but the evidence manifest and source_materials are empty. No documents can be cited or attached. A follow-up task is proposed to search matter sources and artifacts for the required documents.",
+  "task_id": "T-04-002-followup",
+  "uncertainties": [
+    {
+      "reasoning_status": "needs_research",
+      "text": "Whether Anfal's tenancy agreement exists in the matter record is unknown because no sources or artifacts were provided.",
+      "uncertainty_id": "U-001"
+    },
+    {
+      "reasoning_status": "needs_research",
+      "text": "Whether any arrears correspondence (e.g., letters, emails, notices) exists in the matter record is unknown because no sources or artifacts were provided.",
+      "uncertainty_id": "U-002"
+    },
+    {
+      "reasoning_status": "needs_research",
+      "text": "The legal classification of Anfal's occupancy (e.g., private residential tenancy, excluded student accommodation) cannot be determined without the tenancy agreement.",
+      "uncertainty_id": "U-003"
+    }
+  ]
+}

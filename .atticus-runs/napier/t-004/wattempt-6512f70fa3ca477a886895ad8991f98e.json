@@ -1,0 +1,72 @@
+{
+  "citations": [],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "f-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No source materials or artifacts were provided in this work order; the evidence manifest and source_materials sections are empty."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "f-002",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "The task requires locating a tenancy agreement or records with Anfal's details, but no such documents are present in the current context."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "evidence_map",
+      "content": "## Evidence Map: Anfal's Tenancy/Occupancy Records\n\n### Status: No documents found in current work order\n\n### Recommended Next Steps\n1. Search the matter's source repository for any documents containing the name \"Anfal\" or related to Napier accommodation.\n2. Check legal memory index for any prior references to Anfal or the tenancy.\n3. If documents are found, ingest them as source materials and re-run this task.\n\n### Authorities Referenced\n- Private Housing (Tenancies) (Scotland) Act 2016, schedule 1 (student accommodation exclusion)\n- Housing (Scotland) Act 1988, section 12 and schedule 4 (assured tenancy exclusions)\n- Housing (Scotland) Act 2001, section 7 (occupancy terms)\n- Equality Act 2010, sections 20, 21, 91 (reasonable adjustments and discrimination)\n\n### Note\nNo citations are provided because no source materials were available to support any factual or legal findings.",
+      "path": "candidate/t-004/evidence_map.md",
+      "stage": "S3",
+      "title": "Evidence Map for Anfal's Tenancy Records"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "instructions": "Use the ListMatterSources and SearchLegalMemory tools to locate any source materials or memory entries containing the name 'Anfal' or referring to 'Napier accommodation'. If found, ingest the documents as source materials and re-run task t-004 to extract tenancy details.",
+      "matter_dependencies": [],
+      "matter_scope": "napier-accommodation-arrears",
+      "source_dependencies": [],
+      "stage": "S3",
+      "task_dependencies": [],
+      "task_id": "t-004-followup",
+      "task_type": "evidence_gathering",
+      "title": "Search matter repository for documents referencing Anfal or Napier accommodation",
+      "validation_gates": [
+        "chain_of_custody"
+      ]
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "finding_id": "f-001",
+      "risk_id": "r-001",
+      "text": "Absence of source materials may indicate that relevant evidence has not been ingested or indexed, risking incomplete evidence gathering."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "No source materials or artifacts were provided for this evidence-gathering task. The task requires locating a tenancy agreement or records with Anfal's details, but the evidence manifest and source_materials are empty. No tenancy agreement, occupancy record, or identifying details for Anfal are available in the current work order. A follow-up task is proposed to search the matter's source repository and legal memory for any documents referencing Anfal or the Napier accommodation.",
+  "task_id": "t-004",
+  "uncertainties": [
+    {
+      "finding_id": "f-001",
+      "text": "It is unknown whether any tenancy agreement or occupancy records for Anfal exist in the matter's broader source repository.",
+      "uncertainty_id": "u-001"
+    },
+    {
+      "finding_id": "f-002",
+      "text": "Anfal's full name, role, and connection to the Napier accommodation are not specified in the work order.",
+      "uncertainty_id": "u-002"
+    }
+  ]
+}

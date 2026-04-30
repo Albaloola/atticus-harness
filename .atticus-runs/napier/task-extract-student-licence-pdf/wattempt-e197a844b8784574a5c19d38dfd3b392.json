@@ -1,0 +1,82 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "full extracted text",
+      "quote": "1 attachment (3 MB) MISS ANFAL ELBUSHRA Student Licence.pdf;",
+      "target_id": "NAP-SRC-0028",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "full extracted text",
+      "quote": "1 attachment (3 MB) MISS ANFAL ELBUSHRA Student Licence.pdf;",
+      "target_id": "NAP-SRC-0029",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001",
+        "cit-002"
+      ],
+      "confidence": 0.95,
+      "finding_id": "f-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Both NAP-SRC-0028 and NAP-SRC-0029 contain an email referencing a 3 MB PDF attachment named 'MISS ANFAL ELBUSHRA Student Licence.pdf'."
+    },
+    {
+      "citation_ids": [
+        "cit-001",
+        "cit-002"
+      ],
+      "confidence": 0.95,
+      "finding_id": "f-002",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "The extracted text from both sources is identical and does not include the content of the attached Student Licence PDF."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "f-003",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "The embedded Student Licence PDF attachment was not extracted by the initial pdf_text extraction. Binary extraction from the original PDF files is required."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "extraction_report",
+      "content": "## Extraction Report: Student Licence PDF Attachment\n\n**Task:** task-extract-student-licence-pdf\n**Sources:** NAP-SRC-0028, NAP-SRC-0029\n\n### Result\n\nThe embedded Student Licence PDF attachment could not be extracted from the provided source materials. Both source PDFs contain an email referencing a 3 MB attachment named 'MISS ANFAL ELBUSHRA Student Licence.pdf', but the extracted text does not include the attachment content.\n\n### Recommended Next Step\n\nPerform binary extraction from the original PDF files (NAP-SRC-0028 and NAP-SRC-0029) using a tool capable of extracting embedded file attachments (e.g., `pdfdetach`, `pdftk`, or a Python script with `PyPDF2`/`pdfplumber`).",
+      "path": "candidate/task-extract-student-licence-pdf/extraction-report.md",
+      "stage": "S1",
+      "title": "Extraction Report for Student Licence PDF"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Use a binary extraction tool (e.g., pdfdetach, pdftk, or a Python script with PyPDF2) to extract the embedded file attachment named 'MISS ANFAL ELBUSHRA Student Licence.pdf' from the original PDF files NAP-SRC-0028 and NAP-SRC-0029. Save the extracted PDF as a new source artifact.",
+      "matter_scope": "napier-accommodation-arrears",
+      "stage": "S1",
+      "task_id": "task-extract-student-licence-pdf-binary",
+      "task_type": "extraction",
+      "title": "Binary extraction of embedded Student Licence PDF from NAP-SRC-0028 and NAP-SRC-0029"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Both NAP-SRC-0028 and NAP-SRC-0029 contain the same email body referencing an attached PDF named 'MISS ANFAL ELBUSHRA Student Licence.pdf' (3 MB). The extracted text does not include the attachment content. The task to extract the embedded Student Licence PDF cannot be completed with the available source materials; the attachment is referenced but not present in the extracted text. A follow-up task is proposed to attempt binary extraction from the original PDF files.",
+  "task_id": "task-extract-student-licence-pdf",
+  "uncertainties": [
+    {
+      "finding_id": "f-003",
+      "reason": "The attachment content is absent from the extracted text; it may be embedded as a binary object within the PDF that requires a different extraction method."
+    }
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "citations": [],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 0.0,
+      "finding_id": "F-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No source materials or artifacts were provided in this work order. The task requires uploading Anfal's tenancy agreement and arrears correspondence, but no documents are available to process."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.0,
+      "finding_id": "F-002",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "The task type is evidence_collection (upload), but the worker cannot perform external upload actions. A human or tool with upload capability must supply the documents."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "markdown",
+      "content": "# Upload Status for T-04-002a\n\n**Task:** Upload Anfal's tenancy agreement and arrears correspondence\n**Stage:** S2\n**Matter:** napier-accommodation-arrears\n\n## Result\nNo source materials or artifacts were provided in this work order. The worker cannot perform external upload actions. A human operator or configured upload tool must supply the following documents:\n- Anfal's tenancy agreement\n- Arrears correspondence (e.g., letters, emails, notices)\n\nOnce uploaded, a follow-up task can review and extract key terms, dates, and amounts.",
+      "path": "candidate/T-04-002a-upload-sources/upload-status.md",
+      "stage": "S2",
+      "title": "Upload Status Report"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Review the uploaded tenancy agreement and arrears correspondence for Anfal. Extract key terms (rent amount, payment dates, notice period), arrears amounts, dates of correspondence, and any admissions or disputes. Produce a structured evidence summary.",
+      "matter_scope": "napier-accommodation-arrears",
+      "stage": "S2",
+      "task_id": "T-04-002b-review-sources",
+      "task_type": "evidence_review",
+      "title": "Review uploaded tenancy agreement and arrears correspondence"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "No source materials or artifacts were provided for this evidence_collection task. The worker cannot perform external upload actions. A human operator or configured upload tool must supply Anfal's tenancy agreement and arrears correspondence. A follow-up review task is proposed once documents are available.",
+  "task_id": "T-04-002a-upload-sources",
+  "uncertainties": [
+    {
+      "description": "No documents were provided in the work order; the task requires upload but the worker cannot perform external actions.",
+      "finding_id": "U-001"
+    }
+  ]
+}

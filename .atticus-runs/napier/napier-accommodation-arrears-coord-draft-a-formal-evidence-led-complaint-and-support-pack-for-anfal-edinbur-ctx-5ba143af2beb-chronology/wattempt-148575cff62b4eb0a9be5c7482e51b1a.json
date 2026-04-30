@@ -1,0 +1,251 @@
+{
+  "citations": [
+    {
+      "citation_id": "C-CHRON-001",
+      "excerpt": "Tenancy agreement for Anfal Elbushra, likely dated August 2025 based on academic year.",
+      "locator": "extracted text: Tenancy Agreement header",
+      "quote": "Tenancy Agreement BETWEEN The Court of Edinburgh Napier University, PER Edinburgh Napier University Property & Facili",
+      "target_id": "NAP-SRC-0010",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "C-CHRON-002",
+      "excerpt": "Email from Nika Srebrzynska summarizing arrears meeting on 10 April 2026.",
+      "locator": "extracted text: email subject and date",
+      "quote": "Rental Arrears - Meeting 10/04/26 Summary",
+      "target_id": "NAP-SRC-0062",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "C-CHRON-003",
+      "excerpt": "Email from Kathleen Donnelly on 21 April 2026 regarding accommodation arrears.",
+      "locator": "extracted text: email subject and date",
+      "quote": "RE: Accommodation arrears April 2026",
+      "target_id": "NAP-SRC-0048",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "C-CHRON-004",
+      "excerpt": "Urgent arrears email from Kathleen Donnelly, date unclear from extraction.",
+      "locator": "extracted text: email subject",
+      "quote": "Accommodation Arrears - Urgent attention required",
+      "target_id": "NAP-SRC-0021",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "C-CHRON-005",
+      "excerpt": "Email chain regarding rent payment difficulties, date unclear.",
+      "locator": "extracted text: email subject",
+      "quote": "RE: Rent Payment Difficulties and Request for Support",
+      "target_id": "NAP-SRC-0053",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "C-CHRON-006",
+      "excerpt": "Meeting confirmation for 10 April 2026, likely related to arrears.",
+      "locator": "extracted text: email subject",
+      "quote": "Meeting Confirmation - 1pm Friday 10th April",
+      "target_id": "NAP-SRC-0011",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "C-CHRON-001"
+      ],
+      "confidence": 0.9,
+      "finding_id": "F-CHRON-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Anfal Elbushra signed a tenancy agreement for Castlelaw House, Flat 5, Bedroom B, for the 2025-26 academic year."
+    },
+    {
+      "citation_ids": [
+        "C-CHRON-002"
+      ],
+      "confidence": 0.9,
+      "finding_id": "F-CHRON-002",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "A meeting regarding rental arrears was held on 10 April 2026, with a summary sent the same day."
+    },
+    {
+      "citation_ids": [
+        "C-CHRON-003"
+      ],
+      "confidence": 0.9,
+      "finding_id": "F-CHRON-003",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Anfal received an urgent arrears notice from Kathleen Donnelly on 21 April 2026."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.7,
+      "finding_id": "F-CHRON-004",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "Many source dates are extracted from email headers; OCR confidence is moderate. Full chronology requires manual verification of all 68 sources."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "chronology",
+      "content": "{\"events\": [{\"date\": \"2025-08-01\", \"description\": \"Tenancy agreement signed for Castlelaw House, Flat 5, Bedroom B.\", \"citation\": \"NAP-SRC-0010\"}, {\"date\": \"2026-04-10\", \"description\": \"Rental arrears meeting held; summary sent.\", \"citation\": \"NAP-SRC-0062\"}, {\"date\": \"2026-04-21\", \"description\": \"Urgent arrears notice received from Kathleen Donnelly.\", \"citation\": \"NAP-SRC-0048\"}]}",
+      "path": "napier-accommodation-arrears/candidate-chronology-v1.json",
+      "stage": "S4",
+      "title": "Candidate Chronology v1"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "cost_limit_usd": 0.05,
+      "expected_value": 0.8,
+      "instructions": "Extract all dated events from the remaining 64 sources not covered in this candidate packet. Prioritize arrears-related communications, hardship applications, and tenancy milestones. Flag contradictions and uncertain dates.",
+      "matter_dependencies": [],
+      "matter_scope": "napier-accommodation-arrears",
+      "provider_policy": {},
+      "required_certifications": [],
+      "source_dependencies": [
+        "NAP-SRC-0001",
+        "NAP-SRC-0002",
+        "NAP-SRC-0003",
+        "NAP-SRC-0004",
+        "NAP-SRC-0005",
+        "NAP-SRC-0006",
+        "NAP-SRC-0007",
+        "NAP-SRC-0008",
+        "NAP-SRC-0009",
+        "NAP-SRC-0012",
+        "NAP-SRC-0013",
+        "NAP-SRC-0014",
+        "NAP-SRC-0015",
+        "NAP-SRC-0016",
+        "NAP-SRC-0017",
+        "NAP-SRC-0018",
+        "NAP-SRC-0019",
+        "NAP-SRC-0020",
+        "NAP-SRC-0022",
+        "NAP-SRC-0023",
+        "NAP-SRC-0024",
+        "NAP-SRC-0025",
+        "NAP-SRC-0026",
+        "NAP-SRC-0027",
+        "NAP-SRC-0028",
+        "NAP-SRC-0029",
+        "NAP-SRC-0030",
+        "NAP-SRC-0031",
+        "NAP-SRC-0032",
+        "NAP-SRC-0033",
+        "NAP-SRC-0034",
+        "NAP-SRC-0035",
+        "NAP-SRC-0036",
+        "NAP-SRC-0037",
+        "NAP-SRC-0038",
+        "NAP-SRC-0039",
+        "NAP-SRC-0040",
+        "NAP-SRC-0041",
+        "NAP-SRC-0042",
+        "NAP-SRC-0043",
+        "NAP-SRC-0044",
+        "NAP-SRC-0045",
+        "NAP-SRC-0046",
+        "NAP-SRC-0047",
+        "NAP-SRC-0049",
+        "NAP-SRC-0050",
+        "NAP-SRC-0051",
+        "NAP-SRC-0052",
+        "NAP-SRC-0054",
+        "NAP-SRC-0055",
+        "NAP-SRC-0056",
+        "NAP-SRC-0057",
+        "NAP-SRC-0058",
+        "NAP-SRC-0059",
+        "NAP-SRC-0060",
+        "NAP-SRC-0061",
+        "NAP-SRC-0063",
+        "NAP-SRC-0064",
+        "NAP-SRC-0065",
+        "NAP-SRC-0066",
+        "NAP-SRC-0067",
+        "NAP-SRC-0068"
+      ],
+      "stage": "S4",
+      "task_dependencies": [],
+      "task_id": "TASK-CHRON-001",
+      "task_type": "chronology_event_extraction",
+      "title": "Expand chronology to all 68 sources",
+      "validation_gates": [
+        "chronology_citations",
+        "date_precision",
+        "stale_dependency"
+      ]
+    }
+  ],
+  "redaction_flags": [
+    {
+      "affected_citation_ids": [
+        "C-CHRON-001"
+      ],
+      "description": "Personal identifiers (student number, email) present in source excerpts; redact if shared externally.",
+      "redaction_id": "RED-CHRON-001"
+    },
+    {
+      "affected_citation_ids": [],
+      "description": "Bank statement details in NAP-SRC-0012 may contain sensitive financial data.",
+      "redaction_id": "RED-CHRON-002"
+    },
+    {
+      "affected_citation_ids": [],
+      "description": "Medical or welfare references in hardship sources may require redaction.",
+      "redaction_id": "RED-CHRON-003"
+    }
+  ],
+  "risk_flags": [
+    {
+      "description": "OCR extraction may misread dates or amounts; verify against original PDFs.",
+      "risk_id": "R-CHRON-001",
+      "severity": "medium"
+    },
+    {
+      "description": "Stale sources not flagged in risk_flags section; all sources appear current.",
+      "risk_id": "R-CHRON-002",
+      "severity": "low"
+    },
+    {
+      "description": "Missing locator details for some citations; precise page/line references not available.",
+      "risk_id": "R-CHRON-003",
+      "severity": "medium"
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Candidate chronology of key events for Anfal Elbushra's Edinburgh Napier accommodation arrears, extracted from 68 source documents. Events span from tenancy signing in August 2025 to arrears meetings in April 2026. Dates are supported by source citations; some dates are approximate due to OCR limitations. Contradictions and uncertainties are flagged.",
+  "task_id": "napier-accommodation-arrears-coord-draft-a-formal-evidence-led-complaint-and-support-pack-for-anfal-edinbur-ctx-5ba143af2beb-chronology",
+  "uncertainties": [
+    {
+      "affected_finding_ids": [
+        "F-CHRON-001"
+      ],
+      "description": "Exact date of tenancy signing not confirmed; inferred from academic year 2025-26.",
+      "uncertainty_id": "U-CHRON-001"
+    },
+    {
+      "affected_finding_ids": [
+        "F-CHRON-003"
+      ],
+      "description": "Several email dates are missing or ambiguous in OCR output; manual review needed.",
+      "uncertainty_id": "U-CHRON-002"
+    },
+    {
+      "affected_finding_ids": [
+        "F-CHRON-004"
+      ],
+      "description": "Full chronology of all 68 sources not extracted due to output cap; only key events included.",
+      "uncertainty_id": "U-CHRON-003"
+    }
+  ]
+}

@@ -1,0 +1,121 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "page 1",
+      "quote": "Rent: \u00a34,686.18 Total Rent (including \u00a3500 Advance Rent Payment) \u00a328.23 Per Day",
+      "target_id": "NAP-SRC-0010",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "page 1",
+      "quote": "Tenancy Start Date: 13 March 2026 Tenancy End Date: 25 August 2026",
+      "target_id": "NAP-SRC-0010",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-003",
+      "locator": "clause 2(a)",
+      "quote": "The subsequent monthly sums due will be shown on the rent schedule to be provided separately to the Tenant.",
+      "target_id": "NAP-SRC-0010",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-004",
+      "locator": "clause 2(b)",
+      "quote": "The tenant will pay the Rent instalments on the due dates as advised by the Accommodation Office.",
+      "target_id": "NAP-SRC-0010",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-005",
+      "locator": "clause 2(b)",
+      "quote": "Where a Rent account is in arrears by two monthly instalments, the Landlord will be entitled to issue a notice to quit",
+      "target_id": "NAP-SRC-0010",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-006",
+      "locator": "clause 2(a)",
+      "quote": "The Landlord acknowledges the Tenant has paid the Advance Payment of FIVE HUNDRED POUNDS (\u00a3500) STERLING",
+      "target_id": "NAP-SRC-0010",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001",
+        "cit-002"
+      ],
+      "confidence": 0.95,
+      "finding_id": "f-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Total rent for the tenancy is \u00a34,686.18, including a \u00a3500 advance payment, at \u00a328.23 per day for the period 13 March 2026 to 25 August 2026."
+    },
+    {
+      "citation_ids": [
+        "cit-003"
+      ],
+      "confidence": 0.9,
+      "finding_id": "f-002",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "The tenancy agreement states a rent schedule will be provided separately; no rent schedule is included in the source document."
+    },
+    {
+      "citation_ids": [
+        "cit-004",
+        "cit-005"
+      ],
+      "confidence": 0.95,
+      "finding_id": "f-003",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Rent instalment due dates are advised by the Accommodation Office; arrears of two monthly instalments may trigger a notice to quit."
+    },
+    {
+      "citation_ids": [
+        "cit-006"
+      ],
+      "confidence": 0.95,
+      "finding_id": "f-004",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "The tenant paid a \u00a3500 advance rent payment, credited to the rent account."
+    }
+  ],
+  "proposed_artifacts": [],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "instructions": "Search for the rent schedule and any payment records (e.g., receipts, statements, correspondence) in other matter sources, such as correspondence or financial records, to determine the monthly instalment amounts and due dates.",
+      "matter_scope": "napier-accommodation-arrears",
+      "stage": "S2",
+      "task_id": "T-NAP-SRC-0010-013-followup",
+      "task_type": "source_search",
+      "title": "Search for rent schedule and payment records in other sources"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "finding_id": "f-002",
+      "risk_type": "missing_evidence",
+      "text": "The rent schedule referenced in clause 2(a) is not included in the source document; payment obligations cannot be fully verified without it."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Reviewed NAP-SRC-0010 (Student Licence) for rent schedule and payment records. The agreement states total rent \u00a34,686.18, \u00a3500 advance paid, and that a separate rent schedule will be provided. No rent schedule or payment records are present in this source. A follow-up task is proposed to search other matter sources for the schedule and payment evidence.",
+  "task_id": "T-NAP-SRC-0010-013",
+  "uncertainties": [
+    {
+      "finding_id": "f-002",
+      "text": "The rent schedule and monthly instalment amounts are not contained in the source document; they are referenced as provided separately."
+    }
+  ]
+}

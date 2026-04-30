@@ -1,0 +1,140 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "p.1-2",
+      "quote": "I am currently a nursing student in Edinburgh and I receive a bursary from the Student Awards Agency Scotland (SAS). While this support helps, it does not cover the full cost of accommodation and living expenses in Edinburgh.",
+      "target_id": "NAP-SRC-0009",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "p.2",
+      "quote": "my only source of income is my saas bursary which is 770GBP.",
+      "target_id": "NAP-SRC-0009",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-003",
+      "locator": "p.3",
+      "quote": "Rent, Mortgage or Accommodation Costs 972.0",
+      "target_id": "NAP-SRC-0009",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-004",
+      "locator": "p.4",
+      "quote": "Current Balance (including overdraft) 612.8",
+      "target_id": "NAP-SRC-0009",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-005",
+      "locator": "p.1",
+      "quote": "Resident Assistant applications for 2026/27 are now open!",
+      "target_id": "NAP-SRC-0046",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-006",
+      "locator": "p.1",
+      "quote": "Each RA receives a scholarship that reduces their rent by 55%.",
+      "target_id": "NAP-SRC-0046",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001",
+        "cit-002"
+      ],
+      "confidence": 0.85,
+      "finding_id": "F-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Student applicant receives SAAS bursary of \u00a3770/month and states it does not cover Edinburgh accommodation and living costs."
+    },
+    {
+      "citation_ids": [
+        "cit-003",
+        "cit-004"
+      ],
+      "confidence": 0.85,
+      "finding_id": "F-002",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Applicant reports monthly accommodation costs of \u00a3972 and a bank balance of \u00a3612.80."
+    },
+    {
+      "citation_ids": [
+        "cit-005",
+        "cit-006"
+      ],
+      "confidence": 0.85,
+      "finding_id": "F-003",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "NAP-SRC-0046 is a university email advertising RA applications with a 55% rent reduction scholarship."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.9,
+      "finding_id": "F-004",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "Extracted text for both sources appears complete and legible; no OCR errors or missing attachments detected in the text."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "review_report",
+      "content": "## OCR Review Report for T-B07-001\n\n### Source: NAP-SRC-0009 (Living Costs Questions)\n- **Extraction method**: pdf_text (pdftotext)\n- **Confidence**: 0.85\n- **Coverage**: Complete\n- **Issues**: None detected. Text is legible and structured.\n- **Key content**: Student hardship application detailing SAAS bursary of \u00a3770/month, accommodation costs of \u00a3972/month, bank balance \u00a3612.80, and commuting hardship.\n\n### Source: NAP-SRC-0046 (RA Recruitment Email)\n- **Extraction method**: pdf_text (pdftotext)\n- **Confidence**: 0.85\n- **Coverage**: Complete\n- **Issues**: None detected. Email body fully extracted.\n- **Key content**: Email from Callum Abbot and Julieta Escribano advertising RA applications with 55% rent reduction. Attachment (2026-27 RA Application Pack.docx) referenced but not extracted.\n\n### Recommendations\n- Extract the attached .docx file from NAP-SRC-0046 for complete review.\n- Consider redacting PII from NAP-SRC-0009 before further use.",
+      "path": "candidate/T-B07-001/ocr-review-report.md",
+      "stage": "S2",
+      "title": "OCR Review Report for NAP-SRC-0009 and NAP-SRC-0046"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Extract the attached file '2026-27 RA Application Pack.docx' referenced in source NAP-SRC-0046. The email indicates this .docx file (63 KB) was attached. Use available extraction tools to retrieve and convert to text. If the attachment is not embedded in the PDF, check the original email source or request human assistance.",
+      "matter_scope": "napier-accommodation-arrears",
+      "source_dependencies": [
+        "NAP-SRC-0046"
+      ],
+      "stage": "S2",
+      "task_id": "T-B07-002",
+      "task_type": "extraction",
+      "title": "Extract RA Application Pack attachment from NAP-SRC-0046",
+      "validation_gates": [
+        "claim_evidence_support"
+      ]
+    }
+  ],
+  "redaction_flags": [
+    {
+      "finding_id": "RF-001",
+      "finding_type": "redaction_flag",
+      "text": "NAP-SRC-0009 includes the applicant's name 'Anfal Elbushra' and bank account details (Monzo, balance \u00a3612.80) \u2013 potential PII."
+    }
+  ],
+  "risk_flags": [
+    {
+      "finding_id": "R-001",
+      "finding_type": "risk",
+      "text": "NAP-SRC-0009 contains personal financial data (bank balance, income, housing costs) that may require redaction before disclosure."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Reviewed extracted text for NAP-SRC-0009 (hardship application) and NAP-SRC-0046 (RA recruitment email). Both extractions appear complete and legible. NAP-SRC-0009 contains a student's financial circumstances and housing hardship statement. NAP-SRC-0046 is an email about RA applications with a 55% rent reduction. No OCR issues or missing attachments detected. Proposed follow-up to extract the attached RA Application Pack (.docx) from NAP-SRC-0046.",
+  "task_id": "T-B07-001",
+  "uncertainties": [
+    {
+      "finding_id": "U-001",
+      "finding_type": "uncertainty",
+      "text": "The attached RA Application Pack (.docx) referenced in NAP-SRC-0046 was not extracted or available in the provided source materials."
+    }
+  ]
+}

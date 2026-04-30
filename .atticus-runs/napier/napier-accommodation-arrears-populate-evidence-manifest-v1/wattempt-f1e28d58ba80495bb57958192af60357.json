@@ -1,0 +1,45 @@
+{
+  "citations": [],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No source materials or artifacts were supplied in this work order; the evidence manifest cannot be populated."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "evidence_manifest",
+      "content": "Evidence manifest for Anfal Elbushra RA application sources cannot be populated because no source materials were provided. The manifest would typically include: (1) the RA application form, (2) any correspondence regarding accommodation arrears, (3) tenancy or occupancy agreements, (4) evidence of disability or reasonable adjustment needs, and (5) any prior complaint or ombudsman correspondence. A follow-up task is required to locate and upload these documents.",
+      "path": "candidate/napier-accommodation-arrears-populate-evidence-manifest-v1/evidence-manifest.md",
+      "stage": "S2",
+      "title": "Evidence Manifest for Anfal Elbushra RA Application"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Search the matter record for any source documents related to Anfal Elbushra's reasonable adjustment (RA) application, including the application form, correspondence with Napier University about accommodation arrears, tenancy/occupancy agreements, disability evidence, and any ombudsman complaint records. Upload all found documents as source materials for the matter scope napier-accommodation-arrears.",
+      "matter_scope": "napier-accommodation-arrears",
+      "stage": "S2",
+      "task_id": "napier-accommodation-arrears-locate-sources-v2",
+      "task_type": "evidence_gathering",
+      "title": "Locate and upload source documents for Anfal Elbushra RA application"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "No source materials or artifacts were provided for this task. The evidence manifest for Anfal Elbushra's RA application sources cannot be populated without source text. A follow-up task is proposed to locate and upload the relevant source documents.",
+  "task_id": "napier-accommodation-arrears-populate-evidence-manifest-v1",
+  "uncertainties": [
+    {
+      "text": "No source documents were provided; the content of Anfal Elbushra's RA application and any supporting evidence is unknown.",
+      "uncertainty_id": "U-001"
+    }
+  ]
+}

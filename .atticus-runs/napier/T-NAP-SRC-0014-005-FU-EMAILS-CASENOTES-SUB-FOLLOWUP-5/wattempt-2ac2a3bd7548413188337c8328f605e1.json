@@ -1,0 +1,127 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "page 1",
+      "quote": "The accommodation support service can: Offer advice and information on finding a flat in the private sector",
+      "target_id": "NAP-SRC-0014",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "page 1",
+      "quote": "Provide a dedicated member of staff to provide information and to answer any related queries",
+      "target_id": "NAP-SRC-0014",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-003",
+      "locator": "page 1",
+      "quote": "Provide a landlord reference within 5 working days when you email us at accommodation@napier.ac.uk",
+      "target_id": "NAP-SRC-0014",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-004",
+      "locator": "page 1",
+      "quote": "Please contact privateaccommodation@napier.ac.uk with your enquiries.",
+      "target_id": "NAP-SRC-0014",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-005",
+      "locator": "page 1",
+      "quote": "ENSA Advice ... can offer ... Advice on how to find accommodation",
+      "target_id": "NAP-SRC-0014",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-006",
+      "locator": "page 1",
+      "quote": "Please contact ENSA Advice on 0131 229 8791 to arrange an appointment or email ensa.advice@napier.ac.uk",
+      "target_id": "NAP-SRC-0014",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001",
+        "cit-002",
+        "cit-004"
+      ],
+      "confidence": 0.85,
+      "finding_id": "F-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "The University offers a private accommodation support service providing advice, flat viewing setup, and a dedicated staff contact via privateaccommodation@napier.ac.uk."
+    },
+    {
+      "citation_ids": [
+        "cit-003"
+      ],
+      "confidence": 0.85,
+      "finding_id": "F-002",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "The service can provide a landlord reference within 5 working days upon email request to accommodation@napier.ac.uk."
+    },
+    {
+      "citation_ids": [
+        "cit-005",
+        "cit-006"
+      ],
+      "confidence": 0.85,
+      "finding_id": "F-003",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "ENSA Advice offers free, confidential advice on finding accommodation, reviewing leases, tenant rights, and disputes; contactable at 0131 229 8791 or ensa.advice@napier.ac.uk."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-004",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No internal records (emails, casenotes) regarding Anfal's contact with accommodation support are present in the provided source materials. A follow-up task is needed to search internal systems."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "evidence_map",
+      "content": "## Evidence Map: Accommodation Support Contacts\n\n**Source:** NAP-SRC-0014 (Private Accommodation Brochure 2025)\n\n### Key Contacts Identified\n- **Private Accommodation Support Service:** privateaccommodation@napier.ac.uk\n- **General Accommodation Enquiries:** accommodation@napier.ac.uk (landlord reference requests)\n- **ENSA Advice:** 0131 229 8791 / ensa.advice@napier.ac.uk\n\n### Services Offered\n- Advice on finding private sector flats\n- Setting up flat viewings\n- Dedicated staff member for queries\n- Landlord reference within 5 working days\n- ENSA: lease review, tenant rights, dispute help\n\n### Gap\nNo evidence of Anfal's actual contact with these services. Requires internal records search.",
+      "path": "candidate/T-NAP-SRC-0014-005-FU-EMAILS-CASENOTES-SUB-FOLLOWUP-5/evidence-map.md",
+      "stage": "S2",
+      "title": "Accommodation Support Evidence Map"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Search internal email and casenote systems for any records of communication between Anfal and the private accommodation support service (privateaccommodation@napier.ac.uk), general accommodation (accommodation@napier.ac.uk), or ENSA Advice (ensa.advice@napier.ac.uk). Look for emails, case notes, or logs referencing Anfal's name, student ID, or accommodation issues. Report any findings with timestamps and summaries.",
+      "matter_scope": "napier-accommodation-arrears",
+      "stage": "S2",
+      "task_id": "T-NAP-SRC-0014-005-FU-EMAILS-CASENOTES-SUB-FOLLOWUP-5-INT",
+      "task_type": "evidence_search",
+      "title": "Internal records search for Anfal's accommodation support contacts"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "finding_id": "F-004",
+      "risk_type": "missing_evidence",
+      "text": "No internal records of Anfal's contact with accommodation support are present in the provided source materials. This gap may affect assessment of whether the University fulfilled its support obligations."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Reviewed NAP-SRC-0014 (Private Accommodation Brochure 2025) to identify accommodation support contacts and services available to students. The brochure lists a dedicated private accommodation support service (privateaccommodation@napier.ac.uk), a general accommodation email for landlord references, and ENSA Advice for tenant rights. However, no internal records of Anfal's actual contact with these services were found in the provided source materials. A follow-up task is proposed to search internal email and casenote systems for any communications involving Anfal.",
+  "task_id": "T-NAP-SRC-0014-005-FU-EMAILS-CASENOTES-SUB-FOLLOWUP-5",
+  "uncertainties": [
+    {
+      "finding_id": "F-004",
+      "text": "It is unknown whether Anfal ever contacted the accommodation support service, as no internal records are present in the provided source materials."
+    }
+  ]
+}

@@ -1,0 +1,193 @@
+{
+  "citations": [
+    {
+      "citation_id": "C-001",
+      "excerpt": "Tenancy agreement for Anfal Elbushra, likely dated August 2025 based on academic year.",
+      "locator": "extracted text: Tenancy Agreement header",
+      "quote": "Tenancy Agreement BETWEEN The Court of Edinburgh Napier University, PER Edinburgh Napier University Property & Facili",
+      "target_id": "NAP-SRC-0010",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "C-002",
+      "excerpt": "Evidence map synthesis of arrears notice.",
+      "locator": "citation C-SYN-002",
+      "quote": "Rent Arrears: \u00a35526.66 Student Name: ANFAL ELBUSHRA As at: 20th April 2026 ... NTQ Date: 18th May 2026 ... Payment Reqd: 9th May 2026",
+      "target_id": "art-a788d9fd8e8849dba5da5cf7a1ef238f",
+      "target_type": "artifact"
+    },
+    {
+      "citation_id": "C-003",
+      "excerpt": "Evidence map synthesis of Notice to Quit.",
+      "locator": "citation C-SYN-003",
+      "quote": "NOTICE TO QUIT ... 20 April 2026 ... ANFAL ELBUSHRA ... breached the Tenancy Agreement ... Clause 2 ... move from Bedroom B Flat 05 Castlelaw House",
+      "target_id": "art-a788d9fd8e8849dba5da5cf7a1ef238f",
+      "target_type": "artifact"
+    },
+    {
+      "citation_id": "C-004",
+      "excerpt": "Email confirming hardship fund payment date.",
+      "locator": "extracted text: email subject",
+      "quote": "Accommodation Hardship Fund - payment date",
+      "target_id": "NAP-SRC-0022",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "C-005",
+      "excerpt": "Monzo bank statement covering relevant period.",
+      "locator": "extracted text: bank statement header",
+      "quote": "Personal Account statement 01/09/2025 - 28/04/2026",
+      "target_id": "NAP-SRC-0012",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "C-006",
+      "excerpt": "Equality Act 2010 reasonable adjustments duty.",
+      "locator": "sections 2",
+      "quote": "",
+      "target_id": "",
+      "target_type": "authority"
+    }
+  ],
+  "contradictions": [
+    {
+      "contradiction_id": "CON-001",
+      "description": "Citation C-002 references a non-existent artifact, contradicting the evidence manifest.",
+      "finding_ids": [
+        "F-001"
+      ]
+    }
+  ],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "C-002"
+      ],
+      "confidence": 0.95,
+      "finding_id": "F-001",
+      "finding_type": "contradiction",
+      "reasoning_status": "supported",
+      "text": "Citation C-002 references artifact 'art-a788d9fd8e8849dba5da5cf7a1ef238f' which is not in the allowed artifact list or evidence manifest. This is a fabricated citation."
+    },
+    {
+      "citation_ids": [
+        "C-006"
+      ],
+      "confidence": 0.9,
+      "finding_id": "F-002",
+      "finding_type": "law",
+      "reasoning_status": "needs_research",
+      "text": "Citation C-006 cites 'Equality Act 2010 reasonable adjustments duty' but provides no authority target. No authority is cited, making the legal proposition unsupported."
+    },
+    {
+      "citation_ids": [
+        "C-001"
+      ],
+      "confidence": 0.7,
+      "finding_id": "F-003",
+      "finding_type": "fact",
+      "reasoning_status": "uncertain",
+      "text": "Citation C-001 claims a tenancy agreement dated August 2025 but the locator is vague ('extracted text: Tenancy Agreement header') and the source NAP-SRC-0010 does not clearly show that date."
+    },
+    {
+      "citation_ids": [
+        "C-003",
+        "C-004"
+      ],
+      "confidence": 0.8,
+      "finding_id": "F-004",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "Citation C-003 and C-004 appear supported by source materials but rely on synthesized evidence maps; direct source verification is needed for full audit."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "citation_audit_report",
+      "content": "# Citation Audit Report\n\n## Overall Result: FAIL\n\n### Findings\n1. **Fabricated Citation (C-002)**: References non-existent artifact `art-a788d9fd8e8849dba5da5cf7a1ef238f`. This is a critical integrity failure.\n2. **Unsupported Legal Citation (C-006)**: No authority target provided for Equality Act 2010 duty; legal proposition is unsupported.\n3. **Weak Factual Citation (C-001)**: Vague locator and uncertain date; source NAP-SRC-0010 does not clearly support August 2025.\n4. **Uncertain Citations (C-003, C-004)**: Rely on synthesized evidence maps; direct source verification needed.\n\n### Recommendations\n- Remove or replace fabricated citation C-002.\n- Add specific authority target for C-006 (e.g., Equality Act 2010, sections 20-21).\n- Verify tenancy date in NAP-SRC-0010 and update C-001.\n- Cross-check C-003 and C-004 against original sources.",
+      "path": "candidate/napier-accommodation-arrears-coord-draft-a-formal-evidence-led-complaint-and-support-pack-for-anfal-edinbur-ctx-5ba143af2beb-citation-audit/audit_report.md",
+      "stage": "S7",
+      "title": "Citation Audit Report"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [
+        "art-0e6fe6dbf06942e19dc6c1baa3b40b6d"
+      ],
+      "instructions": "Review the draft complaint citations. Replace fabricated citation C-002 with a valid source. Add authority for C-006. Verify tenancy date in NAP-SRC-0010 for C-001. Cross-check C-003 and C-004 against original sources.",
+      "matter_scope": "napier-accommodation-arrears",
+      "source_dependencies": [
+        "NAP-SRC-0010",
+        "NAP-SRC-0021",
+        "NAP-SRC-0022",
+        "NAP-SRC-0012"
+      ],
+      "stage": "S7",
+      "task_dependencies": [
+        "napier-accommodation-arrears-coord-draft-a-formal-evidence-led-complaint-and-support-pack-for-anfal-edinbur-ctx-5ba143af2beb-citation-audit"
+      ],
+      "task_id": "napier-accommodation-arrears-verify-citations",
+      "task_type": "source_verification",
+      "title": "Verify and correct draft citations",
+      "validation_gates": [
+        "citation_integrity",
+        "fabricated_citation"
+      ]
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "description": "Fabricated citation detected; undermines credibility of entire draft.",
+      "finding_ids": [
+        "F-001"
+      ],
+      "risk_id": "R-001",
+      "severity": "high"
+    },
+    {
+      "description": "Unsupported legal proposition may lead to invalid complaint grounds.",
+      "finding_ids": [
+        "F-002"
+      ],
+      "risk_id": "R-002",
+      "severity": "medium"
+    },
+    {
+      "description": "Weak factual support for tenancy date could be challenged.",
+      "finding_ids": [
+        "F-003"
+      ],
+      "risk_id": "R-003",
+      "severity": "low"
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Audit of draft complaint citations reveals one fabricated citation (C-002) referencing a non-existent artifact, one unsupported legal citation (C-006) lacking authority, and one weak factual citation (C-001) with vague locator. Overall FAIL due to fabricated citation.",
+  "task_id": "napier-accommodation-arrears-coord-draft-a-formal-evidence-led-complaint-and-support-pack-for-anfal-edinbur-ctx-5ba143af2beb-citation-audit",
+  "uncertainties": [
+    {
+      "description": "The exact date of the tenancy agreement in NAP-SRC-0010 is not clearly extracted; the claim of August 2025 is uncertain.",
+      "finding_ids": [
+        "F-003"
+      ],
+      "uncertainty_id": "U-001"
+    },
+    {
+      "description": "Citations C-003 and C-004 rely on synthesized evidence maps; direct source verification is needed to confirm accuracy.",
+      "finding_ids": [
+        "F-004"
+      ],
+      "uncertainty_id": "U-002"
+    },
+    {
+      "description": "Citation C-006 lacks a specific authority target; the legal proposition is unsupported without a verified authority.",
+      "finding_ids": [
+        "F-002"
+      ],
+      "uncertainty_id": "U-003"
+    }
+  ]
+}

@@ -1,0 +1,132 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "21 Apr 2026 email, first paragraph",
+      "quote": "Please provide a full, clear copy of your SAAS award letter. The version you uploaded appears to be incomplete and references the University of Dundee.",
+      "target_id": "NAP-SRC-0055",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "21 Apr 2026 email, second paragraph",
+      "quote": "Please clarify the nature of the payments made to \u201cChemist4U,\u201d as this appears to be a significant expense.",
+      "target_id": "NAP-SRC-0055",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-003",
+      "locator": "15 Apr 2026 email, document list",
+      "quote": "Your SAAS award letter for 25/26",
+      "target_id": "NAP-SRC-0055",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-004",
+      "locator": "15 Apr 2026 email, document list",
+      "quote": "Bank statements for ALL accounts you hold in your name showing transactions from February until today\u2019s date",
+      "target_id": "NAP-SRC-0055",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-005",
+      "locator": "15 Apr 2026 email, document list",
+      "quote": "Evidence of your rent arrears showing how much you owe",
+      "target_id": "NAP-SRC-0055",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-006",
+      "locator": "15 Apr 2026 email, document list",
+      "quote": "A personal supporting statement telling us a bit more about why you are applying",
+      "target_id": "NAP-SRC-0055",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001"
+      ],
+      "confidence": 0.95,
+      "finding_id": "f-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Student Funding requested a complete SAAS award letter; the uploaded version was incomplete and referenced University of Dundee."
+    },
+    {
+      "citation_ids": [
+        "cit-002"
+      ],
+      "confidence": 0.95,
+      "finding_id": "f-002",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Student Funding requested clarification of Chemist4U payments as a significant expense."
+    },
+    {
+      "citation_ids": [
+        "cit-003",
+        "cit-004",
+        "cit-005",
+        "cit-006"
+      ],
+      "confidence": 0.95,
+      "finding_id": "f-003",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Required documents for ENU Accommodation Hardship Fund include SAAS award letter, bank statements, tenancy agreement, rent arrears evidence, and personal statement."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "f-004",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "The requested SAAS award letter and Chemist4U expense details are not present in the provided source material. A follow-up task is needed to obtain them."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "evidence_gap_report",
+      "content": "## Evidence Gap Report\n\n### Missing Items\n1. **Complete SAAS Award Letter for 2025/26** \u2013 The version uploaded by the student was incomplete and referenced University of Dundee. A full, clear copy showing Edinburgh Napier University is required.\n2. **Clarification of Chemist4U Payments** \u2013 The nature of payments to Chemist4U, identified as a significant expense, has not been explained.\n\n### Action Required\n- Request the student to provide the complete SAAS award letter and a written explanation or receipts for Chemist4U payments.\n- Alternatively, if the student has already submitted these after the email date, retrieve them from the case file.",
+      "path": "candidate/napier-accommodation-arrears-bundle-18-followup-task-01/evidence-gap-report.md",
+      "stage": "S3",
+      "title": "Evidence Gap Report for SAAS Award Letter and Chemist4U Details"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Obtain the complete SAAS award letter for 2025/26 showing Edinburgh Napier University, and a written explanation or receipts for Chemist4U payments. Check if the student has submitted these after 21 April 2026. If not, draft a request to the student for these items.",
+      "matter_scope": "napier-accommodation-arrears",
+      "stage": "S3",
+      "task_id": "napier-accommodation-arrears-bundle-18-followup-task-02",
+      "task_type": "evidence_gathering",
+      "title": "Request missing SAAS award letter and Chemist4U details from student or case file"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "description": "The SAAS award letter referenced as incomplete is not in the source material; the complete version is needed for processing.",
+      "finding_id": "f-001",
+      "risk_type": "missing_evidence"
+    },
+    {
+      "description": "No documentation or explanation for Chemist4U payments is present; clarification is required.",
+      "finding_id": "f-002",
+      "risk_type": "missing_evidence"
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Email from Student Funding (Lee Chalmers) requests a complete SAAS award letter and clarification of Chemist4U payments. The student updated her application but the requested documents are not in the source. No SAAS letter or Chemist4U detail is present. A follow-up task is proposed to obtain these items.",
+  "task_id": "napier-accommodation-arrears-bundle-18-followup-task-01",
+  "uncertainties": [
+    {
+      "finding_id": "f-004",
+      "reason": "The source email requests documents that are not included in the evidence bundle. Their content and existence are unknown."
+    }
+  ]
+}

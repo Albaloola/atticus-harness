@@ -1,0 +1,140 @@
+{
+  "citations": [
+    {
+      "citation_id": "C1",
+      "excerpt": "Private Housing (Tenancies) (Scotland) Act 2016, schedule 1",
+      "locator": "schedule 1",
+      "quote": "Tenancies which cannot be private residential tenancies, including student accommodation provided by a university or other educational institution",
+      "target_id": "auth-195c733fb83b4278ac5ed01e9e573fec",
+      "target_type": "authority"
+    },
+    {
+      "citation_id": "C2",
+      "excerpt": "Equality Act 2010, sections 20 and 21",
+      "locator": "sections 20 and 21",
+      "quote": "Duty to make reasonable adjustments and failure to comply with that duty",
+      "target_id": "auth-eb5f2cefd7674cf18e27c08f2af3960c",
+      "target_type": "authority"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F1",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No tenancy or licence agreement was provided in the work order. The task cannot proceed to review without the document."
+    },
+    {
+      "citation_ids": [
+        "C1"
+      ],
+      "confidence": 0.9,
+      "finding_id": "F2",
+      "finding_type": "law",
+      "reasoning_status": "supported",
+      "text": "Student accommodation provided by a university may be excluded from private residential tenancy status under the Private Housing (Tenancies) (Scotland) Act 2016, schedule 1."
+    },
+    {
+      "citation_ids": [
+        "C2"
+      ],
+      "confidence": 0.9,
+      "finding_id": "F3",
+      "finding_type": "law",
+      "reasoning_status": "supported",
+      "text": "The Equality Act 2010 imposes a duty to make reasonable adjustments for disabled students in the provision of accommodation."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F4",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "Without the agreement, it is uncertain whether the occupant holds a tenancy, licence, or other arrangement, and what terms apply to arrears."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "drafting_note",
+      "content": "# Task Limitation Note\n\n## Task\nObtain and review the tenancy or licence agreement for napier-accommodation-arrears.\n\n## Status\nNo agreement was provided in the work order. The task cannot be completed.\n\n## Legal Context\n- Student accommodation may be excluded from private residential tenancy under the Private Housing (Tenancies) (Scotland) Act 2016, schedule 1.\n- The Equality Act 2010 requires reasonable adjustments for disabled students.\n\n## Next Steps\nA follow-up task is proposed to request the agreement from the client or relevant party.",
+      "path": "candidate/napier-accommodation-arrears-obtain-tenancy-agreement/result.md",
+      "stage": "S8",
+      "title": "Task Limitation Note"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "cost_limit_usd": 0,
+      "expected_value": 0,
+      "instructions": "Contact the client or relevant party to obtain a copy of the tenancy or licence agreement for the accommodation at issue. Specify that the document is needed to assess the legal basis of the arrears claim.",
+      "matter_dependencies": [],
+      "matter_scope": "napier-accommodation-arrears",
+      "provider_policy": {},
+      "required_certifications": [],
+      "source_dependencies": [],
+      "stage": "S8",
+      "task_dependencies": [],
+      "task_id": "napier-accommodation-arrears-request-agreement",
+      "task_type": "document_request",
+      "title": "Request the tenancy or licence agreement from the client",
+      "validation_gates": []
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "finding_ids": [
+        "F1",
+        "F4"
+      ],
+      "risk_id": "R1",
+      "text": "Proceeding without the agreement risks mischaracterizing the legal relationship and applicable rights."
+    },
+    {
+      "finding_ids": [
+        "F3"
+      ],
+      "risk_id": "R2",
+      "text": "Failure to consider reasonable adjustments could lead to discrimination claims under the Equality Act 2010."
+    },
+    {
+      "finding_ids": [
+        "F1"
+      ],
+      "risk_id": "R3",
+      "text": "The task is stalled until the agreement is obtained; delay may affect limitation periods or procedural deadlines."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "No tenancy or licence agreement was supplied in the work order. The task cannot review a document that is absent. The legal framework for student accommodation in Scotland is outlined, but without the agreement, its terms, status, and compliance cannot be assessed. A follow-up task is proposed to obtain the agreement.",
+  "task_id": "napier-accommodation-arrears-obtain-tenancy-agreement",
+  "uncertainties": [
+    {
+      "finding_ids": [
+        "F1",
+        "F4"
+      ],
+      "text": "The existence, terms, and type of occupancy agreement are unknown.",
+      "uncertainty_id": "U1"
+    },
+    {
+      "finding_ids": [
+        "F3"
+      ],
+      "text": "Whether the occupant is a disabled student entitled to reasonable adjustments under the Equality Act 2010 is unknown.",
+      "uncertainty_id": "U2"
+    },
+    {
+      "finding_ids": [
+        "F4"
+      ],
+      "text": "The specific arrears claim and any applicable notice periods or procedural requirements cannot be assessed without the agreement.",
+      "uncertainty_id": "U3"
+    }
+  ]
+}

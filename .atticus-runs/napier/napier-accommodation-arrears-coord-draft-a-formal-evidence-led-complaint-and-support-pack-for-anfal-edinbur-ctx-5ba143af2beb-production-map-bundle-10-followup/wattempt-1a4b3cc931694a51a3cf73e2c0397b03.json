@@ -1,0 +1,155 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "27/04/2026 balance line",
+      "quote": "27/04/2026      UBER * EATS PENDING London GBR                                 -13.38                    1.20",
+      "target_id": "NAP-SRC-0012",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "header summary",
+      "quote": "-\u00a319,057.59 Total outgoings +\u00a319,057.88 Total deposits",
+      "target_id": "NAP-SRC-0012",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-003",
+      "locator": "22/04/2026 entry",
+      "quote": "22/04/2026      A Nafe (Faster Payments) Reference: MY DAUGHTER 10.00",
+      "target_id": "NAP-SRC-0012",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-004",
+      "locator": "22/04/2026 entry",
+      "quote": "22/04/2026      KLARNA FSUK LONDON GBR                         -8.93",
+      "target_id": "NAP-SRC-0012",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-005",
+      "locator": "16/04/2026 entry",
+      "quote": "16/04/2026      ASDA STORES PLC (Direct Credit) 261.36",
+      "target_id": "NAP-SRC-0012",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-006",
+      "locator": "19/04/2026 entry",
+      "quote": "19/04/2026      PSI Services UK Ltd Yateley GBR               -50.00",
+      "target_id": "NAP-SRC-0012",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001",
+        "cit-002"
+      ],
+      "confidence": 0.95,
+      "finding_id": "f-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Statement period 01/09/2025\u201328/04/2026 shows total outgoings \u00a319,057.59 and total deposits \u00a319,057.88, with a closing balance of \u00a31.20."
+    },
+    {
+      "citation_ids": [
+        "cit-003"
+      ],
+      "confidence": 0.9,
+      "finding_id": "f-002",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Multiple small incoming payments from family/friends (e.g., A Nafe \u00a310, M Elbushra \u00a35, Leila Hassan \u00a310) indicate reliance on informal support."
+    },
+    {
+      "citation_ids": [
+        "cit-004"
+      ],
+      "confidence": 0.9,
+      "finding_id": "f-003",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Frequent Klarna/BNPL transactions (e.g., Klarna FSUK -\u00a38.93, Klarna*Depop -\u00a319.08) suggest use of high-cost credit."
+    },
+    {
+      "citation_ids": [
+        "cit-005",
+        "cit-006"
+      ],
+      "confidence": 0.7,
+      "finding_id": "f-004",
+      "finding_type": "inference",
+      "reasoning_status": "inferred",
+      "text": "ASDA Direct Credit of \u00a3261.36 on 16/04/2026 may be wages; PSI Services UK Ltd -\u00a350.00 on 19/04/2026 could be a professional payment, but context is unclear."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "evidence_summary",
+      "content": "## Hardship Indicators from NAP-SRC-0012 (Monzo Statement Sep 2025\u2013Apr 2026)\n\n- **Low balance**: Closing balance \u00a31.20; frequently near zero.\n- **High outgoings**: Total outgoings \u00a319,057.59 nearly equal to deposits \u00a319,057.88.\n- **Informal support**: Multiple small transfers from family/friends (e.g., A Nafe \u00a310, M Elbushra \u00a35, Leila Hassan \u00a310).\n- **BNPL usage**: Klarna transactions for clothing, food, and other items (e.g., Klarna*SHEIN -\u00a326.32, Klarna*Depop -\u00a319.08).\n- **Possible income**: ASDA Direct Credit \u00a3261.36 on 16/04/2026 may be wages; PSI Services UK Ltd -\u00a350.00 on 19/04/2026 unclear.\n- **No rent/utility payments visible** in this account.\n\n**Risk flags**: Financial vulnerability, debt accumulation, income instability.\n\n**Recommendation**: Obtain additional evidence (rent statements, utility bills, other bank accounts) to complete hardship picture.",
+      "path": "03-working/evidence-summaries/NAP-SRC-0012-hardship-summary.md",
+      "stage": "S3",
+      "title": "Hardship Indicators from NAP-SRC-0012"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Request from client or gather from matter sources: (1) rent payment records or tenancy agreement showing arrears, (2) utility bills for the period, (3) any other bank account statements, (4) evidence of income (payslips, benefits letters), (5) any correspondence with landlord or debt advisors. Prioritise documents that show housing costs and income sources.",
+      "matter_scope": "napier-accommodation-arrears",
+      "stage": "S3",
+      "task_id": "task-followup-001",
+      "task_type": "evidence_gathering",
+      "title": "Obtain additional financial evidence for hardship assessment"
+    }
+  ],
+  "redaction_flags": [
+    {
+      "finding_id": "red-001",
+      "redaction_type": "pii",
+      "text": "Statement contains full name, address, sort code, account number, and IBAN; redact before sharing outside legal team."
+    }
+  ],
+  "risk_flags": [
+    {
+      "finding_id": "r-001",
+      "risk_type": "financial_hardship",
+      "text": "Near-zero end balance (\u00a31.20) and high outgoings relative to deposits indicate severe financial vulnerability."
+    },
+    {
+      "finding_id": "r-002",
+      "risk_type": "debt_risk",
+      "text": "Use of Klarna/BNPL services may indicate debt accumulation and inability to meet essential costs."
+    },
+    {
+      "finding_id": "r-003",
+      "risk_type": "income_instability",
+      "text": "Reliance on informal family/friend transfers suggests lack of stable income or savings buffer."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Monzo bank statement NAP-SRC-0012 (Sep 2025\u2013Apr 2026) shows low balances, frequent small transfers from family/friends, and spending on essentials and Klarna/BNPL. No direct rent or utility payments visible. Multiple indicators of financial hardship: near-zero end balance, reliance on informal support, use of buy-now-pay-later services, and high outgoings relative to deposits.",
+  "task_id": "napier-accommodation-arrears-coord-draft-a-formal-evidence-led-complaint-and-support-pack-for-anfal-edinbur-ctx-5ba143af2beb-production-map-bundle-10-followup",
+  "uncertainties": [
+    {
+      "finding_id": "u-001",
+      "reasoning_status": "uncertain",
+      "text": "No rent or utility payments are visible in the statement excerpt; it is unclear how housing costs are covered."
+    },
+    {
+      "finding_id": "u-002",
+      "reasoning_status": "uncertain",
+      "text": "The source of the ASDA Direct Credit (\u00a3261.36) is not identified; it may be employment income or a refund."
+    },
+    {
+      "finding_id": "u-003",
+      "reasoning_status": "uncertain",
+      "text": "The statement covers only one account; the client may have other accounts or assets not disclosed."
+    }
+  ]
+}

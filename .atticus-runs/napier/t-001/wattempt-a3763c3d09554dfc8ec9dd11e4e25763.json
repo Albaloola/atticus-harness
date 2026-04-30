@@ -1,0 +1,135 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "page 1",
+      "quote": "Tenancy Agreement BETWEEN The Court of Edinburgh Napier University, PER Edinburgh Napier University ... AND ... \u201dThe Tenant\u201d",
+      "target_id": "NAP-SRC-0018",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "page 1",
+      "quote": "Period of Let: From: To: Rent: \u00a3 Total for Session ... Tenant\u2019s Name (Print): Signature: Date:",
+      "target_id": "NAP-SRC-0018",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-003",
+      "locator": "page 2",
+      "quote": "The tenant will pay the Rent instalments on the due dates as advised by the Accommodation Office.",
+      "target_id": "NAP-SRC-0018",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-004",
+      "locator": "page 2",
+      "quote": "Where a Rent account is in arrears by two monthly instalments, the Landlord will be entitled to issue a notice to quit this Tenancy Agreement",
+      "target_id": "NAP-SRC-0018",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-005",
+      "locator": "page 2",
+      "quote": "If the Tenant\u2019s Rent instalments account falls into arrears, the Landlord will be entitled to seek payment from the Tenant\u2019s guarantor",
+      "target_id": "NAP-SRC-0018",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-006",
+      "locator": "page 1",
+      "quote": "The Tenant must be an active Edinburgh Napier University full-time student.",
+      "target_id": "NAP-SRC-0018",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001",
+        "cit-002"
+      ],
+      "confidence": 0.95,
+      "finding_id": "f-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "The provided source is a blank tenancy agreement template for Edinburgh Napier University student accommodation for 2025-26."
+    },
+    {
+      "citation_ids": [
+        "cit-003",
+        "cit-004",
+        "cit-005"
+      ],
+      "confidence": 0.95,
+      "finding_id": "f-002",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "The template includes rent payment terms, arrears provisions (notice to quit after two missed instalments), and guarantor recourse."
+    },
+    {
+      "citation_ids": [
+        "cit-006"
+      ],
+      "confidence": 0.95,
+      "finding_id": "f-003",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "The template requires the tenant to be an active full-time Edinburgh Napier University student."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "f-004",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No completed tenancy agreement for Anfal is present in the provided source materials. The task cannot be fulfilled with the current evidence."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "evidence_map",
+      "content": "## Evidence Map: Tenancy Agreement for Anfal\n\n**Source Reviewed:** NAP-SRC-0018 (Blank Template)\n\n**Key Findings:**\n- The template is for Edinburgh Napier University student accommodation 2025-26.\n- It contains standard terms: rent payment, arrears, guarantor, notice to quit.\n- No completed fields (tenant name, dates, rent amount, signatures) are present.\n\n**Gap:** The completed tenancy agreement for Anfal is missing. This is critical for determining the specific rent amount, payment schedule, and whether arrears exist.\n\n**Recommendation:** Locate the executed agreement for Anfal from other sources or records.",
+      "path": "candidate/t-001/evidence-map.md",
+      "stage": "S3",
+      "title": "Evidence Map for Anfal Tenancy Agreement"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "instructions": "Search matter sources and artifacts for a completed tenancy agreement for Anfal (tenant name, signed, with dates and rent amount). If not found, request the document from the Accommodation Office or check the file inventory for additional sources.",
+      "matter_scope": "napier-accommodation-arrears",
+      "source_dependencies": [],
+      "stage": "S3",
+      "task_dependencies": [
+        "t-001"
+      ],
+      "task_id": "t-002",
+      "task_type": "evidence_gathering",
+      "title": "Locate completed tenancy agreement for Anfal",
+      "validation_gates": [
+        "chain_of_custody"
+      ]
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "description": "Completed tenancy agreement for Anfal is not in the provided source materials.",
+      "finding_id": "f-004",
+      "risk_type": "missing_evidence"
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Task requires obtaining a completed tenancy agreement for Anfal. The only source provided is a blank template tenancy agreement (NAP-SRC-0018). No completed agreement, tenant name, signature, or specific arrears data is present. The source confirms the template's terms but does not contain Anfal's executed agreement. A follow-up task is proposed to locate the completed agreement.",
+  "task_id": "t-001",
+  "uncertainties": [
+    {
+      "finding_id": "f-004",
+      "reason": "The source is a blank template; no executed agreement for Anfal is available."
+    }
+  ]
+}

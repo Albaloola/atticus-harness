@@ -1,0 +1,169 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "email body",
+      "quote": "The outstanding arrears for your accommodation are \u00a34605.55",
+      "target_id": "NAP-SRC-0021",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "email header",
+      "quote": "From Donnelly, Kathleen <K.Donnelly@napier.ac.uk> on behalf of fees <fees@napier.ac.uk> Date Wed 08/04/2026 13:29 To Elbushra, Anfal <40805511@live.napier.ac.uk>",
+      "target_id": "NAP-SRC-0021",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-003",
+      "locator": "email body",
+      "quote": "It has come to our attention that you are in arrears for your accommodation.",
+      "target_id": "NAP-SRC-0021",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-004",
+      "locator": "email body",
+      "quote": "If you have made payments, please send copies of your receipts.",
+      "target_id": "NAP-SRC-0021",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-005",
+      "locator": "email signature",
+      "quote": "Kathleen Donnelly Senior Finance Assistant Edinburgh Napier University Finance Sighthill Campus Sighthill Court Edinburgh EH11 4BN Tel 0131 455 6806",
+      "target_id": "NAP-SRC-0021",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-006",
+      "locator": "email body",
+      "quote": "If you need any additional help with funding, please contact Studentfunding@napier.ac.uk",
+      "target_id": "NAP-SRC-0021",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001"
+      ],
+      "confidence": 0.85,
+      "finding_id": "f-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Email states accommodation arrears of \u00a34605.55."
+    },
+    {
+      "citation_ids": [
+        "cit-002"
+      ],
+      "confidence": 0.85,
+      "finding_id": "f-002",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Email sent by Kathleen Donnelly on behalf of fees@napier.ac.uk to Anfal Elbushra on 08/04/2026."
+    },
+    {
+      "citation_ids": [
+        "cit-003",
+        "cit-004"
+      ],
+      "confidence": 0.85,
+      "finding_id": "f-003",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Email notifies recipient of arrears and requests payment receipts if already paid."
+    },
+    {
+      "citation_ids": [
+        "cit-005"
+      ],
+      "confidence": 0.85,
+      "finding_id": "f-004",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Sender is Kathleen Donnelly, Senior Finance Assistant at Edinburgh Napier University."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "f-005",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No payment records, receipts, or account statements are present in the current evidence. Task cannot be completed without additional records."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "evidence_summary",
+      "content": "Task: Request payment records from Edinburgh Napier University. Available evidence: one email (NAP-SRC-0021) from Kathleen Donnelly to Anfal Elbushra dated 08/04/2026 stating accommodation arrears of \u00a34605.55. No payment records, receipts, or account statements are present. A formal request to Edinburgh Napier University for payment history, receipts, and account statements is needed. Contact: Kathleen Donnelly (K.Donnelly@napier.ac.uk) or fees@napier.ac.uk.",
+      "path": "candidate/T-09-003/result.md",
+      "stage": "S2",
+      "title": "Evidence summary for payment records request"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "cost_limit_usd": 0.01,
+      "expected_value": 0.8,
+      "instructions": "Draft a formal letter or email to Edinburgh Napier University (to Kathleen Donnelly or fees@napier.ac.uk) requesting: (1) full payment history for Anfal Elbushra's accommodation account, (2) copies of any receipts or payment confirmations, (3) a breakdown of the \u00a34605.55 arrears, and (4) any correspondence regarding missed payments. Include reference to the email dated 08/04/2026 (NAP-SRC-0021). Do not send the request; output the draft as a proposed artifact.",
+      "matter_dependencies": [],
+      "matter_scope": "napier-accommodation-arrears",
+      "required_certifications": [],
+      "source_dependencies": [
+        "NAP-SRC-0021"
+      ],
+      "stage": "S2",
+      "task_dependencies": [],
+      "task_id": "T-09-003-followup",
+      "task_type": "drafting",
+      "title": "Draft formal request for payment records from Edinburgh Napier University",
+      "validation_gates": []
+    }
+  ],
+  "redaction_flags": [
+    {
+      "finding_id": "red-001",
+      "text": "Email contains personal email address (albshryanfal4@gmail.com) \u2013 potential privacy concern."
+    },
+    {
+      "finding_id": "red-002",
+      "text": "Email contains student ID (40805511) \u2013 potential data protection issue."
+    }
+  ],
+  "risk_flags": [
+    {
+      "finding_id": "r-001",
+      "text": "Absence of payment records may lead to incorrect arrears assessment or missed defenses."
+    },
+    {
+      "finding_id": "r-002",
+      "text": "Email is from April 2026; staleness may affect relevance or accuracy of arrears figure."
+    },
+    {
+      "finding_id": "r-003",
+      "text": "No evidence of service or receipt of the email by the recipient."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Task is to request payment records from Edinburgh Napier University. Only one source (NAP-SRC-0021) is available: an email from Kathleen Donnelly to Anfal Elbushra dated 08/04/2026 stating accommodation arrears of \u00a34605.55. No payment records, receipts, or account statements are present. The task cannot be completed with current evidence; a follow-up task is proposed to draft a formal records request.",
+  "task_id": "T-09-003",
+  "uncertainties": [
+    {
+      "finding_id": "u-001",
+      "text": "No payment records or receipts from Edinburgh Napier University are available in the evidence bundle."
+    },
+    {
+      "finding_id": "u-002",
+      "text": "It is unknown whether the arrears amount of \u00a34605.55 is accurate or disputed."
+    },
+    {
+      "finding_id": "u-003",
+      "text": "No response or further correspondence from the recipient (Anfal Elbushra) is present."
+    }
+  ]
+}

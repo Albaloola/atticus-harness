@@ -1,0 +1,159 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "email subject line",
+      "quote": "Accommodation Arrears - Urgent attention required",
+      "target_id": "NAP-SRC-0021",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "email subject line",
+      "quote": "Accommodation Hardship Fund - payment date",
+      "target_id": "NAP-SRC-0022",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-003",
+      "locator": "document title",
+      "quote": "Tenancy Agreement",
+      "target_id": "NAP-SRC-0018",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-004",
+      "locator": "email subject line",
+      "quote": "Edinburgh Napier University Tenancy Agreement 2025-26",
+      "target_id": "NAP-SRC-0028",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-005",
+      "locator": "email subject line",
+      "quote": "Fwd: You have a notification from SAAS",
+      "target_id": "NAP-SRC-0034",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-006",
+      "locator": "email subject line",
+      "quote": "Find-a-Fund Application",
+      "target_id": "NAP-SRC-0033",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001"
+      ],
+      "confidence": 0.85,
+      "finding_id": "f-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Anfal received an 'Accommodation Arrears - Urgent attention required' email from Kathleen Donnelly/fees@napier.ac.uk on 8 Apr 2026."
+    },
+    {
+      "citation_ids": [
+        "cit-002"
+      ],
+      "confidence": 0.85,
+      "finding_id": "f-002",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Anfal received an 'Accommodation Hardship Fund - payment date' notification from findafund@napier.ac.uk on 26 Nov 2025."
+    },
+    {
+      "citation_ids": [
+        "cit-003",
+        "cit-004"
+      ],
+      "confidence": 0.85,
+      "finding_id": "f-003",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "A tenancy agreement (NAP-SRC-0018) and a student licence (attached to NAP-SRC-0028) exist but full terms are not extracted."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.9,
+      "finding_id": "f-004",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No payment ledger, invoice, formal demand, or arrears amount is present in the provided source materials."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "evidence_gap_report",
+      "content": "## Bundle 12 Evidence Gap Report\n\n### Arrears-Specific Sources Found\n- **NAP-SRC-0021**: 'Accommodation Arrears - Urgent attention required' email (8 Apr 2026) \u2013 truncated, no amount or breakdown.\n- **NAP-SRC-0022**: 'Accommodation Hardship Fund - payment date' (26 Nov 2025) \u2013 suggests prior hardship application.\n\n### Missing Critical Evidence\n- Payment ledger or account statement showing arrears balance and payment history.\n- Formal demand letter or notice of intended legal proceedings.\n- Full text of the arrears email (NAP-SRC-0021) including any attached breakdown.\n- Tenancy agreement (NAP-SRC-0018) and student licence (NAP-SRC-0028) \u2013 full extraction needed for financial clauses.\n- Any correspondence from the university's fees team beyond the single email.\n\n### Recommended Next Steps\n1. Extract full text of NAP-SRC-0021 (arrears email) to capture amount, due date, and any attached documents.\n2. Request payment ledger from the university or student records.\n3. Fully extract tenancy agreement (NAP-SRC-0018) and student licence (NAP-SRC-0028) for rent amount, payment terms, and late payment clauses.\n4. Search for any formal demand or notice of intended legal action.",
+      "path": "02-artifacts/bundle-12-evidence-gap-report.md",
+      "stage": "S3",
+      "title": "Bundle 12 Evidence Gap Report: Arrears-Specific Sources"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "cost_limit_usd": 0.01,
+      "expected_value": 0.8,
+      "instructions": "Extract the complete text of source NAP-SRC-0021 ('Accommodation Arrears - Urgent attention required') including the email body, any attachments, and metadata. Capture the arrears amount, due date, and any payment instructions or warnings. Output as a structured extraction artifact.",
+      "matter_dependencies": [],
+      "matter_scope": "napier-accommodation-arrears",
+      "provider_policy": {},
+      "required_certifications": [],
+      "source_dependencies": [
+        "NAP-SRC-0021"
+      ],
+      "stage": "S3",
+      "task_dependencies": [],
+      "task_id": "napier-accommodation-arrears-extract-arrears-email-full",
+      "task_type": "extraction",
+      "title": "Extract full text of arrears email NAP-SRC-0021",
+      "validation_gates": [
+        "production_mapping",
+        "chain_of_custody"
+      ]
+    }
+  ],
+  "redaction_flags": [
+    {
+      "finding_id": "red-001",
+      "text": "NAP-SRC-0034 contains a forwarded personal email (albshryanfal4@gmail.com) which may include third-party or private financial data."
+    }
+  ],
+  "risk_flags": [
+    {
+      "finding_id": "r-001",
+      "text": "Missing financial records (ledger, invoices) prevent verification of the claimed arrears amount and timeline."
+    },
+    {
+      "finding_id": "r-002",
+      "text": "No formal demand or notice of intended legal action found; the urgency of the arrears email is unsubstantiated."
+    },
+    {
+      "finding_id": "r-003",
+      "text": "Hardship fund notification (NAP-SRC-0022) and SAAS notification (NAP-SRC-0034) suggest financial vulnerability but no evidence of resolution."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Bundle 12 evidence gap analysis: identified one direct arrears source (NAP-SRC-0021, 8 Apr 2026) and one hardship fund notification (NAP-SRC-0022, 26 Nov 2025). No payment ledger, invoice, or formal demand found. Tenancy agreement (NAP-SRC-0018) and licence (NAP-SRC-0028) present but not fully extracted. Proposed follow-up task to extract full arrears email and locate financial records.",
+  "task_id": "napier-accommodation-arrears-coord-draft-a-formal-evidence-led-complaint-and-support-pack-for-anfal-edinbur-ctx-5ba143af2beb-production-map-bundle-12-followup",
+  "uncertainties": [
+    {
+      "finding_id": "u-001",
+      "text": "The exact arrears amount, due date, and any prior payment history are not available from the current source materials."
+    },
+    {
+      "finding_id": "u-002",
+      "text": "The full text of the arrears email (NAP-SRC-0021) is truncated; the body and any attached breakdown are missing."
+    },
+    {
+      "finding_id": "u-003",
+      "text": "The tenancy agreement (NAP-SRC-0018) and student licence (NAP-SRC-0028) are only partially extracted; key financial clauses may be missing."
+    }
+  ]
+}

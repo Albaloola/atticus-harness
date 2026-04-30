@@ -1,0 +1,185 @@
+{
+  "citations": [
+    {
+      "citation_id": "C-001",
+      "excerpt": "The draft complaint includes the full name of the student.",
+      "locator": "candidate/napier-accommodation-arrears-coord-draft-a-formal-evidence-led-complaint-and-support-pack-for-anfal-edinbur-ctx-5ba143af2beb-draft/complaint_draft.md",
+      "quote": "Student Name: ANFAL ELBUSHRA",
+      "target_id": "art-0e6fe6dbf06942e19dc6c1baa3b40b6d",
+      "target_type": "artifact"
+    },
+    {
+      "citation_id": "C-002",
+      "excerpt": "The draft complaint includes the student registration number.",
+      "locator": "candidate/napier-accommodation-arrears-coord-draft-a-formal-evidence-led-complaint-and-support-pack-for-anfal-edinbur-ctx-5ba143af2beb-draft/complaint_draft.md",
+      "quote": "Student Registration Number: 40805511",
+      "target_id": "art-0e6fe6dbf06942e19dc6c1baa3b40b6d",
+      "target_type": "artifact"
+    },
+    {
+      "citation_id": "C-003",
+      "excerpt": "Monzo bank statement containing financial data.",
+      "locator": "extracted text: bank statement header",
+      "quote": "Personal Account statement 01/09/2025 - 28/04/2026",
+      "target_id": "NAP-SRC-0012",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "C-004",
+      "excerpt": "NHS form potentially containing health data.",
+      "locator": "extracted text: form title",
+      "quote": "NHS Lothian Student User ID Request Form",
+      "target_id": "NAP-SRC-0013",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "C-005",
+      "excerpt": "Legal context for complaint, but no privilege.",
+      "locator": "Equality Act 2010, section 91",
+      "quote": "Further and higher education: discrimination and victimisation provisions",
+      "target_id": "auth-4f674054343440669658040cbf63c30b",
+      "target_type": "authority"
+    },
+    {
+      "citation_id": "C-006",
+      "excerpt": "Reference to hardship fund, indicating financial vulnerability.",
+      "locator": "candidate/napier-accommodation-arrears-coord-draft-a-formal-evidence-led-complaint-and-support-pack-for-anfal-edinbur-ctx-5ba143af2beb-draft/complaint_draft.md",
+      "quote": "Accommodation Hardship Fund - payment date",
+      "target_id": "art-0e6fe6dbf06942e19dc6c1baa3b40b6d",
+      "target_type": "artifact"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "C-001",
+        "C-002"
+      ],
+      "confidence": 0.95,
+      "finding_id": "F-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "The complaint draft includes Anfal Elbushra's full name and student registration number (40805511) without redaction."
+    },
+    {
+      "citation_ids": [
+        "C-003",
+        "C-004"
+      ],
+      "confidence": 0.9,
+      "finding_id": "F-002",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "The draft references a Monzo bank statement (NAP-SRC-0012) and an NHS Lothian form (NAP-SRC-0013), which contain sensitive personal data."
+    },
+    {
+      "citation_ids": [
+        "C-005"
+      ],
+      "confidence": 0.85,
+      "finding_id": "F-003",
+      "finding_type": "risk",
+      "reasoning_status": "supported",
+      "text": "Including unredacted personal data in a formal complaint risks breach of UK GDPR and university data protection policies."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.8,
+      "finding_id": "F-004",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No legal professional privilege was identified in the draft; the document is a factual complaint, not legal advice."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "privacy_redaction_report",
+      "content": "# Privacy and Redaction Audit Report\n\n## Audit Result: FAIL\n\nThe candidate complaint draft fails the privacy and redaction validation gates due to unredacted personal data and references to sensitive sources.\n\n## Findings\n1. **Personal Data**: Full name (Anfal Elbushra) and student ID (40805511) are present without redaction.\n2. **Sensitive Sources**: The draft cites a Monzo bank statement (NAP-SRC-0012) and an NHS Lothian form (NAP-SRC-0013), which may contain financial and health data.\n3. **Privilege**: No legal professional privilege identified; the document is a factual complaint.\n\n## Recommended Redactions\n- Replace full name with 'the student' or initials.\n- Remove student registration number.\n- Summarize financial and health evidence without direct identifiers.\n- Review for third-party data (flatmates, staff) and redact as needed.\n\n## Next Steps\n- Implement redactions and re-submit for privacy review.\n- Consult university data protection policy for additional requirements.",
+      "path": "candidate/napier-accommodation-arrears-coord-draft-a-formal-evidence-led-complaint-and-support-pack-for-anfal-edinbur-ctx-5ba143af2beb-privacy-redaction-audit/redaction_report.md",
+      "stage": "S9",
+      "title": "Privacy and Redaction Audit Report"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [
+        "art-0e6fe6dbf06942e19dc6c1baa3b40b6d"
+      ],
+      "instructions": "Apply the redactions identified in the privacy audit: anonymize student name and ID, remove direct references to bank and NHS sources, and review for third-party data. Produce a redacted version of the complaint draft.",
+      "matter_scope": "napier-accommodation-arrears",
+      "source_dependencies": [
+        "NAP-SRC-0012",
+        "NAP-SRC-0013"
+      ],
+      "stage": "S9",
+      "task_dependencies": [
+        "napier-accommodation-arrears-coord-draft-a-formal-evidence-led-complaint-and-support-pack-for-anfal-edinbur-ctx-5ba143af2beb-privacy-redaction-audit"
+      ],
+      "task_id": "napier-accommodation-arrears-redaction-implementation",
+      "task_type": "redaction_implementation",
+      "title": "Implement redactions in complaint draft",
+      "validation_gates": [
+        "privacy_redaction"
+      ]
+    }
+  ],
+  "redaction_flags": [
+    {
+      "description": "Redact full name to initials or 'the student' where possible.",
+      "flag_id": "RF-001",
+      "target": "Anfal Elbushra"
+    },
+    {
+      "description": "Redact student registration number (40805511) entirely.",
+      "flag_id": "RF-002",
+      "target": "40805511"
+    },
+    {
+      "description": "Remove or anonymize references to specific bank statements and NHS forms; summarize without identifiers.",
+      "flag_id": "RF-003",
+      "target": "NAP-SRC-0012, NAP-SRC-0013"
+    }
+  ],
+  "risk_flags": [
+    {
+      "description": "Unredacted personal data (name, student ID) in complaint draft poses GDPR and privacy risk.",
+      "risk_id": "R-001",
+      "severity": "high",
+      "source": "draft review"
+    },
+    {
+      "description": "Reference to bank statement and NHS form may inadvertently disclose financial and health data.",
+      "risk_id": "R-002",
+      "severity": "high",
+      "source": "source materials"
+    },
+    {
+      "description": "Lack of redaction could undermine the complaint's credibility and expose the student to harm.",
+      "risk_id": "R-003",
+      "severity": "medium",
+      "source": "inference"
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Privacy and redaction audit of the candidate complaint draft. The draft contains unredacted personal data (full name, student ID, bank details) and references to sensitive sources (health, welfare). No legal privilege identified. The draft fails privacy and redaction gates; redaction and minimization are required before external use.",
+  "task_id": "napier-accommodation-arrears-coord-draft-a-formal-evidence-led-complaint-and-support-pack-for-anfal-edinbur-ctx-5ba143af2beb-privacy-redaction-audit",
+  "uncertainties": [
+    {
+      "description": "Whether the draft includes all necessary redactions for third-party data (e.g., flatmates, staff) is unclear without full source review.",
+      "severity": "medium",
+      "uncertainty_id": "U-001"
+    },
+    {
+      "description": "The extent of sensitive health data in NAP-SRC-0013 is not fully assessed; the extracted text is limited.",
+      "severity": "high",
+      "uncertainty_id": "U-002"
+    },
+    {
+      "description": "The draft's compliance with university data protection policies cannot be confirmed without the specific policy document.",
+      "severity": "medium",
+      "uncertainty_id": "U-003"
+    }
+  ]
+}

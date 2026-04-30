@@ -1,0 +1,121 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "email body",
+      "quote": "The outstanding arrears for your accommodation are \u00a34605.55",
+      "target_id": "NAP-SRC-0021",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "email body",
+      "quote": "If you have made payments, please send copies of your receipts.",
+      "target_id": "NAP-SRC-0021",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-003",
+      "locator": "email header",
+      "quote": "From Donnelly, Kathleen <K.Donnelly@napier.ac.uk> on behalf of fees <fees@napier.ac.uk>",
+      "target_id": "NAP-SRC-0021",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001"
+      ],
+      "confidence": 0.85,
+      "finding_id": "f-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Email from Edinburgh Napier University states accommodation arrears of \u00a34605.55."
+    },
+    {
+      "citation_ids": [
+        "cit-002"
+      ],
+      "confidence": 0.85,
+      "finding_id": "f-002",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Email requests recipient send copies of receipts if payments have been made."
+    },
+    {
+      "citation_ids": [
+        "cit-003"
+      ],
+      "confidence": 0.85,
+      "finding_id": "f-003",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Email sent by Kathleen Donnelly on behalf of fees@napier.ac.uk on 08/04/2026."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.9,
+      "finding_id": "f-004",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No payment records or student payment history are available in the provided sources. The formal request should ask for itemised payment history and receipts."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "draft_letter",
+      "content": "**Formal Request for Payment Records**\n\nTo: Edinburgh Napier University Finance Department\n     fees@napier.ac.uk\n     Attn: Kathleen Donnelly, Senior Finance Assistant\n\nFrom: [Student Name/Representative]\nDate: [Current Date]\nRe: Accommodation Arrears \u2013 Request for Payment Records\n\nDear Ms. Donnelly,\n\nWe refer to your email dated 08/04/2026 regarding outstanding accommodation arrears of \u00a34605.55 (Ref: NAP-SRC-0021).\n\nTo enable a full review of the account, we respectfully request that you provide the following records:\n\n1. An itemised statement of all accommodation charges and payments applied to the account from the start of the tenancy to date.\n2. Copies of any payment receipts or transaction records held by the university.\n3. Details of the payment schedule and the dates on which payments were due.\n4. Any correspondence or notes regarding the arrears.\n\nPlease provide these records within 14 days of this request. If any information is unavailable, please confirm in writing.\n\nThank you for your assistance.\n\nYours sincerely,\n\n[Signature/Name]",
+      "path": "candidate/T-09-003-followup/formal-request-payment-records.md",
+      "stage": "S2",
+      "title": "Formal request for payment records from Edinburgh Napier University"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [
+        "candidate/T-09-003-followup/formal-request-payment-records.md"
+      ],
+      "instructions": "After the formal request for payment records is sent, review the university's response. Extract any payment history, receipts, or explanations provided. Compare with the arrears amount of \u00a34605.55 and identify any discrepancies or missing information. Flag any contradictions or new evidence for further investigation.",
+      "matter_scope": "napier-accommodation-arrears",
+      "source_dependencies": [],
+      "stage": "S2",
+      "task_dependencies": [
+        "T-09-003-followup"
+      ],
+      "task_id": "T-09-004",
+      "task_type": "review",
+      "title": "Review university response to payment records request",
+      "validation_gates": []
+    }
+  ],
+  "redaction_flags": [
+    {
+      "description": "Student email address (40805511@live.napier.ac.uk) appears in source; redact in any public filing."
+    }
+  ],
+  "risk_flags": [
+    {
+      "description": "The request may be time-sensitive if the university has set a deadline for payment or response."
+    },
+    {
+      "description": "The student's personal data (email address, name) is included; ensure redaction if the letter is shared externally."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Draft formal request to Edinburgh Napier University for payment records. Source NAP-SRC-0021 shows arrears of \u00a34605.55 and requests receipts. No payment records or student payment history are available. Proposed artifact is a formal letter requesting itemised payment history and receipts.",
+  "task_id": "T-09-003-followup",
+  "uncertainties": [
+    {
+      "description": "No source provides the student's payment history or any receipts; the university's response is unknown."
+    },
+    {
+      "description": "The exact accommodation contract terms and payment schedule are not in the provided sources."
+    },
+    {
+      "description": "It is unclear whether the student has made any payments or disputed the arrears."
+    }
+  ]
+}

@@ -1,0 +1,180 @@
+{
+  "citations": [
+    {
+      "citation_id": "C1",
+      "locator": "email body",
+      "quote": "The outstanding arrears for your accommodation are \u00a34605.55",
+      "target_id": "NAP-SRC-0021",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "C2",
+      "locator": "email header",
+      "quote": "From Donnelly, Kathleen <K.Donnelly@napier.ac.uk> on behalf of fees <fees@napier.ac.uk> Date Wed 08/04/2026 13:29 To Elbushra, Anfal <40805511@live.napier.ac.uk>",
+      "target_id": "NAP-SRC-0021",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "C3",
+      "locator": "email body",
+      "quote": "The payments have not been collected from your card each month and unfortunately the arrears have not been picked up before now. If you have made payments, please send copies of your receipts.",
+      "target_id": "NAP-SRC-0021",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "C4",
+      "locator": "lines 10-15",
+      "quote": "Total outgoings -\u00a319,057.59 Total deposits +\u00a319,057.88",
+      "target_id": "NAP-SRC-0012",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "C5",
+      "locator": "lines 20-40",
+      "quote": "27/04/2026 UBER * EATS PENDING London GBR -13.38 1.20 ... PrettyLittleThing... 27/04/2026 13.50 14.58 ... 25/04/2026 M&S SIMPLY FOOD - SSP HAYMARKET STA GBR -1.70 1.08 ... 22/04/2026 UBER * EATS PENDING London GBR -16.88 2.78",
+      "target_id": "NAP-SRC-0012",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "C1",
+        "C2"
+      ],
+      "confidence": 0.85,
+      "finding_id": "F1",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Email NAP-SRC-0021 from Kathleen Donnelly (Senior Finance Assistant, Edinburgh Napier University) to Anfal Elbushra dated 08/04/2026 states accommodation arrears of \u00a34605.55."
+    },
+    {
+      "citation_ids": [
+        "C3"
+      ],
+      "confidence": 0.85,
+      "finding_id": "F2",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Email NAP-SRC-0021 indicates payments were not collected from the student's card each month and requests payment receipts if already made."
+    },
+    {
+      "citation_ids": [
+        "C4",
+        "C5"
+      ],
+      "confidence": 0.85,
+      "finding_id": "F3",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Bank statement NAP-SRC-0012 (01/09/2025\u201328/04/2026) shows total outgoings \u00a319,057.59 and deposits \u00a319,057.88, but no transaction explicitly identified as accommodation payment to Edinburgh Napier University."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.9,
+      "finding_id": "F4",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "Only partial transaction list extracted from NAP-SRC-0012 (13\u201327 April 2026); full statement not reviewed. Missing transactions may include accommodation payments."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "verification_note",
+      "content": "Verified source NAP-SRC-0021: Accommodation Arrears email from Kathleen Donnelly (Edinburgh Napier University) to Anfal Elbushra dated 08/04/2026. Key facts: (1) arrears claimed \u00a34605.55; (2) payments not collected from card; (3) request for receipts if paid. No statutory or contractual authority cited. Bank statement NAP-SRC-0012 reviewed partially; no explicit accommodation payment found. Full transaction extraction and contract review recommended.",
+      "path": "candidate/verify-arrears-notice/verification_note.md",
+      "stage": "S7",
+      "title": "Arrears notice verification summary"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "cost_limit_usd": 0.05,
+      "expected_value": 0.8,
+      "instructions": "Extract complete transaction list from Monzo bank statement NAP-SRC-0012 (01/09/2025\u201328/04/2026). Identify any payments to Edinburgh Napier University or related entities. Flag recurring payments, failed transactions, and large transfers.",
+      "matter_dependencies": [],
+      "matter_scope": "napier-accommodation-arrears",
+      "provider_policy": {},
+      "required_certifications": [],
+      "source_dependencies": [
+        "NAP-SRC-0012"
+      ],
+      "stage": "S2",
+      "task_dependencies": [],
+      "task_id": "extract-full-bank-statement",
+      "task_type": "source_extraction",
+      "title": "Extract full transaction history from NAP-SRC-0012",
+      "validation_gates": [
+        "hostile_review",
+        "overstatement_risk"
+      ]
+    }
+  ],
+  "redaction_flags": [
+    {
+      "citation_ids": [
+        "C2"
+      ],
+      "redaction_id": "RED1",
+      "text": "Email contains personal email address (albshryanfal4@gmail.com) in CC field; consider redaction if not needed."
+    },
+    {
+      "citation_ids": [
+        "C4"
+      ],
+      "redaction_id": "RED2",
+      "text": "Bank statement includes full name and account details; redact or limit distribution."
+    }
+  ],
+  "risk_flags": [
+    {
+      "citation_ids": [
+        "C1"
+      ],
+      "risk_id": "R1",
+      "text": "Arrears notice lacks citation of contractual or statutory authority; may be challenged as insufficiently particularized."
+    },
+    {
+      "citation_ids": [
+        "C3"
+      ],
+      "risk_id": "R2",
+      "text": "Email requests payment receipts but does not provide a breakdown of charges or payment schedule; potential procedural fairness issue."
+    },
+    {
+      "citation_ids": [
+        "C5"
+      ],
+      "risk_id": "R3",
+      "text": "Bank statement shows high spending on non-essentials (Uber Eats, PrettyLittleThing) which could be used adversarially in hardship assessment."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Verified arrears notice NAP-SRC-0021: email from Kathleen Donnelly (Edinburgh Napier University) to Anfal Elbushra dated 08/04/2026 states accommodation arrears of \u00a34605.55. Bank statement NAP-SRC-0012 shows transactions but no direct payment to university. No authority cited in notice; legal basis for arrears unclear. Follow-up needed to confirm payment history and applicable tenancy/contract terms.",
+  "task_id": "verify-arrears-notice",
+  "uncertainties": [
+    {
+      "citation_ids": [
+        "C1"
+      ],
+      "text": "Whether the \u00a34605.55 arrears figure is accurate and properly calculated under the accommodation contract or university regulations cannot be verified from the notice alone.",
+      "uncertainty_id": "U1"
+    },
+    {
+      "citation_ids": [
+        "C4",
+        "C5"
+      ],
+      "text": "Bank statement NAP-SRC-0012 is incomplete; full transaction history may reveal accommodation payments or failed collection attempts.",
+      "uncertainty_id": "U2"
+    },
+    {
+      "citation_ids": [],
+      "text": "Legal basis for the arrears claim (e.g., tenancy type, contractual terms, statutory notice requirements) is not stated in the email and requires further authority research.",
+      "uncertainty_id": "U3"
+    }
+  ]
+}

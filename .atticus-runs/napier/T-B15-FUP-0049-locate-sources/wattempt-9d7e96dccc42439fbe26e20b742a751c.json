@@ -1,0 +1,74 @@
+{
+  "citations": [],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No source materials or artifacts were supplied in this work order, preventing any supported factual or legal findings."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-002",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "The task title references a 2026-04-10 arrears discussion, but no documents, dates, or parties are evidenced in the provided context."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "evidence_map",
+      "content": "No source documents were provided in this work order. The task requires locating and uploading source documents for a 2026-04-10 arrears discussion in the napier-accommodation-arrears matter. Recommended next steps: (1) Search legal memory for references to the 2026-04-10 arrears discussion. (2) List matter sources to identify any existing uploaded documents. (3) If sources exist, retrieve and review them to support factual findings. (4) If no sources exist, request human operator to locate and upload relevant correspondence, tenancy records, or payment history.",
+      "path": "candidate/T-B15-FUP-0049-locate-sources/evidence_map.md",
+      "stage": "S2",
+      "title": "Evidence map for 2026-04-10 arrears discussion"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "cost_limit_usd": 0.01,
+      "expected_value": 0.8,
+      "instructions": "Use the SearchLegalMemory tool to find any memory entries referencing '2026-04-10 arrears discussion' or 'napier-accommodation-arrears'. Use ListMatterSources to enumerate all uploaded source documents for this matter. If relevant sources are found, retrieve them and produce a candidate evidence summary. If no sources are found, report the gap and request human operator assistance to locate and upload the documents.",
+      "matter_dependencies": [],
+      "matter_scope": "napier-accommodation-arrears",
+      "provider_policy": {},
+      "required_certifications": [],
+      "source_dependencies": [],
+      "stage": "S2",
+      "task_dependencies": [],
+      "task_id": "T-B15-FUP-0049-find-sources",
+      "task_type": "source_acquisition",
+      "title": "Search legal memory and list matter sources for 2026-04-10 arrears discussion",
+      "validation_gates": []
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "finding_id": "F-001",
+      "risk_id": "R-001",
+      "text": "Absence of source materials may indicate incomplete evidence upload or missing records for the arrears discussion."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "No source materials or artifacts were provided for this source acquisition task. The task requests locating and uploading source documents for a 2026-04-10 arrears discussion in the napier-accommodation-arrears matter. Without any evidence, no factual, legal, or procedural findings can be supported. A follow-up task is proposed to search legal memory and list matter sources to identify relevant documents.",
+  "task_id": "T-B15-FUP-0049-locate-sources",
+  "uncertainties": [
+    {
+      "finding_id": "F-001",
+      "text": "Which source documents exist for the 2026-04-10 arrears discussion is unknown; no evidence was provided.",
+      "uncertainty_id": "U-001"
+    },
+    {
+      "finding_id": "F-002",
+      "text": "The content, parties, and legal context of the 2026-04-10 arrears discussion are not supported by any supplied source.",
+      "uncertainty_id": "U-002"
+    }
+  ]
+}

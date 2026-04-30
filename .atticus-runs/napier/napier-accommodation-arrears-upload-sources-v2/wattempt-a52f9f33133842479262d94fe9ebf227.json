@@ -1,0 +1,38 @@
+{
+  "citations": [],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No source materials or artifacts were provided in this work order. Task is a source upload step; no evidence to review."
+    }
+  ],
+  "proposed_artifacts": [],
+  "proposed_tasks": [
+    {
+      "instructions": "Search matter records for tenancy agreement, arrears statements, correspondence, and any relevant accommodation policies. Upload as source materials for review.",
+      "matter_scope": "napier-accommodation-arrears",
+      "stage": "S2",
+      "task_id": "napier-accommodation-arrears-locate-sources",
+      "task_type": "source_upload",
+      "title": "Locate and upload source documents for Anfal Elbushra accommodation arrears"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Task is a source upload for Anfal Elbushra accommodation arrears. No source materials or artifacts were provided in this work order. No evidence to review or findings to assert. Proposed follow-up task to locate and upload relevant documents.",
+  "task_id": "napier-accommodation-arrears-upload-sources-v2",
+  "uncertainties": [
+    {
+      "description": "No source materials or artifacts were provided; cannot verify any facts or legal claims.",
+      "impact": "Unable to perform substantive review or upload verification.",
+      "uncertainty_id": "U-001"
+    }
+  ]
+}

@@ -1,0 +1,83 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "page 1",
+      "quote": "Rent: \u00a34,686.18 Total Rent (including \u00a3500 Advance Rent Payment) \u00a328.23 Per Day",
+      "target_id": "NAP-SRC-0010",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "clause 2(a)",
+      "quote": "The subsequent monthly sums due will be shown on the rent schedule to be provided separately to the Tenant.",
+      "target_id": "NAP-SRC-0010",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001"
+      ],
+      "confidence": 0.95,
+      "finding_id": "F-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "The tenancy agreement states total rent of \u00a34,686.18 including a \u00a3500 advance payment, with a daily rate of \u00a328.23."
+    },
+    {
+      "citation_ids": [
+        "cit-002"
+      ],
+      "confidence": 0.95,
+      "finding_id": "F-002",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "The agreement provides that subsequent monthly sums will be shown on a separate rent schedule."
+    },
+    {
+      "citation_ids": [
+        "cit-001"
+      ],
+      "confidence": 0.95,
+      "finding_id": "F-003",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "The tenancy period is from 13 March 2026 to 25 August 2026."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-004",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No rent schedule or payment records were found in the provided source materials."
+    }
+  ],
+  "proposed_artifacts": [],
+  "proposed_tasks": [
+    {
+      "instructions": "Search for the rent schedule referenced in clause 2(a) of the tenancy agreement (NAP-SRC-0010) and any payment records for Miss Anfal Elbushra. Check for additional sources such as correspondence, account statements, or internal records.",
+      "matter_scope": "napier-accommodation-arrears",
+      "stage": "S2",
+      "task_id": "T-NAP-SRC-0010-017-FU-FOLLOWUP",
+      "task_type": "source_search",
+      "title": "Locate rent schedule and payment records for Miss Anfal Elbushra"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Reviewed the student licence agreement (NAP-SRC-0010) for Miss Anfal Elbushra. The agreement states a total rent of \u00a34,686.18 including a \u00a3500 advance payment, with subsequent monthly instalments to be shown on a separate rent schedule. No rent schedule or payment records were found in the provided source materials. A follow-up task is proposed to locate the rent schedule and payment records.",
+  "task_id": "T-NAP-SRC-0010-017-FU",
+  "uncertainties": [
+    {
+      "citation_ids": [],
+      "finding_id": "F-004",
+      "text": "The rent schedule and payment records for Miss Anfal Elbushra are not present in the provided source materials."
+    }
+  ]
+}

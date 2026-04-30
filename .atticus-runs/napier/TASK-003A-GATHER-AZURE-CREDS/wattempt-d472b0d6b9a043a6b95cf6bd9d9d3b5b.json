@@ -1,0 +1,77 @@
+{
+  "citations": [],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 0.0,
+      "finding_id": "F-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No source materials or artifacts were provided to gather Azure Document Intelligence credentials or deployment instructions."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.0,
+      "finding_id": "F-002",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "The task requires external cloud service credentials (Azure) which cannot be gathered or configured by this worker."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.0,
+      "finding_id": "F-003",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "Validation gates 'production_mapping' and 'chain_of_custody' are required but cannot be satisfied without human or tool intervention."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "drafting_note",
+      "content": "This task cannot be completed by the worker because it requires access to Azure Document Intelligence credentials and deployment instructions, which are external cloud service details not available in the provided context. The worker has no configured tools to retrieve or configure Azure credentials. Human or operator action is needed to obtain the credentials and deployment instructions from the organization's Azure subscription or IT team. Once obtained, the credentials should be securely stored and mapped to the matter's production environment. The validation gates 'production_mapping' and 'chain_of_custody' must be satisfied by a human operator or a dedicated tool with appropriate access.",
+      "path": "candidate/TASK-003A-GATHER-AZURE-CREDS/result.md",
+      "stage": "S3",
+      "title": "Azure Credentials Gathering - Not Feasible"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "instructions": "Request a human operator or authorized tool to retrieve Azure Document Intelligence credentials (endpoint URL, API key, or managed identity configuration) and deployment instructions from the organization's Azure subscription. Ensure secure storage and mapping to the matter's production environment. Satisfy validation gates 'production_mapping' and 'chain_of_custody'.",
+      "matter_scope": "napier-accommodation-arrears",
+      "source_dependencies": [],
+      "stage": "S3",
+      "task_dependencies": [],
+      "task_id": "TASK-003A-HUMAN-AZURE-CREDS",
+      "task_type": "human_intervention",
+      "title": "Human retrieval of Azure Document Intelligence credentials"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "risk_id": "RISK-001",
+      "risk_type": "operational",
+      "severity": "high",
+      "text": "No credentials or deployment instructions are available; the task cannot proceed without human intervention."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Task TASK-003A requires Azure Document Intelligence credentials and deployment instructions, but no source materials, artifacts, or configured tools provide these. The worker cannot gather external cloud credentials. Human intervention is required to obtain and securely store the credentials and satisfy validation gates. A follow-up human task is proposed.",
+  "task_id": "TASK-003A-GATHER-AZURE-CREDS",
+  "uncertainties": [
+    {
+      "text": "Azure Document Intelligence credentials and deployment instructions are not present in the provided context.",
+      "type": "missing_evidence",
+      "uncertainty_id": "U-001"
+    },
+    {
+      "text": "The worker has no configured tools to access or configure external cloud services like Azure.",
+      "type": "tool_capability_gap",
+      "uncertainty_id": "U-002"
+    }
+  ]
+}

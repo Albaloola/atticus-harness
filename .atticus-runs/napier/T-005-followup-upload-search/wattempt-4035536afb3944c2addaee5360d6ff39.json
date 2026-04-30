@@ -1,0 +1,78 @@
+{
+  "citations": [],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No source materials or artifacts were supplied in the work order context for task T-005-followup-upload-search."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-002",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "The task type is source_discovery but no evidence manifest, source_materials, or artifact bundle was provided; cannot perform upload or search without source records."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-003",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "External upload or search actions are blocked by Atticus policy; this worker cannot perform file uploads or external searches."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "markdown",
+      "content": "# Task T-005-followup-upload-search \u2013 Source Discovery Status\n\n**Status:** Cannot proceed \u2013 no source materials or artifacts provided.\n\n**Context:** The work order for napier-accommodation-arrears included no evidence manifest, no source_materials, and no artifact bundle. The task type is source_discovery, but the worker cannot perform external uploads, searches, or file operations.\n\n**Next Step:** Provide the underlying source records (e.g., tenancy agreements, arrears statements, correspondence, prior pleadings) as source dependencies or source_materials in a new work order. Once records are available, a follow-up task can review, cite, and map evidence to claims.\n\n**Validation Gate:** claim_evidence_support \u2013 cannot be evaluated without source evidence.",
+      "path": "candidate/T-005-followup-upload-search/status.md",
+      "stage": "S2",
+      "title": "Source Discovery Status Report"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Locate and attach the underlying source records for the napier-accommodation-arrears matter, including any tenancy agreements, arrears statements, correspondence, notices, or prior pleadings. Provide these as source dependencies or source_materials in a new work order so that evidence review and claim mapping can proceed.",
+      "matter_scope": "napier-accommodation-arrears",
+      "stage": "S2",
+      "task_id": "T-005-followup-provide-sources",
+      "task_type": "source_discovery",
+      "title": "Provide source records for napier-accommodation-arrears"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "finding_id": "R-001",
+      "text": "No evidence is available to support any claim or defense in this matter; proceeding without source records risks unsupported legal assertions."
+    },
+    {
+      "finding_id": "R-002",
+      "text": "The task requires human or tool-mediated upload/search actions that are outside the worker's permitted capabilities."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "No source materials or artifacts were provided for this source discovery task. The task requires searching for and uploading arrears-related documents, but no evidence, records, or prior work products are available in the context. No findings about arrears, tenancy, or accommodation can be supported. A follow-up task is proposed to locate and provide the underlying source records.",
+  "task_id": "T-005-followup-upload-search",
+  "uncertainties": [
+    {
+      "finding_id": "U-001",
+      "text": "No arrears-related documents, tenancy agreements, correspondence, or financial records are present in the context to support any factual finding about napier-accommodation-arrears."
+    },
+    {
+      "finding_id": "U-002",
+      "text": "The matter scope 'napier-accommodation-arrears' suggests a Scottish accommodation arrears dispute, but no source evidence or prior work products are available to confirm the nature of the claim."
+    },
+    {
+      "finding_id": "U-003",
+      "text": "The validation gate 'claim_evidence_support' cannot be satisfied without source materials or artifacts to review."
+    }
+  ]
+}

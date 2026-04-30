@@ -1,0 +1,99 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "email body",
+      "quote": "1 attachment (3 MB)\nMISS ANFAL ELBUSHRA Student Licence.pdf;",
+      "target_id": "NAP-SRC-0028",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "email body",
+      "quote": "1 attachment (3 MB)\nMISS ANFAL ELBUSHRA Student Licence.pdf;",
+      "target_id": "NAP-SRC-0029",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001",
+        "cit-002"
+      ],
+      "confidence": 0.95,
+      "finding_id": "f-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Both NAP-SRC-0028 and NAP-SRC-0029 contain an email referencing an attached PDF named 'MISS ANFAL ELBUSHRA Student Licence.pdf' (3 MB)."
+    },
+    {
+      "citation_ids": [
+        "cit-001",
+        "cit-002"
+      ],
+      "confidence": 0.85,
+      "finding_id": "f-002",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "The extracted text from both sources is identical and contains only the email body; the attachment content was not extracted."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "f-003",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "The attachment 'MISS ANFAL ELBUSHRA Student Licence.pdf' was not extracted by the initial pdf_text extraction. A dedicated extraction step is needed."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "extraction_report",
+      "content": "## Extraction Report: Student Licence Attachment\n\n**Task:** task-extract-attachment-0028-0029\n**Sources:** NAP-SRC-0028, NAP-SRC-0029\n\n### Result\nBoth source PDFs contain an email referencing an attached file named 'MISS ANFAL ELBUSHRA Student Licence.pdf' (3 MB). The initial pdf_text extraction captured only the email body; the attachment content was not extracted.\n\n### Next Step\nA follow-up task is proposed to extract the attachment from the original PDF files using a tool capable of extracting embedded attachments (e.g., pdfdetach or a Python script with PyPDF2/pdfplumber).",
+      "path": "candidate/task-extract-attachment-0028-0029/extraction-report.md",
+      "stage": "S1",
+      "title": "Extraction Report for Student Licence Attachment"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "cost_limit_usd": 0.01,
+      "expected_value": 0.9,
+      "instructions": "Use a tool capable of extracting embedded attachments from PDF files (e.g., pdfdetach, PyPDF2, or pdfplumber) to extract the file 'MISS ANFAL ELBUSHRA Student Licence.pdf' from the original PDF sources NAP-SRC-0028 and NAP-SRC-0029. Save the extracted PDF as a new source artifact and then extract its text content.",
+      "matter_scope": "napier-accommodation-arrears",
+      "provider_policy": {},
+      "required_certifications": [],
+      "source_dependencies": [
+        "NAP-SRC-0028",
+        "NAP-SRC-0029"
+      ],
+      "stage": "S1",
+      "task_dependencies": [],
+      "task_id": "task-extract-student-licence-pdf",
+      "task_type": "extraction",
+      "title": "Extract embedded Student Licence PDF attachment from NAP-SRC-0028 and NAP-SRC-0029",
+      "validation_gates": []
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "finding_id": "f-003",
+      "risk_type": "missing_evidence",
+      "text": "The Student Licence PDF attachment has not been extracted; its terms and conditions are unavailable for review."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Both NAP-SRC-0028 and NAP-SRC-0029 refer to an attached PDF named 'MISS ANFAL ELBUSHRA Student Licence.pdf' (3 MB). The extracted text of both sources is identical and contains only the email body, not the attachment content. The attachment was not extracted. A follow-up task is proposed to extract the attachment from the original PDF sources.",
+  "task_id": "task-extract-attachment-0028-0029",
+  "uncertainties": [
+    {
+      "finding_id": "f-003",
+      "reason": "The attachment content is missing from the extracted text. It is unclear whether the attachment is embedded in the PDF or was a separate file."
+    }
+  ]
+}

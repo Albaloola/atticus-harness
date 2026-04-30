@@ -1,0 +1,81 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "schedule 1",
+      "quote": "Tenancies which cannot be private residential tenancies, including student accommodation provided by a university or other educational institution",
+      "target_id": "auth-195c733fb83b4278ac5ed01e9e573fec",
+      "target_type": "authority"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "fnd-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No source materials or artifacts were provided in this work order; the evidence manifest is empty."
+    },
+    {
+      "citation_ids": [
+        "cit-001"
+      ],
+      "confidence": 0.95,
+      "finding_id": "fnd-002",
+      "finding_type": "law",
+      "reasoning_status": "supported",
+      "text": "Student accommodation provided by a university may be excluded from private residential tenancy protections under the Private Housing (Tenancies) (Scotland) Act 2016."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "fnd-003",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "The task requires locating and ingesting a tenancy agreement and arrears correspondence, but no such documents are present in the context."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "report",
+      "content": "## Task: Locate and ingest Napier accommodation tenancy agreement and arrears correspondence\n\n**Status:** No source materials or artifacts were provided in this work order. The evidence manifest is empty. The task cannot be completed without the relevant documents.\n\n**Available Legal Context:**\n- Under the Private Housing (Tenancies) (Scotland) Act 2016, schedule 1, student accommodation provided by a university or other educational institution may be excluded from private residential tenancy protections. This may affect the applicable notice and eviction procedures.\n- Other relevant authorities include the Housing (Scotland) Act 1988, the Housing (Scotland) Act 2001, and the Equality Act 2010 (sections 20, 21, 91).\n\n**Next Steps:**\n1. Search the matter's existing records (using ListMatterSources or SearchLegalMemory) for any previously ingested tenancy agreements or correspondence.\n2. If no records exist, request the client to provide the signed tenancy agreement and all arrears-related correspondence (letters, emails, payment demands).\n3. Once obtained, ingest the documents as source materials and extract key terms (rent amount, payment dates, notice period, arrears amount, any termination clauses).",
+      "path": "candidate/task-followup-011/result.md",
+      "stage": "S3",
+      "title": "Ingestion Status Report"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Use ListMatterSources and SearchLegalMemory with keywords 'Napier', 'tenancy', 'accommodation', 'arrears' to locate any previously ingested documents. If found, re-ingest or update the evidence manifest. If not found, prepare a request to the client for the tenancy agreement and arrears correspondence.",
+      "matter_scope": "napier-accommodation-arrears",
+      "stage": "S3",
+      "task_id": "task-followup-011-search",
+      "task_type": "source_ingestion",
+      "title": "Search matter for existing Napier accommodation records"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "description": "Critical documents (tenancy agreement, arrears correspondence) are absent from the work order; cannot assess legal position or advise on arrears.",
+      "finding_id": "fnd-001",
+      "risk_type": "missing_evidence"
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "No source materials or artifacts were provided for this task. The task is to locate and ingest a Napier accommodation tenancy agreement and arrears correspondence, but the evidence manifest and source materials are empty. No documents can be cited or analyzed. The available authorities indicate that student accommodation provided by a university may be excluded from private residential tenancy protections under the Private Housing (Tenancies) (Scotland) Act 2016. A follow-up task is proposed to search the matter for existing records or to request the documents from the client.",
+  "task_id": "task-followup-011",
+  "uncertainties": [
+    {
+      "finding_id": "fnd-001",
+      "reason": "No source materials or artifacts were provided; cannot confirm existence or content of the tenancy agreement or arrears correspondence."
+    },
+    {
+      "finding_id": "fnd-003",
+      "reason": "The specific terms of the Napier accommodation tenancy and the amount or nature of arrears are unknown."
+    }
+  ]
+}

@@ -1,0 +1,99 @@
+{
+  "citations": [],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No source materials or artifacts were supplied in this work order for napier-accommodation-arrears. The evidence_manifest and source_materials sections are empty, so no records could be located or attached."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-002",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "The prior evidence map (art-56c3a3b49f1f44c1a67c5d3afa4ec8fe) also found no records. The matter scope suggests a student accommodation arrears dispute at a Scottish university."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-003",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "Relevant Scottish housing and equality authorities exist in the authority map but cannot be applied without source evidence such as a tenancy agreement or arrears statements."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "evidence_map",
+      "content": "## Evidence Map for napier-accommodation-arrears\n\n**Status:** No source records located in this work order.\n\n**Required Records (not yet attached):**\n1. Tenancy agreement or occupancy licence for the student accommodation.\n2. Arrears statements or rent ledgers.\n3. Correspondence between the university/accommodation provider and the student regarding arrears.\n4. Any notice served (e.g., notice to quit, notice of arrears).\n5. Any correspondence referencing disability, reasonable adjustments, or equality issues.\n\n**Next Step:** Search the matter's source repository and legal memory for these records. If none exist, request the records from the client or relevant party.",
+      "path": "candidate/TASK-SYN-004-SEARCH/evidence_map.md",
+      "stage": "S2",
+      "title": "Updated Evidence Map for napier-accommodation-arrears"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [
+        "art-56c3a3b49f1f44c1a67c5d3afa4ec8fe"
+      ],
+      "cost_limit_usd": 0.01,
+      "expected_value": 0.8,
+      "instructions": "Use the SearchLegalMemory and ListMatterSources tools to search for any records related to napier-accommodation-arrears. Look for tenancy agreements, arrears statements, correspondence, notices, and any disability-related documents. If records are found, attach them as source materials and produce an updated evidence map.",
+      "matter_dependencies": [],
+      "matter_scope": "napier-accommodation-arrears",
+      "provider_policy": {},
+      "required_certifications": [],
+      "source_dependencies": [],
+      "stage": "S2",
+      "task_dependencies": [],
+      "task_id": "TASK-SYN-005-SEARCH-REPO",
+      "task_type": "evidence_gathering",
+      "title": "Search matter repository and legal memory for napier-accommodation-arrears records",
+      "validation_gates": []
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "risk_id": "R-001",
+      "risk_type": "evidence_gap",
+      "text": "No source records have been located; the matter may lack essential evidence to proceed."
+    },
+    {
+      "risk_id": "R-002",
+      "risk_type": "legal_uncertainty",
+      "text": "If the accommodation is excluded from the Private Housing (Tenancies) (Scotland) Act 2016, different notice and eviction rules may apply."
+    },
+    {
+      "risk_id": "R-003",
+      "risk_type": "compliance",
+      "text": "Failure to consider reasonable adjustment duties under the Equality Act 2010 could create liability for the accommodation provider."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "No source materials or matter records were supplied for napier-accommodation-arrears. The evidence_manifest and source_materials sections are empty. The prior evidence map (art-56c3a3b49f1f44c1a67c5d3afa4ec8fe) confirms no records were located. Relevant Scottish housing and equality authorities are available but cannot be applied without source evidence. A follow-up task is proposed to search the matter repository and legal memory for tenancy agreements, arrears statements, correspondence, and any disability-related records.",
+  "task_id": "TASK-SYN-004-SEARCH",
+  "uncertainties": [
+    {
+      "reason": "evidence_manifest and source_materials are empty",
+      "text": "No tenancy agreement, occupancy licence, or arrears statements have been provided for this matter.",
+      "uncertainty_id": "U-001"
+    },
+    {
+      "reason": "no source evidence available",
+      "text": "It is unknown whether the student accommodation is a private residential tenancy or an excluded tenancy under the Private Housing (Tenancies) (Scotland) Act 2016.",
+      "uncertainty_id": "U-002"
+    },
+    {
+      "reason": "no correspondence or records provided",
+      "text": "It is unknown whether any disability, reasonable adjustment, or equality issues are relevant to the arrears dispute.",
+      "uncertainty_id": "U-003"
+    }
+  ]
+}

@@ -1,0 +1,82 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "extracted text",
+      "quote": "1 attachment (3 MB)\nMISS ANFAL ELBUSHRA Student Licence.pdf;",
+      "target_id": "NAP-SRC-0028",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "extracted text",
+      "quote": "1 attachment (3 MB)\nMISS ANFAL ELBUSHRA Student Licence.pdf;",
+      "target_id": "NAP-SRC-0029",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001",
+        "cit-002"
+      ],
+      "confidence": 0.85,
+      "finding_id": "f-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Email from Edinburgh Napier University to Anfal Elbushra references an attached PDF named 'MISS ANFAL ELBUSHRA Student Licence.pdf' (3 MB)."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "f-002",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "Binary extraction tool not available in current harness. No extraction performed. Requires configured tool to extract embedded PDF from original source files."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "markdown",
+      "content": "# Binary Extraction Result\n\n**Task:** Extract embedded Student Licence PDF from original PDF sources.\n\n**Status:** Not performed. The binary extraction tool is not available in the current harness.\n\n**Evidence:** The extracted text from NAP-SRC-0028 and NAP-SRC-0029 confirms an email attachment named 'MISS ANFAL ELBUSHRA Student Licence.pdf' (3 MB).\n\n**Next Step:** Use a configured binary extraction tool (e.g., `pdfdetach`, `pdftk`, or custom script) on the original PDF files at:\n- `01-sources/contracts-and-accommodation/NAP-SRC-0028 - Edinburgh Napier University Tenancy Agreement 2025-26.pdf`\n- `01-sources/communications/NAP-SRC-0029 - Email - Elbushra, Anfal - Outlook.pdf`",
+      "path": "candidate/task-extract-student-licence-binary-v6/result.md",
+      "stage": "S1",
+      "title": "Extraction result placeholder"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "cost_limit_usd": 0.01,
+      "expected_value": 0.9,
+      "instructions": "Use a configured binary extraction tool (e.g., pdfdetach, pdftk, or custom script) to extract the embedded 'MISS ANFAL ELBUSHRA Student Licence.pdf' from the original PDF sources NAP-SRC-0028 and NAP-SRC-0029. Save the extracted PDF as a new source artifact.",
+      "matter_dependencies": [],
+      "matter_scope": "napier-accommodation-arrears",
+      "required_certifications": [],
+      "source_dependencies": [
+        "NAP-SRC-0028",
+        "NAP-SRC-0029"
+      ],
+      "stage": "S1",
+      "task_dependencies": [],
+      "task_id": "task-extract-student-licence-binary-v7",
+      "task_type": "extraction",
+      "title": "Extract embedded Student Licence PDF using binary extraction tool",
+      "validation_gates": []
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Task requires binary extraction of an embedded Student Licence PDF from original PDF sources. The extracted text from NAP-SRC-0028 and NAP-SRC-0029 shows an email referencing a 'MISS ANFAL ELBUSHRA Student Licence.pdf' attachment, but the binary extraction tool is not available in the current harness. No binary extraction was performed. A follow-up task is proposed to use a configured binary extraction tool on the original PDF files.",
+  "task_id": "task-extract-student-licence-binary-v6",
+  "uncertainties": [
+    {
+      "finding_id": "f-002",
+      "reason": "Binary extraction tool not configured or available in this harness; cannot extract the embedded Student Licence PDF."
+    }
+  ]
+}

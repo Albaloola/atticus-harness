@@ -1,0 +1,61 @@
+{
+  "citations": [],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No sources, artifacts, or source_materials were provided in the context pack. Cannot locate sources for Anfal Elbushra RA application without evidence."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "evidence_map",
+      "content": "## Evidence Map: Anfal Elbushra RA Application\n\n**Status:** No sources provided in context pack.\n\n**Action Required:** Use `ListMatterSources` and `SearchLegalMemory` tools to locate relevant documents (e.g., RA application forms, correspondence, accommodation records) within the matter scope `napier-accommodation-arrears`. Once sources are identified, re-run this task with the appropriate source dependencies.",
+      "path": "candidate/napier-accommodation-arrears-followup-RA-application-check-find-sources/evidence_map.md",
+      "stage": "S3",
+      "title": "Evidence Map for Anfal Elbushra RA Application"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "cost_limit_usd": 0.01,
+      "expected_value": 0.9,
+      "instructions": "Use the ListMatterSources and SearchLegalMemory tools to locate all sources related to Anfal Elbushra's RA (Residence/Residential Accommodation) application within the matter scope napier-accommodation-arrears. Return a list of source IDs and brief descriptions. Then re-run the original task with those source dependencies.",
+      "matter_dependencies": [],
+      "matter_scope": "napier-accommodation-arrears",
+      "provider_policy": {},
+      "required_certifications": [],
+      "source_dependencies": [],
+      "stage": "S3",
+      "task_dependencies": [],
+      "task_id": "napier-accommodation-arrears-followup-RA-application-find-sources-v2",
+      "task_type": "evidence_gathering",
+      "title": "Search matter for Anfal Elbushra RA application sources",
+      "validation_gates": [
+        "production_mapping"
+      ]
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "finding_id": "R-001",
+      "text": "Empty evidence_manifest and source_materials; task cannot proceed without sources."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "No sources, artifacts, or source_materials were provided in the context pack for this task. The evidence_manifest and source_materials sections are empty. Without any evidence to review, no sources for Anfal Elbushra's RA application can be located or cited. A follow-up task is proposed to search the matter's legal memory and list available sources.",
+  "task_id": "napier-accommodation-arrears-followup-RA-application-check-find-sources",
+  "uncertainties": [
+    {
+      "finding_id": "U-001",
+      "text": "No evidence was supplied; it is unknown whether any sources exist in the matter for Anfal Elbushra's RA application."
+    }
+  ]
+}

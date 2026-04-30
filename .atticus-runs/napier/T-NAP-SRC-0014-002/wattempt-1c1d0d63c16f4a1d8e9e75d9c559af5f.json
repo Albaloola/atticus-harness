@@ -1,0 +1,145 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "page 1",
+      "quote": "The accommodation support service can: ... Provide a dedicated member of staff to provide information and to answer any related queries, or signpost you to a person or service to help you further",
+      "target_id": "NAP-SRC-0014",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "page 1",
+      "quote": "ENSA Advice ... can offer the following: Advice on how to find accommodation ... Look over leases and tenancy agreements ... Advice on tenant rights and responsibilities",
+      "target_id": "NAP-SRC-0014",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-003",
+      "locator": "page 1",
+      "quote": "Please contact privateaccommodation@napier.ac.uk with your enquiries.",
+      "target_id": "NAP-SRC-0014",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-004",
+      "locator": "page 1",
+      "quote": "Please contact ENSA Advice on 0131 229 8791 to arrange an appointment or email ensa.advice@napier.ac.uk",
+      "target_id": "NAP-SRC-0014",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-005",
+      "locator": "page 1",
+      "quote": "We have a dedicated member of staff that can give you information and tips on how to find accommodation.",
+      "target_id": "NAP-SRC-0014",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-006",
+      "locator": "page 1",
+      "quote": "Provide a landlord reference within 5 working days when you email us at accommodation@napier.ac.uk",
+      "target_id": "NAP-SRC-0014",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001",
+        "cit-002",
+        "cit-003",
+        "cit-004",
+        "cit-005",
+        "cit-006"
+      ],
+      "confidence": 0.95,
+      "finding_id": "F-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "The brochure describes a private accommodation support service and ENSA Advice, including contact details and types of assistance offered."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.0,
+      "finding_id": "F-002",
+      "finding_type": "fact",
+      "reasoning_status": "uncertain",
+      "text": "No evidence in the provided materials that the brochure was provided to Anfal."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.0,
+      "finding_id": "F-003",
+      "finding_type": "fact",
+      "reasoning_status": "uncertain",
+      "text": "No records of Anfal accessing the accommodation support service or ENSA Advice found in this source."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.0,
+      "finding_id": "F-004",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "Task limited to single source NAP-SRC-0014; broader search across other matter sources needed."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "evidence_map",
+      "content": "# Brochure Provision and Service Access Search Result\n\n**Task:** T-NAP-SRC-0014-002\n**Source Reviewed:** NAP-SRC-0014 (Private Accommodation Brochure 2025)\n\n## Findings\n\n1. **Brochure Content (Supported):** The brochure describes a private accommodation support service (privateaccommodation@napier.ac.uk) and ENSA Advice (0131 229 8791 / ensa.advice@napier.ac.uk), offering help with finding flats, reviewing leases, tenant rights, disputes, and landlord references.\n\n2. **Brochure Provision to Anfal (Uncertain):** No evidence in this source that the brochure was provided to Anfal.\n\n3. **Support Service Access by Anfal (Uncertain):** No records in this source of Anfal contacting the accommodation support service or ENSA Advice.\n\n## Recommendation\n\nSearch other matter sources (e.g., email records, support service logs, tenancy files) for evidence of brochure provision or Anfal's access to support services.",
+      "path": "candidate/T-NAP-SRC-0014-002/result.md",
+      "stage": "S2",
+      "title": "Brochure Provision and Service Access Search Result"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [
+        "art-5b589b506922422d93523c3a6c4a54eb"
+      ],
+      "instructions": "Search across all matter sources (e.g., email records, support service logs, tenancy files, correspondence) for any evidence that the Private Accommodation Brochure 2025 was provided to Anfal, or that Anfal accessed the accommodation support service or ENSA Advice. Report any findings or confirm absence.",
+      "matter_scope": "napier-accommodation-arrears",
+      "source_dependencies": [],
+      "stage": "S2",
+      "task_id": "T-NAP-SRC-0014-002-FU",
+      "task_type": "evidence_search",
+      "title": "Search other matter sources for records of brochure provision or support service access by Anfal",
+      "validation_gates": [
+        "claim_evidence_support"
+      ]
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "description": "No evidence that the brochure was provided to Anfal; may affect claims about notice or support access.",
+      "finding_id": "F-002",
+      "risk_type": "evidence_gap"
+    },
+    {
+      "description": "No records of Anfal accessing support services; may affect mitigation arguments.",
+      "finding_id": "F-003",
+      "risk_type": "evidence_gap"
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Reviewed NAP-SRC-0014 (Private Accommodation Brochure 2025) for records of brochure provision or support service access by Anfal. The brochure describes available support services and contact details, but no evidence links it to Anfal. Prior artifact (evidence-gap-brochure-provision) confirms this gap. No records of Anfal's access found. Proposed follow-up task to search other sources.",
+  "task_id": "T-NAP-SRC-0014-002",
+  "uncertainties": [
+    {
+      "finding_id": "F-002",
+      "reason": "No evidence in source NAP-SRC-0014 linking brochure to Anfal."
+    },
+    {
+      "finding_id": "F-003",
+      "reason": "No records of Anfal contacting support services in this source."
+    },
+    {
+      "finding_id": "F-004",
+      "reason": "Single source scope; other matter sources may contain relevant records."
+    }
+  ]
+}

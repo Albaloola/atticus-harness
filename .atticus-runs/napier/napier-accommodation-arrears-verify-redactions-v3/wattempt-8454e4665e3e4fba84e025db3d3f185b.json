@@ -1,0 +1,99 @@
+{
+  "citations": [
+    {
+      "citation_id": "C1",
+      "excerpt": "The corrected redacted complaint draft uses '[Student]', '[Matriculation Number]', and '[Transaction details redacted]' throughout.",
+      "locator": "content",
+      "quote": "This complaint is submitted on behalf of the student... [Student]... [Matriculation Number]... [Transaction details redacted]",
+      "target_id": "art-2c82d322be0b4c72924f80819d0b1d76",
+      "target_type": "artifact"
+    },
+    {
+      "citation_id": "C2",
+      "excerpt": "Annotation: Replace all instances of 'Anfal Elbushra' with '[Student]' or initials.",
+      "locator": "content",
+      "quote": "Replace all instances of 'Anfal Elbushra' with '[Student]' or initials.",
+      "target_id": "art-fa947f5bb4ee4ea295ec6f94bc56003d",
+      "target_type": "artifact"
+    },
+    {
+      "citation_id": "C3",
+      "excerpt": "Annotation: Replace '40805511' with '[Matriculation Number]'.",
+      "locator": "content",
+      "quote": "Replace '40805511' with '[Matriculation Number]'.",
+      "target_id": "art-fa947f5bb4ee4ea295ec6f94bc56003d",
+      "target_type": "artifact"
+    },
+    {
+      "citation_id": "C4",
+      "excerpt": "Annotation: Remove specific merchant names and amounts; replace with '[Transaction details redacted]' or summarize as 'various personal expenses'.",
+      "locator": "content",
+      "quote": "Remove specific merchant names and amounts; replace with '[Transaction details redacted]' or summarize as 'various personal expenses'.",
+      "target_id": "art-fa947f5bb4ee4ea295ec6f94bc56003d",
+      "target_type": "artifact"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "C1",
+        "C2"
+      ],
+      "confidence": 0.95,
+      "finding_id": "F1",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "The corrected redacted draft replaces the full name with '[Student]' as required by the annotations."
+    },
+    {
+      "citation_ids": [
+        "C1",
+        "C3"
+      ],
+      "confidence": 0.95,
+      "finding_id": "F2",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "The corrected redacted draft replaces the matriculation number with '[Matriculation Number]' as required by the annotations."
+    },
+    {
+      "citation_ids": [
+        "C1",
+        "C4"
+      ],
+      "confidence": 0.95,
+      "finding_id": "F3",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "The corrected redacted draft redacts bank transaction details as '[Transaction details redacted]' as required by the annotations."
+    },
+    {
+      "citation_ids": [
+        "C1"
+      ],
+      "confidence": 0.9,
+      "finding_id": "F4",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "No direct identifiers (full name, matriculation number, specific merchant names/amounts) remain in the corrected redacted draft."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "privacy_redaction_audit",
+      "content": "# Redaction Verification Audit\n\n**Audited Artifact:** art-2c82d322be0b4c72924f80819d0b1d76 (Corrected Redacted Complaint Draft)\n**Redaction Annotations:** art-fa947f5bb4ee4ea295ec6f94bc56003d\n**Result:** No remaining defects found.\n\n## Findings\n- Full name replaced with '[Student]' as required.\n- Matriculation number replaced with '[Matriculation Number]' as required.\n- Bank transaction details replaced with '[Transaction details redacted]' as required.\n- No direct identifiers remain in the redacted draft.\n\n## Conclusion\nThe corrected redacted complaint draft complies with all specified redaction annotations. No further redaction actions are required.",
+      "path": "candidate/napier-accommodation-arrears-verify-redactions-v3/audit.md",
+      "stage": "S9",
+      "title": "Redaction Verification Audit for Corrected Complaint Draft"
+    }
+  ],
+  "proposed_tasks": [],
+  "redaction_flags": [],
+  "risk_flags": [],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Verified corrected redacted complaint draft (art-2c82d322be0b4c72924f80819d0b1d76) against redaction annotations (art-fa947f5bb4ee4ea295ec6f94bc56003d). No remaining direct identifiers, unsafe placeholders, or annotation failures found. The draft uses '[Student]', '[Matriculation Number]', and '[Transaction details redacted]' as required. All findings are supported by citations to the reviewed artifacts.",
+  "task_id": "napier-accommodation-arrears-verify-redactions-v3",
+  "uncertainties": []
+}

@@ -1,0 +1,82 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "Monthly Household Expenditure > Rent, Mortgage or Accommodation Costs",
+      "quote": "Rent, Mortgage or Accommodation Costs\n         5526.66",
+      "target_id": "NAP-SRC-0008",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001"
+      ],
+      "confidence": 0.85,
+      "finding_id": "find-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "The applicant entered a monthly rent/accommodation cost of 5526.66 in the Living Cost Questions form."
+    },
+    {
+      "citation_ids": [
+        "cit-001"
+      ],
+      "confidence": 0.6,
+      "finding_id": "find-002",
+      "finding_type": "inference",
+      "reasoning_status": "inferred",
+      "text": "The rent figure of 5526.66 is unusually high for a single student and may be a data entry error (e.g., annual instead of monthly, or an extra digit)."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "verification_note",
+      "content": "## Rent field verification for NAP-SRC-0008\n\n**Source:** NAP-SRC-0008 (Living Cost Questions - Trimester 2)\n\n**Field:** Rent, Mortgage or Accommodation Costs\n\n**Extracted value:** 5526.66 (monthly)\n\n**Assessment:** The value is present and legible in the extracted text. However, 5526.66 is unusually high for a single student's monthly accommodation. It may be an annual figure entered in the monthly field, or a typo (e.g., 526.66). No cross-referencing source (bank statement, tenancy agreement) was available in this work order.\n\n**Recommendation:** Propose a follow-up task to verify the rent figure against bank statements or tenancy documents.",
+      "path": "candidate/verify-rent-field-NAP-SRC-0008/result.md",
+      "stage": "S3",
+      "title": "Rent field verification result"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "cost_limit_usd": 0.01,
+      "expected_value": 0.8,
+      "instructions": "Review bank statements uploaded by the applicant (if available) to verify whether the monthly rent/accommodation cost of 5526.66 is accurate. Also check for any tenancy agreement or accommodation letter that states the actual rent. If the figure appears to be an error, flag it for correction.",
+      "matter_dependencies": [],
+      "matter_scope": "napier-accommodation-arrears",
+      "required_certifications": [],
+      "source_dependencies": [
+        "NAP-SRC-0008"
+      ],
+      "stage": "S3",
+      "task_dependencies": [],
+      "task_id": "verify-rent-against-bank-stmts",
+      "task_type": "manual_review",
+      "title": "Cross-check rent figure against bank statements",
+      "validation_gates": []
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "description": "If the rent figure is erroneous, it could misrepresent the applicant's financial circumstances and affect funding eligibility.",
+      "risk_id": "risk-001",
+      "severity": "medium"
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Verified the rent field in source NAP-SRC-0008. The extracted text shows a monthly rent/accommodation cost of 5526.66 entered by the applicant. This figure is unusually high for a single student and may be a data entry error. No other source or artifact was provided to cross-check. The field is present and legible; confidence in the extracted value is moderate due to possible OCR or input error. A follow-up task is proposed to verify the figure against bank statements or tenancy agreement.",
+  "task_id": "verify-rent-field-NAP-SRC-0008",
+  "uncertainties": [
+    {
+      "description": "No bank statements or tenancy agreement were provided in this work order to cross-check the rent figure.",
+      "impact": "Cannot confirm whether 5526.66 is accurate or a typo.",
+      "uncertainty_id": "unc-001"
+    }
+  ]
+}

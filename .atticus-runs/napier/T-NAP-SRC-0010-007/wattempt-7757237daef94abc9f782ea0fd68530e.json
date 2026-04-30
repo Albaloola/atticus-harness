@@ -1,0 +1,174 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "page 1",
+      "quote": "Rent: \u00a34,686.18 Total Rent (including \u00a3500 Advance Rent Payment) \u00a328.23 Per Day",
+      "target_id": "NAP-SRC-0010",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "clause 2(a)",
+      "quote": "The Landlord acknowledges the Tenant has paid the Advance Payment of FIVE HUNDRED POUNDS (\u00a3500) STERLING which will be credited to the Tenant's rent account.",
+      "target_id": "NAP-SRC-0010",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-003",
+      "locator": "clause 2(a)",
+      "quote": "the subsequent Rent payments must be paid by monthly instalments by recurring card payments. The subsequent monthly sums due will be shown on the rent schedule to be provided separately to the Tenant.",
+      "target_id": "NAP-SRC-0010",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-004",
+      "locator": "clause 2(b)",
+      "quote": "The tenant will pay the Rent instalments on the due dates as advised by the Accommodation Office.",
+      "target_id": "NAP-SRC-0010",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-005",
+      "locator": "clause 2(b)",
+      "quote": "If the Tenant's Rent instalments account falls into arrears, the Landlord will be entitled to seek payment from the Tenant's guarantor",
+      "target_id": "NAP-SRC-0010",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-006",
+      "locator": "clause 2(b)",
+      "quote": "Where a Rent account is in arrears by two monthly instalments, the Landlord will be entitled to issue a notice to quit",
+      "target_id": "NAP-SRC-0010",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001"
+      ],
+      "confidence": 0.95,
+      "finding_id": "F-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Total rent for the tenancy is \u00a34,686.18, including a \u00a3500 advance payment, at \u00a328.23 per day."
+    },
+    {
+      "citation_ids": [
+        "cit-002"
+      ],
+      "confidence": 0.95,
+      "finding_id": "F-002",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "The tenant paid a \u00a3500 advance payment credited to the rent account."
+    },
+    {
+      "citation_ids": [
+        "cit-003"
+      ],
+      "confidence": 0.95,
+      "finding_id": "F-003",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Rent is payable by monthly instalments via recurring card payments; a separate rent schedule is to be provided."
+    },
+    {
+      "citation_ids": [
+        "cit-005",
+        "cit-006"
+      ],
+      "confidence": 0.95,
+      "finding_id": "F-004",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Arrears of two monthly instalments entitle the landlord to issue a 28-day notice to quit; guarantor may be pursued."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "search_result",
+      "content": "## Rent Schedule and Payment Records Search\n\n**Source reviewed:** NAP-SRC-0010 (Student Licence Agreement)\n\n**Findings:**\n- The tenancy agreement references a separate rent schedule to be provided to the tenant (clause 2(a)).\n- No rent schedule, payment receipts, or account statements were found within the source.\n- The agreement specifies total rent \u00a34,686.18, advance payment \u00a3500, and monthly instalments via recurring card payments.\n\n**Gaps:**\n- Actual monthly instalment amounts and due dates are unknown.\n- No evidence of payments made or arrears status.\n- The tenancy start date (13 March 2026) is future; no evidence of occupation.\n\n**Recommendation:** Search other sources (e.g., correspondence, financial records, guarantor documents) for the rent schedule and payment history.",
+      "path": "candidate/T-NAP-SRC-0010-007/rent-schedule-search-result.md",
+      "stage": "S2",
+      "title": "Rent Schedule and Payment Records Search Result"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "instructions": "Search all matter sources (excluding NAP-SRC-0010) for any document titled 'rent schedule', payment receipts, account statements, or correspondence referencing rent amounts, due dates, or arrears. Report any findings with citations.",
+      "matter_scope": "napier-accommodation-arrears",
+      "source_dependencies": [],
+      "stage": "S2",
+      "task_dependencies": [
+        "T-NAP-SRC-0010-007"
+      ],
+      "task_id": "T-NAP-SRC-0010-008",
+      "task_type": "source_search",
+      "title": "Search for rent schedule and payment records in remaining matter sources",
+      "validation_gates": []
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "citation_ids": [
+        "cit-005"
+      ],
+      "confidence": 0.9,
+      "finding_id": "R-001",
+      "finding_type": "risk",
+      "reasoning_status": "supported",
+      "text": "The tenant may be liable for guarantor involvement and potential eviction if arrears reach two monthly instalments."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.7,
+      "finding_id": "R-002",
+      "finding_type": "risk",
+      "reasoning_status": "uncertain",
+      "text": "Without the rent schedule, it is unclear whether the tenant has been properly advised of due dates and amounts, potentially affecting arrears validity."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.6,
+      "finding_id": "R-003",
+      "finding_type": "risk",
+      "reasoning_status": "uncertain",
+      "text": "The tenancy agreement may be excluded from assured tenancy protections under the Private Housing (Tenancies) (Scotland) Act 2016, schedule 1, but this requires verification."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Reviewed source NAP-SRC-0010 (Student Licence) for rent schedule and payment records. The tenancy agreement states total rent \u00a34,686.18, advance payment \u00a3500 credited, and monthly instalments via recurring card payments per a separate rent schedule. No rent schedule or payment records were found in the provided source. The agreement references a separate rent schedule to be provided. Proposed follow-up task to search for the rent schedule and payment records in other sources.",
+  "task_id": "T-NAP-SRC-0010-007",
+  "uncertainties": [
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "U-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "The rent schedule referenced in clause 2(a) is not included in source NAP-SRC-0010; actual monthly instalment amounts and due dates are unknown."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "U-002",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No payment records, receipts, or account statements were found in the provided source; arrears status cannot be determined."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "U-003",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "The tenancy start date (13 March 2026) is in the future relative to the context pack creation date; no evidence of actual occupation or payments."
+    }
+  ]
+}

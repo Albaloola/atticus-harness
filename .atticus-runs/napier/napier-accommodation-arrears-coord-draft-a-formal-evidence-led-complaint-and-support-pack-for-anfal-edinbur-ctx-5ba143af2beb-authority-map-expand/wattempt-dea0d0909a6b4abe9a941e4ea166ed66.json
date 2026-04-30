@@ -1,0 +1,169 @@
+{
+  "citations": [
+    {
+      "citation_id": "CIT-001",
+      "excerpt": "Joint and several liability clause for non-rent obligations.",
+      "locator": "Clause 1(b)",
+      "quote": "Each Tenant will be solely responsible for their share of the Rent, but jointly and severally responsible with the Occupiers in the Premises to implement all other terms of this Tenancy Agreement.",
+      "target_id": "NAP-SRC-0010",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "CIT-002",
+      "excerpt": "Example fine for fire safety breach.",
+      "locator": "Schedule of Charges",
+      "quote": "Tampering with fire equipment (e.g. disconnecting door closers; use of door stoppers, fire extinguisher alarms etc) \u00a350 each offence",
+      "target_id": "NAP-SRC-0017",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "CIT-003",
+      "excerpt": "NTQ issuance threshold and timeline.",
+      "locator": "Email body",
+      "quote": "we will be issuing you with a 28 day Notice To Quit letter on Monday 20th April 2026, unless you manage to make a partial or full payment of the debt to bring this sum down to lower than 2 month\u2019s worth of rent",
+      "target_id": "NAP-SRC-0062",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "CIT-004",
+      "excerpt": "Hardship fund details.",
+      "locator": "Email body",
+      "quote": "Our Student Accommodation Hardship Scholarship Fund applications will go live between 13/04/2026 \u2013 27/04/2026. We can endorse your application for this fund, but please note that if successful, the award is capped at \u00a3500 per student.",
+      "target_id": "NAP-SRC-0062",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "CIT-005",
+      "excerpt": "Clarification of deadlines.",
+      "locator": "Email body",
+      "quote": "The 5-day deadline is set by finance to bring missing instalments up to date. Your circumstance is different if you have already been issued with a Notice to quit so, please continue to adhere to the 9th of May deadline",
+      "target_id": "NAP-SRC-0048",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "CIT-006",
+      "excerpt": "Arrears amount as of 08/04/2026.",
+      "locator": "Email body",
+      "quote": "The outstanding arrears for your accommodation are \u00a34605.55",
+      "target_id": "NAP-SRC-0021",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "CIT-001"
+      ],
+      "confidence": 0.85,
+      "finding_id": "F-001",
+      "finding_type": "procedure",
+      "reasoning_status": "supported",
+      "text": "The Tenancy Agreement requires joint and several liability for non-rent obligations among flatmates."
+    },
+    {
+      "citation_ids": [
+        "CIT-002"
+      ],
+      "confidence": 0.85,
+      "finding_id": "F-002",
+      "finding_type": "procedure",
+      "reasoning_status": "supported",
+      "text": "The Student Misconduct and Schedule of Charges 2025-26 lists specific fines for breaches, including fire safety and cleanliness."
+    },
+    {
+      "citation_ids": [
+        "CIT-003"
+      ],
+      "confidence": 0.85,
+      "finding_id": "F-003",
+      "finding_type": "procedure",
+      "reasoning_status": "supported",
+      "text": "The university's arrears procedure includes a 28-day Notice to Quit if arrears exceed two months' rent."
+    },
+    {
+      "citation_ids": [
+        "CIT-004"
+      ],
+      "confidence": 0.85,
+      "finding_id": "F-004",
+      "finding_type": "procedure",
+      "reasoning_status": "supported",
+      "text": "The university offers a Student Accommodation Hardship Scholarship Fund capped at \u00a3500 per student."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "authority_map_expansion",
+      "content": "# Expanded Authority Map\n\n## Internal Procedures and Contractual Terms\n\n### Tenancy Agreement (NAP-SRC-0010)\n- Joint and several liability for non-rent obligations (Clause 1(b)).\n- Rent: \u00a34,686.18 total, \u00a328.23 per day.\n- Tenancy period: 13 March 2026 to 25 August 2026.\n- Tenant must be full-time Edinburgh Napier student.\n\n### Student Misconduct and Schedule of Charges 2025-26 (NAP-SRC-0017)\n- Fines for fire safety breaches (e.g., tampering with equipment: \u00a350).\n- Cleanliness issues: \u00a325 kitchen clean, \u00a320 bedroom clean after 3 re-inspections.\n- Breach of Code of Conduct leads to formal investigation and conduct hearing.\n\n### Arrears Procedure (NAP-SRC-0062, NAP-SRC-0048, NAP-SRC-0021)\n- Arrears of \u00a35,526.66 as of 10/04/2026 (NAP-SRC-0062).\n- 28-day Notice to Quit issued if arrears exceed 2 months' rent.\n- Hardship Scholarship Fund: up to \u00a3500, application window 13/04/2026 \u2013 27/04/2026.\n- Finance 5-day deadline vs NTQ 9 May deadline (NAP-SRC-0048).\n\n### Existing Authorities (unchanged)\n- Private Housing (Tenancies) (Scotland) Act 2016, sch. 1: student accommodation exclusion.\n- Equality Act 2010, ss. 20-21: reasonable adjustments duty.\n- Scottish Public Services Ombudsman Act 2002, s. 5: exhaustion of internal complaints.\n\n## Gaps\n- Full contractual terms not extracted.\n- Internal complaints procedure not evidenced.\n- Code of Conduct annex not fully available.",
+      "path": "candidate/napier-accommodation-arrears-coord-draft-a-formal-evidence-led-complaint-and-support-pack-for-anfal-edinbur-ctx-5ba143af2beb-authority-map-expand/result.md",
+      "stage": "S6",
+      "title": "Expanded Authority Map with Internal Procedures and Contractual Terms"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "cost_limit_usd": 0.05,
+      "expected_value": 0.8,
+      "instructions": "Extract complete text of Tenancy Agreements NAP-SRC-0010 and NAP-SRC-0018, including all clauses and annexes, to enable comprehensive authority mapping.",
+      "matter_dependencies": [],
+      "matter_scope": "napier-accommodation-arrears",
+      "provider_policy": {},
+      "required_certifications": [],
+      "source_dependencies": [
+        "NAP-SRC-0010",
+        "NAP-SRC-0018"
+      ],
+      "stage": "S6",
+      "task_dependencies": [],
+      "task_id": "napier-accommodation-arrears-extract-full-contract-terms",
+      "task_type": "extraction",
+      "title": "Extract full contractual terms from NAP-SRC-0010 and NAP-SRC-0018",
+      "validation_gates": [
+        "authority_jurisdiction",
+        "authority_citation_format",
+        "stale_dependency"
+      ]
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "description": "Joint and several liability may expose Anfal to costs from flatmates' breaches.",
+      "risk_id": "R-001",
+      "severity": "medium"
+    },
+    {
+      "description": "Arrears amounts differ between sources (\u00a34605.55 vs \u00a35526.66), possibly due to timing.",
+      "risk_id": "R-002",
+      "severity": "low"
+    },
+    {
+      "description": "Deadline confusion: 5-day finance deadline vs 9 May NTQ deadline.",
+      "risk_id": "R-003",
+      "severity": "medium"
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Expanded authority map with internal procedures and contractual terms from source documents. Identified key contractual provisions, misconduct charges, and procedural steps. No new external authorities added; existing authorities remain relevant. Proposed follow-up task to extract full contractual terms for comprehensive mapping.",
+  "task_id": "napier-accommodation-arrears-coord-draft-a-formal-evidence-led-complaint-and-support-pack-for-anfal-edinbur-ctx-5ba143af2beb-authority-map-expand",
+  "uncertainties": [
+    {
+      "confidence": 0.5,
+      "description": "Full contractual terms not extracted; only excerpts available. Complete terms may contain additional procedures.",
+      "uncertainty_id": "U-001"
+    },
+    {
+      "confidence": 0.5,
+      "description": "The exact relationship between the Code of Conduct and the Tenancy Agreement is not fully detailed in excerpts.",
+      "uncertainty_id": "U-002"
+    },
+    {
+      "confidence": 0.5,
+      "description": "The internal complaints procedure referenced by SPSO jurisdiction is not evidenced in the provided sources.",
+      "uncertainty_id": "U-003"
+    }
+  ]
+}

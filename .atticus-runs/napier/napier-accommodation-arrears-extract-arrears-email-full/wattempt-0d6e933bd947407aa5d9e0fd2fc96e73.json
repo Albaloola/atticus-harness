@@ -1,0 +1,127 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "full email body",
+      "quote": "The outstanding arrears for your accommodation are \u00a34605.55",
+      "target_id": "NAP-SRC-0021",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "email header",
+      "quote": "From Donnelly, Kathleen <K.Donnelly@napier.ac.uk> on behalf of fees <fees@napier.ac.uk> Date Wed 08/04/2026 13:29 To Elbushra, Anfal <40805511@live.napier.ac.uk>",
+      "target_id": "NAP-SRC-0021",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-003",
+      "locator": "email body",
+      "quote": "It has come to our attention that you are in arrears for your accommodation.",
+      "target_id": "NAP-SRC-0021",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-004",
+      "locator": "email body",
+      "quote": "If you have made payments, please send copies of your receipts.",
+      "target_id": "NAP-SRC-0021",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-005",
+      "locator": "email signature",
+      "quote": "Kathleen Donnelly Senior Finance Assistant Edinburgh Napier University Finance Sighthill Campus Sighthill Court Edinburgh EH11 4BN Tel 0131 455 6806",
+      "target_id": "NAP-SRC-0021",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-006",
+      "locator": "email body",
+      "quote": "If you need any additional help with funding, please contact Studentfunding@napier.ac.uk",
+      "target_id": "NAP-SRC-0021",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001"
+      ],
+      "confidence": 0.85,
+      "finding_id": "f-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Email states accommodation arrears of \u00a34605.55."
+    },
+    {
+      "citation_ids": [
+        "cit-002"
+      ],
+      "confidence": 0.85,
+      "finding_id": "f-002",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Email sent by Kathleen Donnelly on behalf of fees@napier.ac.uk to Anfal Elbushra on 08/04/2026."
+    },
+    {
+      "citation_ids": [
+        "cit-003",
+        "cit-004"
+      ],
+      "confidence": 0.85,
+      "finding_id": "f-003",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Email notifies recipient of arrears and requests payment receipts if already paid."
+    },
+    {
+      "citation_ids": [
+        "cit-005"
+      ],
+      "confidence": 0.85,
+      "finding_id": "f-004",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Sender is Kathleen Donnelly, Senior Finance Assistant at Edinburgh Napier University."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "extracted_text",
+      "content": "Outlook\n\nAccommodation Arrears - Urgent attention required\n\nFrom Donnelly, Kathleen <K.Donnelly@napier.ac.uk>\n     on behalf of\n     fees <fees@napier.ac.uk>\nDate Wed 08/04/2026 13:29\nTo   Elbushra, Anfal <40805511@live.napier.ac.uk>\nCc   albshryanfal4@gmail.com <albshryanfal4@gmail.com>\n\n\nHi Anfal\n\nIt has come to our attention that you are in arrears for your accommodation. The payments have not\nbeen collected from your card each month and unfortunately the arrears have not been picked up before\nnow.\nIf you have made payments, please send copies of your receipts.\nThe outstanding arrears for your accommodation are \u00a34605.55\nPayment can be made by debit or credit card:\nPaying your fees\n\nIf you need any additional help with funding, please contact Studentfunding@napier.ac.uk\n\n\nKind Regards\nKathleen\n\nKathleen Donnelly\nSenior Finance Assistant\nEdinburgh Napier University\nFinance\nSighthill Campus\nSighthill Court\nEdinburgh EH11 4BN\nTel 0131 455 6806\nEdinburgh Napier University is a registered Scottish charity. Registration number SC018373",
+      "path": "candidate/napier-accommodation-arrears-extract-arrears-email-full/result.md",
+      "stage": "S3",
+      "title": "Full extracted text of arrears email NAP-SRC-0021"
+    }
+  ],
+  "proposed_tasks": [],
+  "redaction_flags": [
+    {
+      "citation_ids": [
+        "cit-002"
+      ],
+      "confidence": 0.85,
+      "finding_id": "r-001",
+      "finding_type": "redaction_flag",
+      "reasoning_status": "supported",
+      "text": "Email contains personal email address albshryanfal4@gmail.com; consider redaction for privacy."
+    }
+  ],
+  "risk_flags": [],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Extracted full text of arrears email from source NAP-SRC-0021. The email from Kathleen Donnelly (Senior Finance Assistant, Edinburgh Napier University) to Anfal Elbushra dated 08/04/2026 states accommodation arrears of \u00a34605.55 and requests payment or receipts. Extraction confidence is 0.85 due to PDF text extraction; no OCR issues noted.",
+  "task_id": "napier-accommodation-arrears-extract-arrears-email-full",
+  "uncertainties": [
+    {
+      "citation_ids": [],
+      "confidence": 0.0,
+      "finding_id": "u-001",
+      "finding_type": "uncertainty",
+      "reasoning_status": "uncertain",
+      "text": "Extraction confidence is 0.85; PDF text extraction may have minor errors or missing formatting."
+    }
+  ]
+}

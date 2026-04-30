@@ -1,0 +1,60 @@
+{
+  "citations": [],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No source materials or artifacts were provided for review. The evidence manifest and source_materials sections are empty."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-002",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "The task requires review of a tenancy agreement and arrears correspondence, but no documents are available in this work order."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "evidence_review_note",
+      "content": "## Evidence Review Note\n\n**Task:** T-04-002b-review-sources\n**Title:** Review uploaded tenancy agreement and arrears correspondence\n**Matter:** napier-accommodation-arrears\n\n### Status\nNo source materials or artifacts were provided in this work order. The evidence manifest and source_materials sections are both empty. Therefore, no tenancy agreement, arrears correspondence, or other documents could be reviewed.\n\n### Recommendation\nA follow-up task has been proposed to locate and upload the required documents. Once the documents are available, this review should be re-run.",
+      "path": "candidate/T-04-002b-review-sources/evidence_review_note.md",
+      "stage": "S2",
+      "title": "Evidence Review Note - No Documents Provided"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Search the matter for the tenancy agreement and any arrears correspondence related to the Napier accommodation arrears matter. If found, upload them as source documents so they can be reviewed. If not found, request the documents from the appropriate party.",
+      "matter_scope": "napier-accommodation-arrears",
+      "stage": "S2",
+      "task_id": "T-04-002b-find-sources",
+      "task_type": "evidence_collection",
+      "title": "Locate and upload tenancy agreement and arrears correspondence"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "risk_id": "R-001",
+      "risk_type": "missing_evidence",
+      "text": "No source documents were provided for review; the task cannot be completed as instructed."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "No source materials or artifacts were provided for this evidence review task. The evidence manifest and source_materials sections are empty. No tenancy agreement, arrears correspondence, or other documents are available to review. The task cannot be completed without source documents. A follow-up task is proposed to locate and upload the required documents.",
+  "task_id": "T-04-002b-review-sources",
+  "uncertainties": [
+    {
+      "reason": "Evidence manifest and source_materials are empty.",
+      "text": "It is unknown whether the tenancy agreement and arrears correspondence exist in the matter but were not included in this work order, or whether they have not yet been uploaded.",
+      "uncertainty_id": "U-001"
+    }
+  ]
+}

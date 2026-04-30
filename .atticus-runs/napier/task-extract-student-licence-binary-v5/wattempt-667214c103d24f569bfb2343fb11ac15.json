@@ -1,0 +1,98 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "extracted text, line 5",
+      "quote": "1 attachment (3 MB)\\nMISS ANFAL ELBUSHRA Student Licence.pdf;",
+      "target_id": "NAP-SRC-0028",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "extracted text, line 5",
+      "quote": "1 attachment (3 MB)\\nMISS ANFAL ELBUSHRA Student Licence.pdf;",
+      "target_id": "NAP-SRC-0029",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001",
+        "cit-002"
+      ],
+      "confidence": 0.85,
+      "finding_id": "f-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Email from accommodation@napier.ac.uk to Anfal Elbushra dated 12/03/2026 attaches a file named 'MISS ANFAL ELBUSHRA Student Licence.pdf' (3 MB)."
+    },
+    {
+      "citation_ids": [
+        "cit-001",
+        "cit-002"
+      ],
+      "confidence": 0.85,
+      "finding_id": "f-002",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "The extracted text of both NAP-SRC-0028 and NAP-SRC-0029 is identical and does not contain the binary content of the attached Student Licence PDF."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "f-003",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "Binary extraction tool was not executed; the embedded PDF content remains unextracted. The extracted text artifacts only captured the email body, not the attachment."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "extraction_report",
+      "content": "Binary extraction of the embedded Student Licence PDF from NAP-SRC-0028 and NAP-SRC-0029 was not performed because the extracted text artifacts did not contain the attachment binary. The original PDF source files (NAP-SRC-0028.pdf, NAP-SRC-0029.pdf) likely contain the embedded PDF as a binary attachment, but the current extraction tool (pdftotext) does not extract binary attachments. A follow-up task is proposed to use a binary extraction tool (e.g., pdfdetach or custom script) on the original PDF files to extract the embedded Student Licence PDF.",
+      "path": "candidate/task-extract-student-licence-binary-v5/extraction-report.md",
+      "stage": "S1",
+      "title": "Binary Extraction Report for Student Licence PDF"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [],
+      "cost_limit_usd": 0.01,
+      "expected_value": 0.9,
+      "instructions": "Use a binary extraction tool (e.g., pdfdetach from poppler-utils, or a custom Python script using PyPDF2 or pdfminer) on the original PDF source files (NAP-SRC-0028.pdf and NAP-SRC-0029.pdf) to extract the embedded Student Licence PDF attachment. The attachment is named 'MISS ANFAL ELBUSHRA Student Licence.pdf' and is approximately 3 MB. Save the extracted PDF as a new source artifact.",
+      "matter_dependencies": [],
+      "matter_scope": "napier-accommodation-arrears",
+      "provider_policy": {},
+      "required_certifications": [],
+      "source_dependencies": [
+        "NAP-SRC-0028",
+        "NAP-SRC-0029"
+      ],
+      "stage": "S1",
+      "task_dependencies": [],
+      "task_id": "task-extract-student-licence-binary-v6",
+      "task_type": "extraction",
+      "title": "Extract embedded Student Licence PDF using binary extraction tool from original PDF sources",
+      "validation_gates": []
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Binary extraction of the embedded Student Licence PDF from NAP-SRC-0028 and NAP-SRC-0029 was not performed because the extracted text artifacts only captured the email body, not the attachment binary. The original PDF source files likely contain the embedded PDF as an attachment, but the current extraction tool (pdftotext) does not extract binary attachments. A follow-up task is proposed to use a binary extraction tool (e.g., pdfdetach or custom script) on the original PDF files to extract the embedded Student Licence PDF.",
+  "task_id": "task-extract-student-licence-binary-v5",
+  "uncertainties": [
+    {
+      "related_finding_ids": [
+        "f-002",
+        "f-003"
+      ],
+      "text": "The original PDF source files (NAP-SRC-0028.pdf, NAP-SRC-0029.pdf) likely contain the embedded Student Licence PDF as a binary attachment, but this has not been confirmed by binary extraction.",
+      "uncertainty_id": "u-001"
+    }
+  ]
+}

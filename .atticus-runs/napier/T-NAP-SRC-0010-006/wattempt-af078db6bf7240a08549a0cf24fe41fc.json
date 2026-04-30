@@ -1,0 +1,150 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "Rent clause 2(a)",
+      "quote": "The subsequent monthly sums due will be shown on the rent schedule to be provided separately to the Tenant.",
+      "target_id": "NAP-SRC-0010",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "Rent clause 2(b)",
+      "quote": "The tenant will pay the Rent instalments on the due dates as advised by the Accommodation Office.",
+      "target_id": "NAP-SRC-0010",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-003",
+      "locator": "Page 1, Rent",
+      "quote": "Rent: \u00a34,686.18 Total Rent (including \u00a3500 Advance Rent Payment) \u00a328.23 Per Day",
+      "target_id": "NAP-SRC-0010",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-004",
+      "locator": "Rent clause 2(a)",
+      "quote": "The Landlord acknowledges the Tenant has paid the Advance Payment of FIVE HUNDRED POUNDS (\u00a3500) STERLING which will be credited to the Tenant's rent account.",
+      "target_id": "NAP-SRC-0010",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-005",
+      "locator": "Rent clause 2(b)",
+      "quote": "If the Tenant's Rent instalments account falls into arrears, the Landlord will be entitled to seek payment from the Tenant's guarantor",
+      "target_id": "NAP-SRC-0010",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-006",
+      "locator": "Rent clause 2(b)",
+      "quote": "Where a Rent account is in arrears by two monthly instalments, the Landlord will be entitled to issue a notice to quit",
+      "target_id": "NAP-SRC-0010",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001"
+      ],
+      "confidence": 0.95,
+      "finding_id": "F-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "The tenancy agreement states a separate rent schedule will be provided to the tenant."
+    },
+    {
+      "citation_ids": [
+        "cit-002"
+      ],
+      "confidence": 0.9,
+      "finding_id": "F-002",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Rent instalment due dates are to be advised by the Accommodation Office, not set in the agreement."
+    },
+    {
+      "citation_ids": [
+        "cit-003"
+      ],
+      "confidence": 0.95,
+      "finding_id": "F-003",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Total rent is \u00a34,686.18 including a \u00a3500 advance payment, with a daily rate of \u00a328.23."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "F-004",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No separate rent schedule or payment record was found in the provided source materials or artifacts for NAP-SRC-0010."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "source_search_result",
+      "content": "{\n  \"candidate_id\": \"cand-<generated>\",\n  \"citations\": [\n    {\n      \"citation_id\": \"cit-001\",\n      \"locator\": \"Rent clause 2(a)\",\n      \"quote\": \"The subsequent monthly sums due will be shown on the rent schedule to be provided separately to the Tenant.\",\n      \"target_id\": \"NAP-SRC-0010\",\n      \"target_type\": \"source\"\n    },\n    {\n      \"citation_id\": \"cit-002\",\n      \"locator\": \"Rent clause 2(b)\",\n      \"quote\": \"The tenant will pay the Rent instalments on the due dates as advised by the Accommodation Office.\",\n      \"target_id\": \"NAP-SRC-0010\",\n      \"target_type\": \"source\"\n    },\n    {\n      \"citation_id\": \"cit-003\",\n      \"locator\": \"Page 1, Rent\",\n      \"quote\": \"Rent: \u00a34,686.18 Total Rent (including \u00a3500 Advance Rent Payment) \u00a328.23 Per Day\",\n      \"target_id\": \"NAP-SRC-0010\",\n      \"target_type\": \"source\"\n    }\n  ],\n  \"findings\": [\n    {\n      \"citation_ids\": [\"cit-001\"],\n      \"confidence\": 0.95,\n      \"finding_id\": \"F-001\",\n      \"finding_type\": \"fact\",\n      \"reasoning_status\": \"supported\",\n      \"text\": \"The tenancy agreement states a separate rent schedule will be provided to the tenant.\"\n    },\n    {\n      \"citation_ids\": [\"cit-002\"],\n      \"confidence\": 0.9,\n      \"finding_id\": \"F-002\",\n      \"finding_type\": \"fact\",\n      \"reasoning_status\": \"supported\",\n      \"text\": \"Rent instalment due dates are to be advised by the Accommodation Office, not set in the agreement.\"\n    },\n    {\n      \"citation_ids\": [\"cit-003\"],\n      \"confidence\": 0.95,\n      \"finding_id\": \"F-003\",\n      \"finding_type\": \"fact\",\n      \"reasoning_status\": \"supported\",\n      \"text\": \"Total rent is \u00a34,686.18 including a \u00a3500 advance payment, with a daily rate of \u00a328.23.\"\n    },\n    {\n      \"citation_ids\": [],\n      \"confidence\": 1.0,\n      \"finding_id\": \"F-004\",\n      \"finding_type\": \"drafting_note\",\n      \"reasoning_status\": \"uncertain\",\n      \"text\": \"No separate rent schedule or payment record was found in the provided source materials or artifacts for NAP-SRC-0010.\"\n    }\n  ],\n  \"proposed_tasks\": [\n    {\n      \"task_id\": \"T-NAP-SRC-0010-007\",\n      \"task_type\": \"source_search\",\n      \"title\": \"Search matter inventory for rent schedule and payment records across all sources\",\n      \"instructions\": \"Search the entire matter inventory for any rent schedule, payment record, or account statement related to tenant MISS ANFAL ELBUSHRA (Edinburgh Napier number 40805511) or tenancy agreement NAP-SRC-0010. Look for documents titled 'rent schedule', 'payment schedule', 'instalment plan', 'account statement', or similar. Also search for any correspondence from the Accommodation Office regarding due dates or arrears.\",\n      \"matter_scope\": \"napier-accommodation-arrears\",\n      \"stage\": \"S2\"\n    }\n  ]\n}",
+      "path": "candidate/T-NAP-SRC-0010-006/result.md",
+      "stage": "S2",
+      "title": "Source Search Result: Separate Rent Schedule and Payment Records for NAP-SRC-0010"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Search the entire matter inventory for any rent schedule, payment record, or account statement related to tenant MISS ANFAL ELBUSHRA (Edinburgh Napier number 40805511) or tenancy agreement NAP-SRC-0010. Look for documents titled 'rent schedule', 'payment schedule', 'instalment plan', 'account statement', or similar. Also search for any correspondence from the Accommodation Office regarding due dates or arrears.",
+      "matter_scope": "napier-accommodation-arrears",
+      "stage": "S2",
+      "task_id": "T-NAP-SRC-0010-007",
+      "task_type": "source_search",
+      "title": "Search matter inventory for rent schedule and payment records across all sources"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "risk_flag_id": "RF-001",
+      "risk_type": "evidence_gap",
+      "text": "Missing rent schedule prevents verification of instalment amounts and due dates, which are critical for arrears calculation."
+    },
+    {
+      "risk_flag_id": "RF-002",
+      "risk_type": "evidence_gap",
+      "text": "No payment records available to confirm whether the \u00a3500 advance payment was credited or if arrears exist."
+    },
+    {
+      "risk_flag_id": "RF-003",
+      "risk_type": "evidence_gap",
+      "text": "Guarantor liability and any notice to quit issued cannot be assessed without payment history."
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "Searched matter inventory for separate rent schedule and payment records for NAP-SRC-0010. The tenancy agreement (NAP-SRC-0010) states a separate rent schedule will be provided and instalment due dates are advised by the Accommodation Office. No separate rent schedule or payment record was found in the provided source materials or artifacts. The prior source search artifact (art-01453dfdfe864ad8a87f03ef04cf7105) confirms this gap. A follow-up task is proposed to search the broader matter inventory for these records.",
+  "task_id": "T-NAP-SRC-0010-006",
+  "uncertainties": [
+    {
+      "related_finding_ids": [
+        "F-001",
+        "F-004"
+      ],
+      "text": "The separate rent schedule referenced in clause 2(a) was not located in the provided source materials or artifacts.",
+      "uncertainty_id": "U-001"
+    },
+    {
+      "related_finding_ids": [
+        "F-002"
+      ],
+      "text": "Actual payment dates, amounts, and arrears history for this tenant are not available in the current evidence set.",
+      "uncertainty_id": "U-002"
+    },
+    {
+      "related_finding_ids": [],
+      "text": "The guarantor's identity and any payment demands made to the guarantor are not documented in the provided materials.",
+      "uncertainty_id": "U-003"
+    }
+  ]
+}

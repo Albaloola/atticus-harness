@@ -1,0 +1,93 @@
+{
+  "citations": [],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 0.0,
+      "finding_id": "f-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No source materials, artifacts, or legal memory entries were provided in this work order. Cannot identify matter sources for Anfal Elbushra RA application."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.0,
+      "finding_id": "f-002",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "Legal memory index is empty; no prior findings, evidence maps, or source lists exist for this matter scope."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.0,
+      "finding_id": "f-003",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "Evidence manifest and source_materials sections are empty; no source dependencies were supplied for this task."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.0,
+      "finding_id": "f-004",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "Task instructions are blank; cannot determine what specific sources or records are needed for the RA application."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "markdown",
+      "content": "# Evidence-Gathering Gap Report for Anfal Elbushra RA Application\n\n## Task: napier-accommodation-arrears-followup-RA-application-find-sources-v3\n\n### Summary\nNo source materials, artifacts, or legal memory entries were provided in this work order. The evidence manifest and source_materials sections are empty. The legal memory index is empty. The task instructions are blank.\n\n### Identified Gaps\n1. No source dependencies were supplied.\n2. No extracted/OCR text was provided.\n3. No prior findings or evidence maps exist in legal memory.\n4. Task instructions are empty; the specific records needed for the RA application are unknown.\n\n### Recommended Next Steps\n- Populate the evidence manifest with relevant source dependencies (e.g., tenancy agreements, correspondence, arrears records, RA application documents).\n- Provide clear task instructions specifying what sources to search for.\n- Consider using the SearchLegalMemory tool to locate any prior matter records.\n- Use ListMatterSources to enumerate available sources once the manifest is populated.",
+      "path": "candidate/napier-accommodation-arrears-followup-RA-application-find-sources-v3/gap-report.md",
+      "stage": "S3",
+      "title": "Evidence-Gathering Gap Report"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Populate the evidence manifest for matter scope 'napier-accommodation-arrears' with source dependencies relevant to Anfal Elbushra's reasonable adjustment (RA) application. Include tenancy agreements, correspondence about arrears, RA application forms, and any related accommodation records. Then re-run the source-finding task with a populated manifest and clear instructions.",
+      "matter_scope": "napier-accommodation-arrears",
+      "stage": "S2",
+      "task_id": "napier-accommodation-arrears-populate-evidence-manifest-v1",
+      "task_type": "evidence_gathering",
+      "title": "Populate evidence manifest for Anfal Elbushra RA application sources"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "description": "No source materials or artifacts were provided; cannot identify any matter sources for the RA application.",
+      "risk_type": "missing_evidence",
+      "severity": "high"
+    },
+    {
+      "description": "Task instructions are empty; the scope of required sources is undefined.",
+      "risk_type": "blank_instructions",
+      "severity": "high"
+    },
+    {
+      "description": "Legal memory index is empty; no prior work or findings exist for this matter scope.",
+      "risk_type": "empty_memory",
+      "severity": "medium"
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "No source materials, artifacts, or legal memory entries were provided. Evidence manifest and source_materials are empty. Task instructions are blank. Cannot identify matter sources for Anfal Elbushra RA application. Proposed follow-up task to populate evidence manifest and re-run source-finding.",
+  "task_id": "napier-accommodation-arrears-followup-RA-application-find-sources-v3",
+  "uncertainties": [
+    {
+      "description": "No source materials or artifacts were provided; cannot identify any matter sources.",
+      "severity": "high"
+    },
+    {
+      "description": "Task instructions are blank; the specific records needed for the RA application are unknown.",
+      "severity": "high"
+    },
+    {
+      "description": "Legal memory index is empty; no prior findings or evidence maps exist.",
+      "severity": "medium"
+    }
+  ]
+}

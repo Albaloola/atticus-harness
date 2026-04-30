@@ -1,0 +1,93 @@
+{
+  "citations": [],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [],
+      "confidence": 0.0,
+      "finding_id": "f-001",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No source materials or artifacts were provided in this work order to search for Napier accommodation arrears evidence."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.0,
+      "finding_id": "f-002",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "Available tools (ListMatterSources, ListMatterArtifacts, SearchLegalMemory) could be used to locate Napier accommodation records, but no tool calls were executed in this pass."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.0,
+      "finding_id": "f-003",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "The matter scope 'napier-accommodation-arrears' suggests a Scottish residential tenancy or student accommodation dispute; relevant authorities exist but no evidence links them to specific facts."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.0,
+      "finding_id": "f-004",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No OCR or extraction artifacts were supplied; any OCR quality issues cannot be assessed."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "evidence_map",
+      "content": "## Napier Accommodation Arrears \u2013 Evidence Map (Candidate)\n\n### Task\nSearch matter record for Napier accommodation source materials.\n\n### Status\nNo source materials or artifacts were provided in this work order. The evidence_manifest and source_materials sections are empty. The matter scope is 'napier-accommodation-arrears' (Scottish context).\n\n### Available Authorities (not yet linked to facts)\n- Private Housing (Tenancies) (Scotland) Act 2016, schedule 1 \u2013 excludes student accommodation provided by a university.\n- Housing (Scotland) Act 1988, s.12 & schedule 4 \u2013 assured tenancy exclusions.\n- Housing (Scotland) Act 2001, s.7 \u2013 occupancy terms for prescribed accommodation.\n- Equality Act 2010, ss.20, 21, 91 \u2013 reasonable adjustments and higher education discrimination.\n- Scottish Public Services Ombudsman Act 2002 \u2013 complaint jurisdiction.\n\n### Next Steps\n1. Use ListMatterSources to retrieve all source records for this matter.\n2. Use ListMatterArtifacts to check for prior drafts or extracted text.\n3. Use SearchLegalMemory with keywords 'Napier', 'accommodation', 'arrears' to find any stored findings.\n4. If sources are found, extract and cite them in a follow-up evidence map.",
+      "path": "candidate/bundle-16-followup-attach-sources-search-followup/evidence_map.md",
+      "stage": "S2",
+      "title": "Napier Accommodation Arrears Evidence Map"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Use ListMatterSources and ListMatterArtifacts to retrieve all source records and artifacts for matter scope 'napier-accommodation-arrears'. Then use SearchLegalMemory with keywords 'Napier', 'accommodation', 'arrears' to find any stored findings. Report the results in a new evidence map artifact.",
+      "matter_scope": "napier-accommodation-arrears",
+      "stage": "S2",
+      "task_id": "bundle-16-followup-attach-sources-search-followup-execute",
+      "task_type": "evidence_gathering",
+      "title": "Execute source and artifact listing for Napier accommodation arrears"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "description": "No source materials or artifacts were provided; the matter record may be empty or the work order context is incomplete.",
+      "finding_id": "f-001",
+      "risk_type": "missing_evidence"
+    },
+    {
+      "description": "Without executing available tools (ListMatterSources, ListMatterArtifacts, SearchLegalMemory), the worker cannot confirm whether any Napier accommodation records exist.",
+      "finding_id": "f-002",
+      "risk_type": "incomplete_search"
+    },
+    {
+      "description": "Authorities exist for Scottish tenancy exclusions and equality duties, but no facts link them to this matter; legal analysis cannot proceed without evidence.",
+      "finding_id": "f-003",
+      "risk_type": "unsupported_legal_claim"
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "No source materials or artifacts were provided in this work order for the Napier accommodation arrears matter. The evidence_manifest and source_materials sections are empty. Available tools (ListMatterSources, ListMatterArtifacts, SearchLegalMemory) were not executed in this pass. A follow-up task is proposed to execute those tools and retrieve any existing records. Relevant Scottish tenancy and equality authorities exist but cannot be linked to facts without evidence.",
+  "task_id": "bundle-16-followup-attach-sources-search-followup",
+  "uncertainties": [
+    {
+      "description": "It is unknown whether any source records or artifacts exist for this matter because the evidence_manifest and source_materials are empty.",
+      "finding_id": "f-001"
+    },
+    {
+      "description": "The content and quality of any OCR or extraction artifacts cannot be assessed because none were supplied.",
+      "finding_id": "f-004"
+    },
+    {
+      "description": "The specific legal issues (e.g., tenancy type, arrears amount, procedural history) are unknown without evidence.",
+      "finding_id": "f-003"
+    }
+  ]
+}

@@ -1,0 +1,149 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "page 1",
+      "quote": "Tenancy Agreement BETWEEN The Court of Edinburgh Napier University, PER Edinburgh Napier University ... AND ... \"The Tenant\"",
+      "target_id": "NAP-SRC-0018",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-002",
+      "locator": "page 1",
+      "quote": "Period of Let: From: To: Rent: \u00a3 Total for Session ... Tenant's Name (Print): Signature: Date:",
+      "target_id": "NAP-SRC-0018",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-003",
+      "locator": "page 2",
+      "quote": "The tenant will pay the Rent instalments on the due dates as advised by the Accommodation Office.",
+      "target_id": "NAP-SRC-0018",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-004",
+      "locator": "page 2",
+      "quote": "Where a Rent account is in arrears by two monthly instalments, the Landlord will be entitled to issue a notice to quit this Tenancy Agreement",
+      "target_id": "NAP-SRC-0018",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-005",
+      "locator": "page 2",
+      "quote": "If the Tenant's Rent instalments account falls into arrears, the Landlord will be entitled to seek payment from the Tenant's guarantor",
+      "target_id": "NAP-SRC-0018",
+      "target_type": "source"
+    },
+    {
+      "citation_id": "cit-006",
+      "locator": "page 1",
+      "quote": "The Tenant must be an active Edinburgh Napier University full-time student.",
+      "target_id": "NAP-SRC-0018",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001",
+        "cit-002"
+      ],
+      "confidence": 0.95,
+      "finding_id": "f-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "The evidence map cites a blank tenancy agreement template (NAP-SRC-0018) with no tenant name, signature, or dates filled in."
+    },
+    {
+      "citation_ids": [
+        "cit-003",
+        "cit-004",
+        "cit-005"
+      ],
+      "confidence": 0.95,
+      "finding_id": "f-002",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "The template includes rent payment terms, arrears notice-to-quit clause, and guarantor recourse provisions."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "f-003",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No source_materials were provided in this work order; the completed tenancy agreement for Anfal was not located."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 0.8,
+      "finding_id": "f-004",
+      "finding_type": "risk",
+      "reasoning_status": "uncertain",
+      "text": "Without a signed agreement, the specific rent amount, due dates, and tenant identity for Anfal cannot be confirmed."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "evidence_map",
+      "content": "# Task t-002: Locate completed tenancy agreement for Anfal\n\n**Status:** Completed \u2013 no signed agreement found in provided context.\n\n**Evidence reviewed:**\n- Evidence map artifact `art-e011a35b972b4957b344f44ecafb0394` (validated) references source NAP-SRC-0018, a blank tenancy agreement template.\n- No source_materials were supplied in this work order.\n\n**Key findings:**\n- The template includes standard terms: rent instalments, arrears notice-to-quit after two missed instalments, and guarantor recourse.\n- No tenant-specific details (name, signature, dates, rent amount) are present.\n\n**Recommendation:** Propose a follow-up task to search matter sources for a completed agreement with Anfal's name and signature.",
+      "path": "candidate/t-002/result.md",
+      "stage": "S3",
+      "title": "Locate completed tenancy agreement for Anfal - Result"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "artifact_dependencies": [
+        "art-e011a35b972b4957b344f44ecafb0394"
+      ],
+      "instructions": "Search all matter sources (e.g., NAP-SRC-0018 and any related records) for a completed tenancy agreement that includes the tenant name 'Anfal', a signature, and filled-in dates. If found, extract the rent amount, instalment schedule, and guarantor information. If not found, flag as missing evidence and request human assistance to locate the document.",
+      "matter_scope": "napier-accommodation-arrears",
+      "source_dependencies": [
+        "NAP-SRC-0018"
+      ],
+      "stage": "S3",
+      "task_id": "t-002-followup",
+      "task_type": "evidence_gathering",
+      "title": "Search for completed tenancy agreement with Anfal's details",
+      "validation_gates": [
+        "chain_of_custody"
+      ]
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [
+    {
+      "description": "Missing signed tenancy agreement may undermine proof of contract terms and arrears calculation.",
+      "finding_ids": [
+        "f-004"
+      ]
+    }
+  ],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "No completed tenancy agreement for Anfal was located. The evidence map (art-e011a35b972b4957b344f44ecafb0394) references a blank template (NAP-SRC-0018) but no signed, dated, or tenant-specific copy. No source_materials were provided. A follow-up task is proposed to search for a completed agreement with Anfal's name, signature, and dates.",
+  "task_id": "t-002",
+  "uncertainties": [
+    {
+      "description": "No completed tenancy agreement bearing Anfal's name, signature, or dates was found in the provided context.",
+      "finding_ids": [
+        "f-003"
+      ]
+    },
+    {
+      "description": "The evidence map artifact (art-e011a35b972b4957b344f44ecafb0394) is stale (stale=0) but may not reflect all available sources.",
+      "finding_ids": [
+        "f-003"
+      ]
+    },
+    {
+      "description": "The specific rent amount, instalment schedule, and guarantor details for Anfal are unknown.",
+      "finding_ids": [
+        "f-004"
+      ]
+    }
+  ]
+}

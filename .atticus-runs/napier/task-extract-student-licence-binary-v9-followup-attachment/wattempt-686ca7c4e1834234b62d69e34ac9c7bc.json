@@ -1,0 +1,75 @@
+{
+  "citations": [
+    {
+      "citation_id": "cit-001",
+      "locator": "Email body",
+      "quote": "1 attachment (3 MB) MISS ANFAL ELBUSHRA Student Licence.pdf;",
+      "target_id": "NAP-SRC-0029",
+      "target_type": "source"
+    }
+  ],
+  "contradictions": [],
+  "external_action_requests": [],
+  "findings": [
+    {
+      "citation_ids": [
+        "cit-001"
+      ],
+      "confidence": 0.95,
+      "finding_id": "f-001",
+      "finding_type": "fact",
+      "reasoning_status": "supported",
+      "text": "Email NAP-SRC-0029 states it includes a 3 MB attachment named 'MISS ANFAL ELBUSHRA Student Licence.pdf'."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "f-002",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "The extracted text from NAP-SRC-0029 does not contain the binary content of the attached PDF. The attachment cannot be extracted from the text-only extraction artifact."
+    },
+    {
+      "citation_ids": [],
+      "confidence": 1.0,
+      "finding_id": "f-003",
+      "finding_type": "drafting_note",
+      "reasoning_status": "uncertain",
+      "text": "No tool configured in this harness can extract embedded binary attachments from PDF source files. A follow-up task is needed."
+    }
+  ],
+  "proposed_artifacts": [
+    {
+      "artifact_type": "extraction_note",
+      "content": "The email NAP-SRC-0029 references an attachment 'MISS ANFAL ELBUSHRA Student Licence.pdf' (3 MB). The text-only extraction did not capture the binary PDF content. To extract the student licence PDF, the original source file must be processed with a tool that can extract embedded attachments (e.g., pdfdetach or a Python script using PyPDF2/PDFMiner). This note documents the limitation and the need for a follow-up extraction task.",
+      "path": "candidate/task-extract-student-licence-binary-v9-followup-attachment/extraction-note.md",
+      "stage": "S1",
+      "title": "Extraction Note - Student Licence PDF Attachment Not Extracted"
+    }
+  ],
+  "proposed_tasks": [
+    {
+      "instructions": "Extract the embedded PDF attachment named 'MISS ANFAL ELBUSHRA Student Licence.pdf' from the original source file NAP-SRC-0029 (PDF). Use a tool capable of extracting embedded attachments from PDFs (e.g., pdfdetach, or a Python script with PyPDF2/PDFMiner). Save the extracted attachment as a separate PDF file and record its SHA-256 hash. If the attachment cannot be extracted, document the reason and any error messages.",
+      "matter_scope": "napier-accommodation-arrears",
+      "stage": "S1",
+      "task_id": "task-extract-student-licence-binary-v9-followup-attachment-extract",
+      "task_type": "extraction",
+      "title": "Extract embedded Student Licence PDF from NAP-SRC-0029 using attachment extraction tool"
+    }
+  ],
+  "redaction_flags": [],
+  "risk_flags": [],
+  "schema_version": "worker_result_packet.v2",
+  "summary": "The source email NAP-SRC-0029 references an attachment named 'MISS ANFAL ELBUSHRA Student Licence.pdf' (3 MB) but the extracted text does not contain the binary PDF content. The task to extract the student licence PDF attachment cannot be completed from the provided text-only extraction. A follow-up task is proposed to re-extract the binary attachment from the original PDF source using a tool capable of handling embedded attachments.",
+  "task_id": "task-extract-student-licence-binary-v9-followup-attachment",
+  "uncertainties": [
+    {
+      "finding_id": "f-002",
+      "reason": "The extracted text artifact does not contain the binary PDF attachment content; only the email body text was captured."
+    },
+    {
+      "finding_id": "f-003",
+      "reason": "The current harness lacks a tool to extract embedded attachments from the original PDF source file."
+    }
+  ]
+}
