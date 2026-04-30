@@ -65,6 +65,7 @@ from atticus.scheduler.lease import LeaseError, acquire_lease
 from atticus.scheduler.live_orchestrator import prepare_live_resume
 from atticus.scheduler.planner import budget_blockers, select_runnable_tasks
 from atticus.skills.registry import list_skills, load_skill
+from atticus.status.completion import build_matter_completion_report, explain_why_not_done, next_resume_action
 from atticus.status.inspect import inspect_record
 from atticus.status.report import generate_status
 from atticus.tools.registry import list_tools
@@ -170,6 +171,7 @@ class CliArgs(Protocol):
     reused_by_step_id: str | None
     profile_file: str | None
     resume_token: str | None
+    why_not_done: bool
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -191,6 +193,17 @@ def build_parser() -> argparse.ArgumentParser:
     status = sub.add_parser("status", help="read-only run status")
     _ = status.add_argument("--db", required=True)
     _ = status.add_argument("--matter")
+
+    matter_health = sub.add_parser("matter-health", help="authoritative matter completion and blocker report")
+    _ = matter_health.add_argument("--db", required=True)
+    _ = matter_health.add_argument("--matter", required=True)
+    _ = matter_health.add_argument("--json", dest="json_output", action="store_true")
+    _ = matter_health.add_argument("--why-not-done", action="store_true")
+
+    next_action = sub.add_parser("next-action", help="show the next safe action for an incomplete matter")
+    _ = next_action.add_argument("--db", required=True)
+    _ = next_action.add_argument("--matter", required=True)
+    _ = next_action.add_argument("--json", dest="json_output", action="store_true")
 
     inspect = sub.add_parser("inspect", help="read-only record inspection")
     _ = inspect.add_argument("--db", required=True)
@@ -564,6 +577,30 @@ def _main(args: CliArgs) -> int:
             return 2
         report = generate_status(args.db, matter_scope=args.matter)
         print_json(report.__dict__)
+        return 0
+
+    if args.command == "matter-health":
+        with repo.db_connection(args.db, read_only=True) as conn:
+            schema_check = schema_check_json(conn, db_path=args.db)
+            if not schema_check["ok"]:
+                print_json(schema_check)
+                return 2
+            if args.why_not_done:
+                payload = explain_why_not_done(conn, args.matter)
+            else:
+                payload = build_matter_completion_report(conn, args.matter).as_dict()
+                payload["next_action"] = next_resume_action(conn, args.matter)
+        print_json(_materialize_resume_commands(payload, args.db))
+        return 0
+
+    if args.command == "next-action":
+        with repo.db_connection(args.db, read_only=True) as conn:
+            schema_check = schema_check_json(conn, db_path=args.db)
+            if not schema_check["ok"]:
+                print_json(schema_check)
+                return 2
+            payload = next_resume_action(conn, args.matter)
+        print_json(_materialize_resume_commands(payload, args.db))
         return 0
 
     if args.command == "inspect":
@@ -1689,6 +1726,16 @@ def _context_markdown(diagnostics: Mapping[str, object]) -> str:
             )
         )
     return "\n".join(lines)
+
+
+def _materialize_resume_commands(value: object, db_path: str) -> object:
+    if isinstance(value, str):
+        return value.replace("--db DB", f"--db {db_path}")
+    if isinstance(value, Mapping):
+        return {str(key): _materialize_resume_commands(item, db_path) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [_materialize_resume_commands(item, db_path) for item in value]
+    return value
 
 
 def print_json(value: object) -> None:
