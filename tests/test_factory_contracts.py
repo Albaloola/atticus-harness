@@ -629,6 +629,144 @@ def test_reducer_writes_canonical_only_with_valid_lease_and_validations(tmp_path
     assert artifact["produced_by_task_id"] == "reduce-me"
 
 
+def test_reducer_creates_decision_packet_task_when_final_certification_is_withheld(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        source_id = repo.add_source(conn, path="/raw/final-source.pdf", sha256="9" * 64)
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="final-gate",
+                title="Final quality gate",
+                task_type="final_quality_gate",
+                stage=LegalStage.S9_FINAL_QUALITY_GATE,
+                source_dependencies=[source_id],
+                expected_value=0.7,
+            ),
+        )
+        validation_id = repo.record_validation(
+            conn,
+            target_type="matter",
+            target_id="atticus",
+            gate_name="test-final-prerequisites",
+            passed=True,
+            matter_scope="atticus",
+        )
+        for certification_type in ("draft_preparation", "hostile_review"):
+            repo.add_certification(
+                conn,
+                subject_type="matter",
+                subject_id="atticus",
+                certification_type=certification_type,
+                validator="test",
+                validation_result_id=validation_id,
+            )
+        worker_lease = acquire_lease(conn, task_id="final-gate", worker_id="worker-1")
+        packet = cited_fact_packet("final-gate", source_id)
+        packet["risk_flags"] = [{"risk_id": "risk-1", "description": "unresolved defect", "citation_ids": ["cite-1"]}]
+        candidate_id = record_worker_result(
+            conn,
+            task_id="final-gate",
+            lease_id=worker_lease,
+            worker_id="worker-1",
+            payload=packet,
+        )
+        reducer_lease = acquire_lease(conn, task_id="final-gate", worker_id="reducer-1", lease_role="reducer")
+        result = reduce_candidate(conn, candidate_id=candidate_id, reducer_lease_id=reducer_lease, dry_run=False)
+        certifications = cast(list[dict[str, object]], result["certifications"])
+        decision_task_id = str(certifications[0]["decision_task_id"])
+        decision_task = cast(
+            Mapping[str, object],
+            conn.execute("SELECT * FROM tasks WHERE task_id = ?", (decision_task_id,)).fetchone(),
+        )
+        provider_policy = _json_mapping(str(decision_task["provider_policy_json"]))
+        attention_count = _count(
+            conn,
+            "SELECT COUNT(*) AS n FROM human_attention WHERE target_id = ? AND reason LIKE 'withheld final_quality_gate requires operator decision packet%'",
+            (decision_task_id,),
+        )
+        event_count = _count(
+            conn,
+            "SELECT COUNT(*) AS n FROM orchestrator_events WHERE event_type = 'orchestrator.certification_decision_task_created'",
+        )
+
+    assert certifications[0]["withheld"] is True
+    assert certifications[0]["decision_task_created"] is True
+    assert decision_task["status"] == TaskStatus.QUEUED
+    assert decision_task["stage"] == LegalStage.S9_FINAL_QUALITY_GATE
+    assert decision_task["task_type"] == "certification_decision_packet"
+    assert provider_policy["model"] == "deepseek/deepseek-v4-pro"
+    assert provider_policy["model_decision"]["decision_tier"] == "pro_orchestrator"
+    assert attention_count == 1
+    assert event_count == 1
+
+
+def test_reducer_surfaces_operator_decision_point_without_new_loop(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        source_id = repo.add_source(conn, path="/raw/final-source.pdf", sha256="8" * 64)
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="final-gate-terminal",
+                title="Final quality gate terminal",
+                task_type="final_quality_gate",
+                stage=LegalStage.S9_FINAL_QUALITY_GATE,
+                source_dependencies=[source_id],
+            ),
+        )
+        validation_id = repo.record_validation(
+            conn,
+            target_type="matter",
+            target_id="atticus",
+            gate_name="test-final-prerequisites",
+            passed=True,
+            matter_scope="atticus",
+        )
+        for certification_type in ("draft_preparation", "hostile_review"):
+            repo.add_certification(
+                conn,
+                subject_type="matter",
+                subject_id="atticus",
+                certification_type=certification_type,
+                validator="test",
+                validation_result_id=validation_id,
+            )
+        worker_lease = acquire_lease(conn, task_id="final-gate-terminal", worker_id="worker-1")
+        packet = cited_fact_packet("final-gate-terminal", source_id)
+        packet["summary"] = "No internal Atticus repairs remain; remaining defects are operator-dependent."
+        packet["risk_flags"] = [{"risk_id": "risk-1", "text": "operator decision required", "citation_ids": ["cite-1"]}]
+        candidate_id = record_worker_result(
+            conn,
+            task_id="final-gate-terminal",
+            lease_id=worker_lease,
+            worker_id="worker-1",
+            payload=packet,
+        )
+        reducer_lease = acquire_lease(conn, task_id="final-gate-terminal", worker_id="reducer-1", lease_role="reducer")
+        result = reduce_candidate(conn, candidate_id=candidate_id, reducer_lease_id=reducer_lease, dry_run=False)
+        certifications = cast(list[dict[str, object]], result["certifications"])
+        decision_task_count = _count(
+            conn,
+            "SELECT COUNT(*) AS n FROM tasks WHERE task_id = 'final-gate-terminal--certification-decision'",
+        )
+        attention_count = _count(
+            conn,
+            "SELECT COUNT(*) AS n FROM human_attention WHERE target_type = 'matter' AND reason LIKE 'final quality gate reached operator decision point:%'",
+        )
+        event_count = _count(
+            conn,
+            "SELECT COUNT(*) AS n FROM orchestrator_events WHERE event_type = 'master_orchestrator.user_intervention_required'",
+        )
+
+    assert certifications[0]["withheld"] is True
+    assert certifications[0]["decision_task_created"] is False
+    assert certifications[0]["decision_task_id"] == ""
+    assert decision_task_count == 0
+    assert attention_count == 1
+    assert event_count == 1
+
+
 def test_reducer_revalidates_candidate_citations_against_task_context(tmp_path: Path):
     db_path = init_db(tmp_path)
     with repo.db_connection(db_path) as conn:

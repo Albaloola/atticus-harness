@@ -313,6 +313,42 @@ def test_scheduler_blocks_manual_verification_tasks(tmp_path: Path):
     assert "external/human-only action blocked" in str(task["blocked_reasons_json"])
 
 
+def test_scheduler_allows_internal_decision_packet_to_discuss_human_options(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="decision-packet",
+                title="Prepare operator decision packet",
+                task_type="certification_decision_packet",
+                matter_scope="beta",
+                instructions="Discuss manual verification only as a human option, not as runnable harness work.",
+            ),
+        )
+        runnable = select_runnable_tasks(conn, capacity=1)
+
+    assert [task["task_id"] for task in runnable] == ["decision-packet"]
+
+
+def test_scheduler_allows_negated_external_action_instruction(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="source-only-reconcile",
+                title="Reconcile figures from existing sources",
+                task_type="arrears_reconciliation",
+                matter_scope="beta",
+                instructions="Use existing sources only; do not ask to contact the university as runnable work.",
+            ),
+        )
+        runnable = select_runnable_tasks(conn, capacity=1)
+
+    assert [task["task_id"] for task in runnable] == ["source-only-reconcile"]
+
+
 def test_scheduler_does_not_auto_requeue_terminal_runtime_blocker(tmp_path: Path):
     db_path = init_db(tmp_path)
     with repo.db_connection(db_path) as conn:

@@ -1056,7 +1056,7 @@ def _default_openrouter_max_tokens(task: Mapping[str, object]) -> int:
         return 4096
     if task_type in {"source_inventory", "extraction_qa", "classification", "duplicate_detection"}:
         return 4096
-    if task_type in {"chronology_event_extraction", "authority_map", "hostile_opponent_review", "final_quality_gate"}:
+    if task_type in {"chronology_event_extraction", "authority_map", "hostile_opponent_review", "final_quality_gate", "certification_decision_packet"}:
         return 8192
     return 16000
 

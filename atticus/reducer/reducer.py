@@ -10,9 +10,11 @@ import sqlite3
 from typing import cast
 from uuid import uuid4
 from atticus.core.events import utc_now
-from atticus.core.policies import TaskStatus, TrustStatus
+from atticus.core.policies import LegalStage, TaskStatus, TrustStatus
+from atticus.core.tasks import TaskSpec
 from atticus.db import repo
 from atticus.hooks import run_hooks
+from atticus.providers.model_policy import default_smart_model_policy, smart_provider_policy_for_route
 from atticus.scheduler.lease import complete_lease, require_active_lease
 from atticus.validation.canonical_write_guard import assert_canonical_write_allowed
 from atticus.validation.gates import run_validation
@@ -71,6 +73,13 @@ MATTER_CERTIFICATIONS_BY_TASK_TYPE = {
 VALIDATED_CERTIFICATION_GATES = {"evidence_registry", "production_mapping", "chronology_citations"}
 EVIDENCE_TARGET_TYPES = {"source", "artifact", "authority", "chronology_event", "claim"}
 GENERIC_ARTIFACT_TYPES = {"", "markdown", "report", "draft", "reduced_result", "evidence_checklist"}
+CERTIFICATION_DECISION_TASK_TYPES = {
+    "authority_map",
+    "draft_preparation",
+    "citation_audit",
+    "privacy_redaction_audit",
+    "final_quality_gate",
+}
 DATE_RE = re.compile(
     r"\b(?:\d{4}-\d{2}-\d{2}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|"
     r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4})\b",
@@ -495,7 +504,26 @@ def _issue_completion_certification_if_safe(
             reason=f"completion certification {certification_type} withheld: {blocker}",
             matter_scope=matter_scope,
         )
-        return [{"certification_type": certification_type, "withheld": True, "validation_result_id": validation_id, "reason": blocker}]
+        decision_task = _surface_withheld_certification_next_step(
+            conn,
+            task=task,
+            candidate_id=candidate_id,
+            artifact_id=artifact_id,
+            certification_type=certification_type,
+            reason=blocker,
+            validation_result_id=validation_id,
+            packet=packet,
+        )
+        return [
+            {
+                "certification_type": certification_type,
+                "withheld": True,
+                "validation_result_id": validation_id,
+                "reason": blocker,
+                "decision_task_id": decision_task.get("task_id", ""),
+                "decision_task_created": decision_task.get("created", False),
+            }
+        ]
     if certification_type in VALIDATED_CERTIFICATION_GATES:
         outcome = run_validation(conn, gate_name=certification_type, target_type="matter", target_id=matter_scope)
         if not outcome.passed:
@@ -507,7 +535,26 @@ def _issue_completion_certification_if_safe(
                 reason=f"completion certification {certification_type} withheld: validation failed after reduction",
                 matter_scope=matter_scope,
             )
-            return [{"certification_type": certification_type, "withheld": True, "validation_result_id": outcome.validation_result_id, "reason": "validation failed"}]
+            decision_task = _surface_withheld_certification_next_step(
+                conn,
+                task=task,
+                candidate_id=candidate_id,
+                artifact_id=artifact_id,
+                certification_type=certification_type,
+                reason="validation failed",
+                validation_result_id=outcome.validation_result_id,
+                packet=packet,
+            )
+            return [
+                {
+                    "certification_type": certification_type,
+                    "withheld": True,
+                    "validation_result_id": outcome.validation_result_id,
+                    "reason": "validation failed",
+                    "decision_task_id": decision_task.get("task_id", ""),
+                    "decision_task_created": decision_task.get("created", False),
+                }
+            ]
         validation_id = outcome.validation_result_id
     else:
         validation_id = repo.record_validation(
@@ -534,6 +581,216 @@ def _issue_completion_certification_if_safe(
         evidence={"task_id": str(task.get("task_id") or ""), "candidate_id": candidate_id, "artifact_id": artifact_id},
     )
     return [{"certification_id": certification_id, "certification_type": certification_type}]
+
+
+def _surface_withheld_certification_next_step(
+    conn: sqlite3.Connection,
+    *,
+    task: Mapping[str, object],
+    candidate_id: str,
+    artifact_id: str,
+    certification_type: str,
+    reason: str,
+    validation_result_id: str | int,
+    packet: Mapping[str, object],
+) -> dict[str, object]:
+    if certification_type == "final_quality_gate" and _packet_declares_operator_decision_point(packet):
+        matter_scope = str(task["matter_scope"])
+        task_id = str(task["task_id"])
+        attention_id = repo.record_human_attention_once(
+            conn,
+            target_type="matter",
+            target_id=matter_scope,
+            severity="blocker",
+            reason="final quality gate reached operator decision point: no internal Atticus repairs remain",
+            matter_scope=matter_scope,
+        )
+        orchestrator_id = repo.upsert_matter_orchestrator(conn, matter_scope=matter_scope, status="user_intervention_required")
+        _ = repo.record_orchestrator_event(
+            conn,
+            orchestrator_id=orchestrator_id,
+            event_type="master_orchestrator.user_intervention_required",
+            payload={
+                "task_id": task_id,
+                "candidate_id": candidate_id,
+                "artifact_id": artifact_id,
+                "certification_type": certification_type,
+                "validation_result_id": str(validation_result_id),
+                "reason": reason,
+                "attention_id": attention_id or "",
+                "operator_decision_point": True,
+                "external_actions": "blocked",
+            },
+        )
+        return {
+            "created": False,
+            "task_id": "",
+            "operator_decision_required": True,
+            "attention_id": attention_id or "",
+        }
+    return ensure_certification_decision_task(
+        conn,
+        task=task,
+        candidate_id=candidate_id,
+        artifact_id=artifact_id,
+        certification_type=certification_type,
+        reason=reason,
+        validation_result_id=str(validation_result_id),
+        packet=packet,
+    )
+
+
+def _packet_declares_operator_decision_point(packet: Mapping[str, object]) -> bool:
+    if _packet_items(packet, "proposed_tasks"):
+        return False
+    text = " ".join(
+        [
+            str(packet.get("summary") or ""),
+            *[str(item.get("text") or item.get("description") or "") for item in _packet_items(packet, "risk_flags")],
+            *[str(item.get("text") or item.get("description") or "") for item in _packet_items(packet, "uncertainties")],
+            *[str(item.get("content") or "") for item in _packet_items(packet, "proposed_artifacts")],
+        ]
+    ).lower()
+    return (
+        "no internal atticus repairs remain" in text
+        or "no internal repair" in text
+        or "operator-dependent" in text
+        or "operator decision" in text
+    )
+
+
+def ensure_certification_decision_task(
+    conn: sqlite3.Connection,
+    *,
+    task: Mapping[str, object],
+    candidate_id: str,
+    artifact_id: str,
+    certification_type: str,
+    reason: str,
+    validation_result_id: str,
+    packet: Mapping[str, object],
+) -> dict[str, object]:
+    """Create bounded follow-up work when a certification is withheld.
+
+    A withheld S6-S9 certification is not a terminal success state. The harness
+    should continue until it has either repaired the defect or prepared a crisp
+    operator decision surface. This task is still candidate-only: it cannot
+    certify the matter, perform external actions, or replace human judgment.
+    """
+
+    if certification_type not in CERTIFICATION_DECISION_TASK_TYPES:
+        return {"created": False, "reason": "certification type does not require a decision task"}
+    matter_scope = str(task["matter_scope"])
+    parent_task_id = str(task["task_id"])
+    task_id = f"{parent_task_id}--certification-decision"
+    existing = conn.execute("SELECT task_id, status FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
+    if existing is not None:
+        return {"created": False, "task_id": task_id, "status": str(existing["status"])}
+    stage = _decision_task_stage(task)
+    source_ids = _citation_target_ids(packet, "source") or _effective_source_dependencies(task)
+    artifact_ids = _dedupe_ordered([artifact_id, *_citation_target_ids(packet, "artifact")])
+    policy = smart_provider_policy_for_route(
+        default_smart_model_policy(),
+        layer="verifier",
+        stage=str(stage),
+        task_type="final_quality_gate" if certification_type == "final_quality_gate" else str(task["task_type"]),
+        task_id=task_id,
+        matter_scope=matter_scope,
+        risk_level="high",
+        legal_complexity="complex",
+        authority_required=certification_type in {"authority_map", "final_quality_gate"},
+        hostile_review_required=certification_type in {"draft_preparation", "final_quality_gate"},
+        drafting_finality="final" if certification_type == "final_quality_gate" else "intermediate",
+        contradiction_count=len(_packet_items(packet, "contradictions")),
+        unresolved_uncertainty_count=len(_packet_items(packet, "uncertainties")),
+        requested_capabilities=("final_quality_gate", "legal_reasoning", "high_risk_synthesis"),
+    )
+    repo.add_task(
+        conn,
+        TaskSpec(
+            task_id=task_id,
+            title=f"Prepare operator decision packet for withheld {certification_type}",
+            task_type="certification_decision_packet",
+            stage=stage,
+            matter_scope=matter_scope,
+            source_dependencies=source_ids,
+            artifact_dependencies=artifact_ids,
+            provider_policy={**policy, "max_tokens": 8192},
+            expected_value=max(float(str(task.get("expected_value") or 0.0)), 0.9),
+            validation_gates=["citation_target_integrity", "citation_support_integrity"],
+            instructions=_certification_decision_instructions(
+                certification_type=certification_type,
+                reason=reason,
+                parent_task_id=parent_task_id,
+                candidate_id=candidate_id,
+                artifact_id=artifact_id,
+                validation_result_id=validation_result_id,
+            ),
+        ),
+    )
+    _ = repo.record_human_attention_once(
+        conn,
+        target_type="task",
+        target_id=task_id,
+        severity="warning",
+        reason=f"withheld {certification_type} requires operator decision packet",
+        matter_scope=matter_scope,
+    )
+    orchestrator_id = repo.upsert_matter_orchestrator(conn, matter_scope=matter_scope, status="repair_required")
+    _ = repo.record_orchestrator_event(
+        conn,
+        orchestrator_id=orchestrator_id,
+        event_type="orchestrator.certification_decision_task_created",
+        payload={
+            "task_id": task_id,
+            "parent_task_id": parent_task_id,
+            "candidate_id": candidate_id,
+            "artifact_id": artifact_id,
+            "certification_type": certification_type,
+            "validation_result_id": validation_result_id,
+            "reason": reason,
+            "external_actions": "blocked",
+            "canonical_writes": "reducer_only",
+        },
+    )
+    return {"created": True, "task_id": task_id}
+
+
+def _decision_task_stage(task: Mapping[str, object]) -> LegalStage:
+    try:
+        return LegalStage(str(task["stage"]))
+    except ValueError:
+        return LegalStage.S9_FINAL_QUALITY_GATE
+
+
+def _certification_decision_instructions(
+    *,
+    certification_type: str,
+    reason: str,
+    parent_task_id: str,
+    candidate_id: str,
+    artifact_id: str,
+    validation_result_id: str,
+) -> str:
+    return (
+        f"The reducer withheld matter certification {certification_type!r} for parent task {parent_task_id}. "
+        f"Reason: {reason}. Candidate: {candidate_id}. Reduced artifact: {artifact_id}. "
+        f"Validation result: {validation_result_id}. "
+        "Prepare a concise operator decision packet, not a final legal conclusion. Identify: "
+        "1. each unresolved defect, 2. whether Atticus can safely repair it using existing matter sources, "
+        "3. the exact bounded internal follow-up task if repair is possible, 4. what genuinely requires operator "
+        "judgment or new evidence, and 5. the safest next case options with caveats. "
+        "If any defect is repairable using existing matter sources, include exactly one structured proposed_tasks[] "
+        "entry for the highest-value bounded internal repair. If no defect is repairable, leave proposed_tasks empty "
+        "and explain the operator decision needed in the proposed artifact. "
+        "For review-report conclusions, use finding_type='drafting_note', 'risk', or 'contradiction'. "
+        "Do not use finding_type='fact', 'law', or 'procedure' unless the finding cites primary source or verified "
+        "authority proof directly. A final-quality, citation-audit, hostile-review, or decision-packet artifact can "
+        "support what the review reported, but it is not primary proof of the underlying fact or legal rule. "
+        "Do not propose contacting anyone, filing, serving, emailing, obtaining documents, or manual verification as "
+        "runnable Atticus tasks. Those must be framed as operator decisions or human-attention items. "
+        "Cite source IDs for facts and cite the final/review artifact only for what the review found."
+    )
 
 
 def _certification_blocker(*, certification_type: str, packet: Mapping[str, object]) -> str:

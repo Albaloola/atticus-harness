@@ -155,6 +155,13 @@ def _external_action_task_reason(task_row: Mapping[str, object]) -> str:
     title = _task_value(task_row, "title").casefold()
     instructions = _task_value(task_row, "instructions").casefold()
     text = f"{task_type} {title} {instructions}"
+    internal_decision_task_types = {
+        "certification_decision_packet",
+        "operator_decision_packet",
+        "case_decision_memo",
+    }
+    if task_type in internal_decision_task_types:
+        return ""
     external_action_types = {
         "evidence_acquisition",
         "source_acquisition",
@@ -182,9 +189,19 @@ def _external_action_task_reason(task_row: Mapping[str, object]) -> str:
         "file with",
         "serve on",
     )
-    if task_type in external_action_types or any(phrase in text for phrase in external_phrases):
+    if task_type in external_action_types or any(_contains_unnegated_phrase(text, phrase) for phrase in external_phrases):
         return "external/human-only action blocked: task requests outside evidence acquisition or manual intervention; record human attention or create an internal evidence-review task instead"
     return ""
+
+
+def _contains_unnegated_phrase(text: str, phrase: str) -> bool:
+    start = text.find(phrase)
+    while start >= 0:
+        prefix = text[max(0, start - 48) : start]
+        if not any(marker in prefix for marker in ("do not ", "don't ", "must not ", "never ", "not as ", "not to ")):
+            return True
+        start = text.find(phrase, start + len(phrase))
+    return False
 
 
 def _task_value(task_row: Mapping[str, object], key: str) -> str:
