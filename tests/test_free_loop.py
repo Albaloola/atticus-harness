@@ -12,6 +12,7 @@ from atticus.cli import main as cli_main
 from atticus.core.policies import LegalStage, TaskStatus
 from atticus.core.tasks import TaskSpec
 from atticus.db import repo
+from atticus.db.schema import SCHEMA_VERSION
 from atticus.scheduler import free_loop as free_loop_module
 from atticus.scheduler.free_loop import run_free_loop_once
 from atticus.scheduler.lease import acquire_lease, complete_lease
@@ -642,7 +643,7 @@ def test_run_free_loop_cli_self_migrates_stale_v5_db_before_failure_logging(
 
     assert code == 2
     assert payload["ok"] is False
-    assert schema_version is not None and schema_version["value"] == "6"
+    assert schema_version is not None and schema_version["value"] == str(SCHEMA_VERSION)
     assert error_logs >= 1
     assert maintenance_tables == 2
 
@@ -691,6 +692,6 @@ def test_worker_failure_signal_self_migrates_already_open_stale_connection(tmp_p
         conn.close()
 
     assert event_id.startswith("orchevt-")
-    assert schema_version is not None and schema_version["value"] == "6"
+    assert schema_version is not None and schema_version["value"] == str(SCHEMA_VERSION)
     assert error_logs == 1
     assert orchestrator_events == 1

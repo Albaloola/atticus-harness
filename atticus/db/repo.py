@@ -1079,6 +1079,16 @@ def update_task_blocked(conn: sqlite3.Connection, task_id: str, reasons: list[st
         severity="blocker",
         reason="; ".join(reasons),
     )
+    from atticus.agents.repair_planner import ensure_repair_plan_for_blocker
+
+    for reason in reasons:
+        _ = ensure_repair_plan_for_blocker(
+            conn,
+            matter_scope=matter_scope,
+            target_type="task",
+            target_id=task_id,
+            reason=reason,
+        )
     _ = emit_event(conn, "task.blocked", matter_scope=matter_scope, payload={"task_id": task_id, "reasons": reasons})
     _ = record_orchestrator_task_blocked(conn, task_id=task_id, reasons=reasons, matter_scope=matter_scope)
 

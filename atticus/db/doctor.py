@@ -190,6 +190,34 @@ REQUIRED_COLUMNS: dict[str, frozenset[str]] = {
             "created_at",
         }
     ),
+    "repair_plans": frozenset(
+        {
+            "repair_plan_id",
+            "matter_scope",
+            "target_type",
+            "target_id",
+            "blocker_signature",
+            "blocker_type",
+            "severity",
+            "status",
+            "actions_json",
+            "attempts_so_far",
+            "max_attempts",
+            "created_at",
+            "updated_at",
+        }
+    ),
+    "repair_attempts": frozenset(
+        {
+            "repair_attempt_id",
+            "repair_plan_id",
+            "matter_scope",
+            "action_type",
+            "status",
+            "result_json",
+            "created_at",
+        }
+    ),
 }
 
 

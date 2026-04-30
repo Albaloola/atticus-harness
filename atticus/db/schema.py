@@ -8,7 +8,7 @@ the legal operating model.
 
 from __future__ import annotations
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 DDL = """
 PRAGMA foreign_keys = ON;
@@ -725,6 +725,33 @@ CREATE TABLE IF NOT EXISTS error_logs (
   created_at TEXT NOT NULL
 ) STRICT;
 
+CREATE TABLE IF NOT EXISTS repair_plans (
+  repair_plan_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL,
+  target_type TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  blocker_signature TEXT NOT NULL,
+  blocker_type TEXT NOT NULL,
+  severity TEXT NOT NULL,
+  status TEXT NOT NULL,
+  actions_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(actions_json)),
+  attempts_so_far INTEGER NOT NULL DEFAULT 0,
+  max_attempts INTEGER NOT NULL DEFAULT 3,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(matter_scope, target_type, target_id, blocker_signature)
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS repair_attempts (
+  repair_attempt_id TEXT PRIMARY KEY,
+  repair_plan_id TEXT NOT NULL REFERENCES repair_plans(repair_plan_id) ON DELETE CASCADE,
+  matter_scope TEXT NOT NULL,
+  action_type TEXT NOT NULL,
+  status TEXT NOT NULL,
+  result_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(result_json)),
+  created_at TEXT NOT NULL
+) STRICT;
+
 CREATE TABLE IF NOT EXISTS external_action_blocks (
   block_id TEXT PRIMARY KEY,
   action_type TEXT NOT NULL,
@@ -748,6 +775,8 @@ CREATE INDEX IF NOT EXISTS tasks_scope_stage_idx ON tasks(matter_scope, stage, s
 CREATE INDEX IF NOT EXISTS artifacts_trust_idx ON artifacts(trust_status, stale);
 CREATE INDEX IF NOT EXISTS artifacts_type_stage_idx ON artifacts(artifact_type, stage);
 CREATE INDEX IF NOT EXISTS sources_hash_idx ON sources(sha256);
+CREATE INDEX IF NOT EXISTS repair_plans_scope_status_idx ON repair_plans(matter_scope, status, severity, updated_at);
+CREATE INDEX IF NOT EXISTS repair_attempts_plan_idx ON repair_attempts(repair_plan_id, created_at);
 CREATE INDEX IF NOT EXISTS certifications_subject_idx
 ON certifications(subject_type, subject_id, certification_type, status);
 CREATE INDEX IF NOT EXISTS provider_runs_task_idx ON provider_runs(task_id, created_at);

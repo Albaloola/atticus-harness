@@ -19,6 +19,13 @@ from atticus.agents.orchestrator import (
     record_operator_signal,
     report_worker_failure_to_orchestrator,
 )
+from atticus.agents.repair_planner import (
+    ensure_repair_plans_for_matter,
+    get_repair_plan,
+    list_repair_plans,
+    next_repair_plan,
+    record_repair_attempt,
+)
 from atticus.agents.maintenance import maintenance_report, maintenance_status, maintenance_tick, request_maintenance
 from atticus.config import DEFAULT_DB_PATH
 from atticus.context.diagnostics import build_context_diagnostics
@@ -172,6 +179,7 @@ class CliArgs(Protocol):
     profile_file: str | None
     resume_token: str | None
     why_not_done: bool
+    repair_plan_id: str | None
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -204,6 +212,14 @@ def build_parser() -> argparse.ArgumentParser:
     _ = next_action.add_argument("--db", required=True)
     _ = next_action.add_argument("--matter", required=True)
     _ = next_action.add_argument("--json", dest="json_output", action="store_true")
+
+    repairs = sub.add_parser("repairs", help="list, show, and advance deterministic repair plans")
+    _ = repairs.add_argument("action", choices=["list", "show", "next", "apply"])
+    _ = repairs.add_argument("--db", required=True)
+    _ = repairs.add_argument("--matter", required=True)
+    _ = repairs.add_argument("--repair-plan-id")
+    _ = repairs.add_argument("--write", action="store_true")
+    _ = repairs.add_argument("--json", dest="json_output", action="store_true")
 
     inspect = sub.add_parser("inspect", help="read-only record inspection")
     _ = inspect.add_argument("--db", required=True)
@@ -600,6 +616,41 @@ def _main(args: CliArgs) -> int:
                 print_json(schema_check)
                 return 2
             payload = next_resume_action(conn, args.matter)
+        print_json(_materialize_resume_commands(payload, args.db))
+        return 0
+
+    if args.command == "repairs":
+        read_only = args.action != "apply" and not args.write
+        with repo.db_connection(args.db, read_only=read_only) as conn:
+            schema_check = schema_check_json(conn, db_path=args.db)
+            if not schema_check["ok"]:
+                print_json(schema_check)
+                return 2
+            if args.write and args.action in {"list", "next"}:
+                _ = ensure_repair_plans_for_matter(conn, matter_scope=args.matter)
+            if args.action == "list":
+                payload = {"repair_plans": [plan.as_dict() for plan in list_repair_plans(conn, matter_scope=args.matter)]}
+            elif args.action == "next":
+                plan = next_repair_plan(conn, matter_scope=args.matter)
+                payload = {"repair_plan": plan.as_dict() if plan is not None else None}
+            elif args.action == "show":
+                if not args.repair_plan_id:
+                    raise ValueError("repairs show requires --repair-plan-id")
+                plan = get_repair_plan(conn, args.repair_plan_id)
+                payload = {"repair_plan": plan.as_dict() if plan is not None else None}
+            else:
+                if not args.repair_plan_id:
+                    raise ValueError("repairs apply requires --repair-plan-id")
+                if not args.write:
+                    raise ValueError("repairs apply requires --write")
+                plan = record_repair_attempt(
+                    conn,
+                    repair_plan_id=args.repair_plan_id,
+                    action_type="operator_acknowledged_repair_plan",
+                    status="attempted",
+                    result={"source": "cli.repairs.apply"},
+                )
+                payload = {"repair_plan": plan.as_dict()}
         print_json(_materialize_resume_commands(payload, args.db))
         return 0
 
