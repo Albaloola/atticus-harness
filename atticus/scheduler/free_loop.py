@@ -41,6 +41,8 @@ OPENROUTER_TRANSIENT_BLOCKER_PREFIXES = (
     "OpenRouter provider call failed after dispatch: OpenRouter network error",
     "OpenRouter provider call failed after dispatch: OpenRouter request failed",
     "OpenRouter provider call failed after dispatch: OpenRouter HTTP 5",
+    "OpenRouter provider call failed after dispatch: OpenRouter HTTP 429",
+    "OpenRouter provider call failed after dispatch: OpenRouter HTTP 408",
 )
 
 
@@ -266,8 +268,13 @@ def run_free_loop_once(
                 "superseded": cleanup.get("superseded", 0),
                 "action_count": len(cleanup.get("actions", [])),
             }
-        except Exception:
-            pass
+        except Exception as exc:
+            _ = repo.emit_event(
+                conn,
+                "free_loop.cleanup_failed",
+                matter_scope=matter_scope,
+                payload={"error": str(exc)},
+            )
 
     return result
 
@@ -296,6 +303,14 @@ def run_free_loop(
         if run_id:
             cancelled = repo.check_run_cancelled(conn, run_id=run_id)
             if cancelled is not None:
+                _ = repo.record_human_attention(
+                    conn,
+                    matter_scope=matter_scope or cancelled.get("matter_scope", ""),
+                    target_type="matter",
+                    target_id=matter_scope or "atticus",
+                    severity="warning",
+                    reason=f"free loop stopped: run cancelled: {cancelled.get('cancel_reason', '')}",
+                )
                 return {
                     "ok": False,
                     "ticks": ticks,
@@ -315,6 +330,14 @@ def run_free_loop(
             if budget_row is not None and budget_row["hard_stop"]:
                 limit = float(budget_row["limit_usd"])
                 if spent >= limit:
+                    _ = repo.record_human_attention(
+                        conn,
+                        matter_scope=matter_scope,
+                        target_type="matter",
+                        target_id=matter_scope,
+                        severity="blocker",
+                        reason=f"budget ceiling reached: spent ${spent:.2f} >= limit ${limit:.2f}",
+                    )
                     return {
                         "ok": False,
                         "ticks": ticks,
@@ -372,8 +395,15 @@ def run_free_loop(
             next_action = _safe_next_action(conn, matter_scope)
             owner = str(next_action.get("owner") or "")
             action_type = str(next_action.get("type") or "")
-            if owner in {"provider", "operator"} or action_type in {"human_attention", "manual_reducer_review"}:
-                break
+            if matter_scope:
+                _ = repo.record_human_attention(
+                    conn,
+                    matter_scope=matter_scope,
+                    target_type="matter",
+                    target_id=matter_scope,
+                    severity="warning",
+                    reason=f"free loop stalled without progress: owner={owner} type={action_type} reason={next_action.get('reason')}",
+                )
             break
     ok = all(bool(tick.get("ok")) for tick in ticks)
     return {"ok": ok, "ticks": ticks, "tick_count": len(ticks)}
@@ -599,7 +629,7 @@ def _execute_leased_workers(
         results = []
         max_workers = min(len(leased_workers), MAX_PARALLEL_AGENT_CAPACITY)
         with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="atticus-worker") as executor:
-            futures = [
+            future_to_worker = {
                 executor.submit(
                     _execute_one_leased_worker_for_db_path,
                     db_path,
@@ -610,11 +640,20 @@ def _execute_leased_workers(
                     env=dict(env) if env is not None else None,
                     codex_timeout_seconds=codex_timeout_seconds,
                     codex_reasoning_effort=codex_reasoning_effort,
-                )
+                ): worker
                 for worker in leased_workers
-            ]
-            for future in as_completed(futures):
-                results.append(future.result())
+            }
+            for future in as_completed(future_to_worker):
+                try:
+                    results.append(future.result())
+                except Exception as exc:
+                    worker = future_to_worker[future]
+                    results.append({
+                        "index": worker["index"],
+                        "task_id": worker["task_id"],
+                        "executed": "false",
+                        "error": str(exc),
+                    })
     ordered = sorted(results, key=lambda result: int(result["index"]))
     return {
         "executed_tasks": [result["task_id"] for result in ordered if result.get("executed") == "true"],
@@ -703,9 +742,11 @@ def _execute_one_leased_worker(
 
 def _handle_worker_exception(conn: sqlite3.Connection, *, task_id: str, lease_id: str, reason: str) -> None:
     _fail_active_lease_after_worker_exception(conn, lease_id=lease_id, task_id=task_id, reason=reason)
-    if repo.provider_failure_requires_user_intervention(reason):
+    normalized_reason = reason.lower()
+    is_provider_dispatch_failure = "provider call failed after dispatch" in normalized_reason or "openrouter" in normalized_reason
+    if repo.provider_failure_requires_user_intervention(reason) or is_provider_dispatch_failure:
         matter_scope = repo.matter_scope_for_target(conn, target_type="task", target_id=task_id) or "unknown"
-        provider = "openrouter" if "openrouter" in reason.lower() else "provider"
+        provider = "openrouter" if "openrouter" in normalized_reason else "provider"
         _ = repo.record_provider_control_plane_failure(
             conn,
             matter_scope=matter_scope,
@@ -713,9 +754,9 @@ def _handle_worker_exception(conn: sqlite3.Connection, *, task_id: str, lease_id
             provider=provider,
             message=reason,
             runnable_task_count=1,
-            provider_policy_result="post_dispatch_user_intervention",
+            provider_policy_result="post_dispatch_user_intervention" if repo.provider_failure_requires_user_intervention(reason) else "post_dispatch_control_plane",
             source="provider.post_dispatch",
-            error_type="provider_dispatch_requires_user_intervention",
+            error_type="provider_dispatch_requires_user_intervention" if repo.provider_failure_requires_user_intervention(reason) else "provider_dispatch_failure",
             attention_prefix="provider runtime",
             trigger_reason_prefix="provider runtime",
             event_prefix="orchestrator.provider_runtime",
@@ -733,16 +774,19 @@ def _handle_worker_exception(conn: sqlite3.Connection, *, task_id: str, lease_id
         else {"applied": False}
     )
     if "worker output quarantined" not in reason.lower():
-        _ = repo.record_human_attention(
-            conn,
-            target_type="task",
-            target_id=task_id,
-            severity="blocker",
-            reason="free loop worker failed: "
-            + reason
-            + ("; task decomposed into bounded source bundles" if decomposition.get("applied") else "")
-            + ("; decomposed parent compacted for bounded synthesis retry" if compact_retry.get("applied") else ""),
-        )
+        # Skip duplicate attention if this is a provider dispatch failure already reported
+        # by _record_openrouter_post_dispatch_failure → record_provider_control_plane_failure
+        if "provider call failed after dispatch" not in reason.lower():
+            _ = repo.record_human_attention(
+                conn,
+                target_type="task",
+                target_id=task_id,
+                severity="blocker",
+                reason="free loop worker failed: "
+                + reason
+                + ("; task decomposed into bounded source bundles" if decomposition.get("applied") else "")
+                + ("; decomposed parent compacted for bounded synthesis retry" if compact_retry.get("applied") else ""),
+            )
     _report_failure_without_masking(conn, task_id=task_id, reason=f"free loop worker failed: {reason}")
 
 
@@ -936,7 +980,13 @@ def _matter_complete(conn: sqlite3.Connection, matter_scope: str | None) -> bool
         from atticus.status.completion import build_matter_completion_report
 
         return build_matter_completion_report(conn, matter_scope).done
-    except Exception:
+    except Exception as exc:
+        _ = repo.emit_event(
+            conn,
+            "free_loop.matter_complete_check_failed",
+            matter_scope=matter_scope,
+            payload={"error": str(exc)},
+        )
         return False
 
 
@@ -947,7 +997,13 @@ def _safe_next_action(conn: sqlite3.Connection, matter_scope: str | None) -> dic
         from atticus.status.completion import next_resume_action
 
         return next_resume_action(conn, matter_scope)
-    except Exception:
+    except Exception as exc:
+        _ = repo.emit_event(
+            conn,
+            "free_loop.next_action_check_failed",
+            matter_scope=matter_scope,
+            payload={"error": str(exc)},
+        )
         return {}
 
 
@@ -975,8 +1031,8 @@ def _build_progress_signature(conn: sqlite3.Connection, matter_scope: str, tick:
         parts.append(f"missing:{','.join(report.missing_certifications) if report.missing_certifications else 'none'}")
         parts.append(f"next_type:{next_action.get('type', 'unknown')}")
         parts.append(f"next_owner:{next_action.get('owner', 'unknown')}")
-    except Exception:
-        parts.append("health_error")
+    except Exception as exc:
+        parts.append(f"health_error:{exc}")
     made_progress = _tick_made_progress(tick)
     parts.append(f"progress:{made_progress}")
     return "|".join(parts)

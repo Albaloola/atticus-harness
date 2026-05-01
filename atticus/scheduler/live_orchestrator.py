@@ -78,7 +78,7 @@ def prepare_live_resume(
             if not matching_tasks:
                 reasons.append(str(cast(list[str], mismatched_tasks[0]["reasons"])[0]))
         plan_readiness["ready"] = bool(plan_readiness.get("ready")) and bool(plan_readiness.get("runnable_task_ids"))
-    if matter_scope is not None:
+    if matter_scope is not None and write_leases:
         _ = repo.resolve_local_stub_blockers_after_live_approval(conn, matter_scope=matter_scope)
 
     leases: list[dict[str, object]] = []

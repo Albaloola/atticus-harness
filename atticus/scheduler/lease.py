@@ -35,8 +35,13 @@ def acquire_lease(
 ) -> str:
     if lease_role not in {"worker", "reducer"}:
         raise LeaseError(f"unsupported lease role: {lease_role}")
-    if not dry_run and not conn.in_transaction:
-        _ = conn.execute("BEGIN IMMEDIATE")
+    _savepoint_used = False
+    if not dry_run:
+        if conn.in_transaction:
+            _ = conn.execute("SAVEPOINT lease_acquire")
+            _savepoint_used = True
+        else:
+            _ = conn.execute("BEGIN IMMEDIATE")
     task = cast(Mapping[str, object] | None, cast(object, conn.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone()))
     if task is None:
         raise LeaseError(f"unknown task: {task_id}")
@@ -57,9 +62,9 @@ def acquire_lease(
         raise LeaseError(f"task {task_id} is not leaseable from status {task['status']}")
     if lease_role == "reducer" and task["status"] != TaskStatus.REDUCER_PENDING:
         raise LeaseError(f"reducer lease requires task {task_id} to be in status {TaskStatus.REDUCER_PENDING}")
+    if not dry_run and seconds >= 0:
+        _ = expire_leases(conn)
     if lease_role == "worker" and not dry_run:
-        if seconds >= 0:
-            _ = expire_leases(conn)
         active_worker_count = _active_worker_lease_count(conn)
         if active_worker_count >= MAX_PARALLEL_AGENT_CAPACITY:
             raise LeaseError(f"global worker capacity reached: {active_worker_count}/{MAX_PARALLEL_AGENT_CAPACITY}")
@@ -131,6 +136,8 @@ def acquire_lease(
         matter_scope=str(task["matter_scope"]),
         payload={"lease_id": lease_id, "task_id": task_id, "worker_id": worker_id, "fencing_token": fencing_token},
     )
+    if _savepoint_used:
+        _ = conn.execute("RELEASE SAVEPOINT lease_acquire")
     return lease_id
 
 
@@ -226,10 +233,11 @@ def expire_leases(conn: sqlite3.Connection, *, task_id: str | None = None) -> li
             )
             _ = repo.record_human_attention(
                 conn,
+                matter_scope=repo.matter_scope_for_target(conn, target_type="task", target_id=lease_task_id) or "unknown",
                 target_type="task",
                 target_id=lease_task_id,
                 severity="warning",
-                reason=f"lease expired: {lease_id}",
+                reason=f"stale_transient_network: lease expired: {lease_id}",
             )
             _ = repo.emit_event(
                 conn,
