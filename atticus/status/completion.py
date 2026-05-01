@@ -454,9 +454,53 @@ def next_resume_action(conn: sqlite3.Connection, matter_scope: str) -> dict[str,
     if report.unresolved_human_attention:
         item = report.unresolved_human_attention[0]
         route = route_human_attention(dict(item), matter_scope)
+        routed_owner = route["routed_owner"]
+        # Route non-blocking attention items to their correct action types
+        if routed_owner == "scheduler":
+            return {
+                "type": "supervisor_tick",
+                "owner": "scheduler",
+                "reason": f"scheduler-routed attention: {route['routed_action']}",
+                "attention_id": item["attention_id"],
+                "classification": route["classification"],
+                "routed_action": route["routed_action"],
+                "resume_command": route["routed_command"],
+            }
+        if routed_owner == "orchestrator":
+            return {
+                "type": "orchestrator_repair",
+                "owner": "orchestrator",
+                "reason": f"orchestrator-routed attention: {route['routed_action']}",
+                "attention_id": item["attention_id"],
+                "classification": route["classification"],
+                "routed_action": route["routed_action"],
+                "resume_command": route["routed_command"],
+            }
+        if routed_owner == "provider_control_plane":
+            return {
+                "type": "provider_control_plane",
+                "owner": "provider",
+                "reason": f"provider-routed attention: {route['routed_action']}",
+                "attention_id": item["attention_id"],
+                "classification": route["classification"],
+                "routed_action": route["routed_action"],
+                "resume_command": route["routed_command"],
+            }
+        if routed_owner == "reducer":
+            return {
+                "type": "manual_reducer_review",
+                "owner": "reducer",
+                "reason": f"reducer-routed attention: {route['routed_action']}",
+                "attention_id": item["attention_id"],
+                "candidate_id": str(item.get("target_id") or ""),
+                "classification": route["classification"],
+                "routed_action": route["routed_action"],
+                "resume_command": route["routed_command"],
+            }
+        # Operator-owned — needs Omer
         return {
             "type": "human_attention",
-            "owner": route["routed_owner"],
+            "owner": "operator",
             "attention_id": item["attention_id"],
             "reason": item["reason"],
             "classification": route["classification"],

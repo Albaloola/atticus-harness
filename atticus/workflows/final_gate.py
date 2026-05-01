@@ -93,13 +93,17 @@ def final_gate_readiness(conn: sqlite3.Connection, matter_scope: str) -> dict[st
             }
         )
     only_final_missing = missing == ["final_quality_gate"]
+    operator_blocked = any(
+        route_human_attention(dict(a), matter_scope)["routed_owner"] == "operator"
+        for a in report.unresolved_human_attention
+    )
     state_payload = compute_final_gate_state(
         matter_scope=matter_scope,
         active_certifications=active,
         missing=missing,
         open_reviews=open_reviews,
         blocked_reasons=blocked_reasons,
-        can_create_final_gate=only_final_missing and not open_reviews and not report.stale_artifacts and not report.unresolved_human_attention,
+        can_create_final_gate=only_final_missing and not open_reviews and not report.stale_artifacts and not operator_blocked,
     )
     return {
         "matter_scope": matter_scope,
@@ -107,7 +111,7 @@ def final_gate_readiness(conn: sqlite3.Connection, matter_scope: str) -> dict[st
         "owner": state_payload["owner"],
         "ready": not blocked_reasons,
         "complete": "final_quality_gate" in active and not blocked_reasons,
-        "can_create_final_gate": only_final_missing and not open_reviews and not report.stale_artifacts and not report.unresolved_human_attention,
+        "can_create_final_gate": only_final_missing and not open_reviews and not report.stale_artifacts and not operator_blocked,
         "missing_certifications": missing,
         "active_certifications": [cert for cert in FINAL_LEGAL_DRAFT_CERTIFICATIONS if cert in active],
         "reducer_review_queue": open_reviews,
@@ -188,11 +192,12 @@ def record_final_gate_state(conn: sqlite3.Connection, matter_scope: str) -> dict
 def plan_final_gate_repairs(conn: sqlite3.Connection, matter_scope: str) -> list[dict[str, object]]:
     readiness = final_gate_readiness(conn, matter_scope)
     repairs: list[dict[str, object]] = []
-    can_create_final_gate = bool(readiness["can_create_final_gate"])
+    # Only reducer reviews prevent gate creation; operator-owned attention is valid to proceed in parallel
+    reviews = cast(list[object], readiness.get("reducer_review_queue", []))
     for reason in cast(list[Mapping[str, object]], readiness["blocked_reasons"]):
         if reason["type"] == "missing_certification":
             cert = str(reason["certification"])
-            if cert == "final_quality_gate" and not can_create_final_gate:
+            if cert == "final_quality_gate" and reviews:
                 repairs.append(
                     {
                         "type": "final_gate_prerequisites_blocked",
