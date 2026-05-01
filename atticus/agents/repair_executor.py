@@ -10,8 +10,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 import json
+import logging
 import re
 import sqlite3
+
+logger = logging.getLogger(__name__)
 
 from atticus.agents.repair_planner import (
     RepairPlan,
@@ -255,8 +258,8 @@ def _execute_plan_action(conn: sqlite3.Connection, *, matter_scope: str, plan: R
                         (plan.target_id,),
                     )
                     unblocked_ids = [plan.target_id]
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("Failed to unblock task %s: %s", plan.target_id, exc)
             return {
                 **base,
                 "bucket": "applied",

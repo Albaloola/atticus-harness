@@ -97,6 +97,7 @@ def final_gate_readiness(conn: sqlite3.Connection, matter_scope: str) -> dict[st
     operator_blocked = any(
         str(a.get("routed_lane", "human_request")) == "human_request"
         and route_human_attention(dict(a), matter_scope)["routed_owner"] == "operator"
+        and route_human_attention(dict(a), matter_scope)["routed_owner"] != "provider_control_plane"
         for a in report.unresolved_human_attention
     )
     state_payload = compute_final_gate_state(
@@ -141,12 +142,14 @@ def compute_final_gate_state(
     elif any(
         str(reason.get("type") or "") == "open_human_attention"
         and str(reason.get("routed_lane", "human_request")) == "human_request"
+        and str(reason.get("routed_owner") or "") != "provider_control_plane"
         for reason in blocked_reasons
     ):
         ha_reason = next(
             r for r in blocked_reasons
             if str(r.get("type") or "") == "open_human_attention"
             and str(r.get("routed_lane", "human_request")) == "human_request"
+            and str(r.get("routed_owner") or "") != "provider_control_plane"
         )
         state = "human_blocked"
         owner = str(ha_reason.get("routed_owner") or "operator")
@@ -196,6 +199,7 @@ def record_final_gate_state(conn: sqlite3.Connection, matter_scope: str) -> dict
             repo.utc_now(),
         ),
     )
+    conn.commit()
     return readiness
 
 

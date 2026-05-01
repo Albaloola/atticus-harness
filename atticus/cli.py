@@ -49,6 +49,7 @@ from atticus.memory.extraction import extract_memory_candidates
 from atticus.migration.import_old_run import import_candidates
 from atticus.migration.reconcile import reconcile_foundation
 from atticus.migration.report import build_migration_report
+from atticus.monitor import run_tui, run_once_json
 from atticus.operator_control import build_operator_control_panel, render_operator_control_panel
 from atticus.providers.budget import budget_status, check_budget
 from atticus.providers.live_readiness import LIVE_ENABLE_ENV, probe_live_openrouter
@@ -229,6 +230,10 @@ class CliArgs(Protocol):
     file: list[str] | None
     lane: str
     current_only: bool
+    force: bool
+    reocr: bool
+    quality_only: bool
+    json_output: bool
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -417,6 +422,19 @@ def build_parser() -> argparse.ArgumentParser:
     _ = extract_sources.add_argument("--source-id", action="append", default=[])
     _ = extract_sources.add_argument("--timeout-seconds", dest="extraction_timeout_seconds", type=float, default=90.0)
     _ = extract_sources.add_argument("--write", action="store_true", help="write extracted text artifacts and extraction/OCR records")
+    _ = extract_sources.add_argument("--force", dest="force", action="store_true", help="regenerate extraction even if coverage exists")
+    _ = extract_sources.add_argument("--reocr", dest="reocr", action="store_true", help="specifically regenerate OCR/visual OCR artifacts")
+    _ = extract_sources.add_argument("--quality-only", dest="quality_only", action="store_true", help="assess extraction/OCR quality without rewriting artifacts")
+
+    ocr = sub.add_parser("ocr", help="OCR quality control: query status or repair OCR coverage")
+    _ = ocr.add_argument("action", choices=["status", "repair"])
+    _ = ocr.add_argument("--db", required=True)
+    _ = ocr.add_argument("--matter", required=True)
+    _ = ocr.add_argument("--workspace", help="workspace path (required for repair)")
+    _ = ocr.add_argument("--source-id")
+    _ = ocr.add_argument("--json", dest="json_output", action="store_true")
+    _ = ocr.add_argument("--write", action="store_true", help="apply repair; dry-run is the default")
+    _ = ocr.add_argument("--timeout-seconds", dest="extraction_timeout_seconds", type=float, default=90.0)
 
     validate = sub.add_parser("validate", help="run a durable validation gate")
     _ = validate.add_argument("--db", required=True)
@@ -723,12 +741,34 @@ def build_parser() -> argparse.ArgumentParser:
     _ = control_panel.add_argument("--format", choices=["human", "json"], default="human")
     _ = control_panel.add_argument("--json", dest="json_output", action="store_true")
 
+    monitor_parser = sub.add_parser(
+        "monitor",
+        aliases=["tui", "console"],
+        help="interactive terminal monitor for the Atticus harness",
+        description="Open an interactive curses terminal monitor or dump JSON status once.",
+    )
+    _ = monitor_parser.add_argument("--db", required=True)
+    _ = monitor_parser.add_argument("--matter", required=True)
+    _ = monitor_parser.add_argument("--output-dir", default="OUT")
+    _ = monitor_parser.add_argument(
+        "--refresh-seconds", type=int, default=2,
+        help="refresh interval in seconds (interactive mode)",
+    )
+    _ = monitor_parser.add_argument(
+        "--once", action="store_true",
+        help="run once in non-interactive mode, print JSON to stdout",
+    )
+    _ = monitor_parser.add_argument(
+        "--json", dest="json_output", action="store_true",
+        help="force JSON output (implies --once)",
+    )
+
     hr_parser = sub.add_parser("human-request", help="show structured human-facing requests from the harness")
     _ = hr_parser.add_argument("action", choices=["show", "next"])
     _ = hr_parser.add_argument("--db", required=True)
     _ = hr_parser.add_argument("--matter", required=True)
     _ = hr_parser.add_argument("--attention-id", type=int, help="show a specific request by ID")
-    _ = hr_parser.add_argument("--current-only", action="store_true", default=True, help="show only current (non-superseded) items")
+    _ = hr_parser.add_argument("--no-current-only", dest="current_only", action="store_false", default=True, help="include superseded items")
     _ = hr_parser.add_argument("--lane", default="human_request", help="routed lane filter (default: human_request)")
     _ = hr_parser.add_argument("--format", choices=["human", "json"], default="human", help="output format")
     _ = hr_parser.add_argument("--json", dest="json_output", action="store_true", help="always output JSON")
@@ -847,12 +887,22 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         return _main(args)
-    except (CertificationBlocked, LeaseError, KeyError, ValueError, RuntimeError) as exc:
+    except (CertificationBlocked, LeaseError, KeyError, ValueError, RuntimeError, OSError, sqlite3.OperationalError, sqlite3.DatabaseError, ImportError) as exc:
         print(json.dumps({"error": str(exc)}, indent=2, sort_keys=True), file=sys.stderr)
         return 2
 
 
 def _main(args: CliArgs) -> int:
+    # Normalize argparse aliases so dispatch by command name works correctly.
+    # Python 3.13+ sets args.command to the alias name, not the primary name.
+    _COMMAND_ALIASES: dict[str, str] = {
+        "panel": "control-panel",
+        "tui": "monitor",
+        "console": "monitor",
+    }
+    if args.command in _COMMAND_ALIASES:
+        args.command = _COMMAND_ALIASES[args.command]
+
     if args.command == "init":
         repo.initialize_database(args.db)
         with repo.db_connection(args.db) as conn:
@@ -1220,6 +1270,11 @@ def _main(args: CliArgs) -> int:
         return 0
 
     if args.command == "extract-sources":
+        if args.quality_only:
+            with repo.db_connection(args.db, read_only=True) as conn:
+                payload = _ocr_status_payload(conn, args.matter, source_id=args.source_id)
+            print_json(payload)
+            return 0
         with repo.db_connection(args.db, read_only=not args.write) as conn:
             result = repair_source_extractions(
                 conn,
@@ -1228,9 +1283,33 @@ def _main(args: CliArgs) -> int:
                 source_ids=args.source_id or [],
                 dry_run=not args.write,
                 timeout_seconds=args.extraction_timeout_seconds,
+                force=args.force or args.reocr,
             )
         print_json(result.as_dict())
         return 0
+
+    if args.command == "ocr":
+        if args.action == "status":
+            with repo.db_connection(args.db, read_only=True) as conn:
+                payload = _ocr_status_payload(conn, args.matter, source_id=args.source_id)
+            print_json(payload)
+            return 0
+        if args.action == "repair":
+            if not args.source_id:
+                raise ValueError("ocr repair requires --source-id")
+            workspace = args.workspace or str(Path(args.db).parent / "workspace" / args.matter)
+            with repo.db_connection(args.db, read_only=not args.write) as conn:
+                result = repair_source_extractions(
+                    conn,
+                    matter_scope=args.matter,
+                    workspace=workspace,
+                    source_ids=[args.source_id],
+                    dry_run=not args.write,
+                    timeout_seconds=args.extraction_timeout_seconds,
+                    force=True,
+                )
+            print_json(result.as_dict())
+            return 0
 
     if args.command == "validate":
         with repo.db_connection(args.db) as conn:
@@ -2091,6 +2170,9 @@ def _main(args: CliArgs) -> int:
                 return 0 if schema_check["ok"] else 2
             with repo.db_connection(args.db, read_only=False) as conn:
                 schema_check = schema_check_json(conn, db_path=args.db)
+                if not schema_check["ok"]:
+                    repo.ensure_schema_current(conn)
+                schema_check = schema_check_json(conn, db_path=args.db)
             print_json({"dry_run": False, "repaired": schema_check["ok"], **schema_check})
             return 0 if schema_check["ok"] else 2
 
@@ -2147,6 +2229,30 @@ def _main(args: CliArgs) -> int:
             print_json(panel)
         else:
             print(render_operator_control_panel(panel), end="")
+        return 0
+
+    if args.command == "monitor":
+        run_once = bool(args.once) or bool(args.json_output)
+        if run_once:
+            with repo.db_connection(args.db, read_only=True) as conn:
+                output = run_once_json(
+                    conn,
+                    matter_scope=args.matter,
+                    db_path=args.db,
+                    output_dir=args.output_dir,
+                )
+            print(output)
+        else:
+            # TUI mode needs write access for stop/answer actions
+            with repo.db_connection(args.db, read_only=False) as conn:
+                exit_code = run_tui(
+                    conn,
+                    matter_scope=args.matter,
+                    db_path=args.db,
+                    output_dir=args.output_dir,
+                    refresh_seconds=args.refresh_seconds,
+                )
+            return exit_code
         return 0
 
     if args.command == "human-request":
@@ -2450,6 +2556,80 @@ def _main(args: CliArgs) -> int:
     return 1
 
 
+def _ocr_status_payload(
+    conn: sqlite3.Connection,
+    matter_scope: str,
+    source_id: str | None = None,
+) -> dict[str, object]:
+    sources_wo_ocr: list[dict[str, object]] = []
+    low_confidence: list[dict[str, object]] = []
+    needs_visual_ocr: list[dict[str, object]] = []
+    stale_ocr: list[dict[str, object]] = []
+
+    source_filter = ""
+    params: tuple[object, ...] = (matter_scope,)
+    if source_id:
+        source_filter = "AND s.source_id = ?"
+        params = (matter_scope, source_id)
+
+    rows = conn.execute(
+        """
+        SELECT s.source_id, s.sha256 AS current_sha256, s.path,
+               oq.quality_id, oq.source_sha256 AS ocr_sha256, oq.quality_status,
+               oq.confidence, oq.needs_visual_ocr
+        FROM sources s
+        LEFT JOIN ocr_quality oq ON oq.source_id = s.source_id AND oq.source_sha256 = s.sha256
+        WHERE s.matter_scope = ?
+        """ + source_filter + """
+        ORDER BY s.source_id
+        """,
+        params,
+    ).fetchall()
+
+    for row in rows:
+        sid = str(row["source_id"])
+        has_ocr = row["quality_id"] is not None
+        if not has_ocr:
+            sources_wo_ocr.append({
+                "source_id": sid,
+                "current_sha256": str(row["current_sha256"] or ""),
+                "path": str(row["path"] or ""),
+            })
+        else:
+            confidence = float(row["confidence"] or 0.0)
+            if confidence < 0.7:
+                low_confidence.append({
+                    "source_id": sid,
+                    "confidence": confidence,
+                    "quality_status": str(row["quality_status"] or ""),
+                    "current_sha256": str(row["current_sha256"] or ""),
+                })
+            if int(row["needs_visual_ocr"] or 0):
+                needs_visual_ocr.append({
+                    "source_id": sid,
+                    "current_sha256": str(row["current_sha256"] or ""),
+                })
+            if str(row["ocr_sha256"] or "") != str(row["current_sha256"] or ""):
+                stale_ocr.append({
+                    "source_id": sid,
+                    "ocr_sha256": str(row["ocr_sha256"] or ""),
+                    "current_sha256": str(row["current_sha256"] or ""),
+                })
+
+    return {
+        "matter_scope": matter_scope,
+        "source_id": source_id,
+        "sources_without_ocr": sources_wo_ocr,
+        "sources_wo_ocr_count": len(sources_wo_ocr),
+        "low_confidence_ocr": low_confidence,
+        "low_confidence_count": len(low_confidence),
+        "needs_visual_ocr": needs_visual_ocr,
+        "needs_visual_ocr_count": len(needs_visual_ocr),
+        "stale_ocr": stale_ocr,
+        "stale_ocr_count": len(stale_ocr),
+    }
+
+
 def _schedule_preview(conn: sqlite3.Connection, *, capacity: int, matter_scope: str | None = None) -> tuple[list[JsonObject], list[JsonObject]]:
     capacity_requested = agent_capacity(capacity)
     runnable: list[JsonObject] = []
@@ -2502,6 +2682,8 @@ def _resolve_scheduler_matter_scope(conn: sqlite3.Connection, *, matter_scope: s
         raise ValueError(
             "multiple active matters are present; pass --matter <matter_scope> or --all-matters explicitly"
         )
+    if len(active) == 1:
+        return active[0]
     return None
 
 

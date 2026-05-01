@@ -176,8 +176,37 @@ def _cleanup_decision(
     if classification == "stale_supervisor_no_progress":
         return {**base, "action": "supersede", "cleanup_reason": "supervisor_no_progress_superseded_by_live_provider"}
 
+    if classification == "requires_reducer":
+        candidate_id = _candidate_id_from_item(item)
+        if candidate_id:
+            candidate_state = _candidate_rejected_or_quarantined_and_not_in_queue(conn, candidate_id)
+            if candidate_state["ok"]:
+                return {
+                    **base,
+                    "action": "supersede",
+                    "cleanup_reason": "reducer_routed_candidate_resolved",
+                    "candidate_id": candidate_id,
+                    "candidate_status": candidate_state["candidate_status"],
+                }
+        return {**base, "action": "keep", "keep_reason": "reducer_routed_item_kept_until_candidate_resolved"}
+
+    if classification == "proof_citation_repair":
+        return {**base, "action": "supersede", "cleanup_reason": "proof_citation_repair_superseded_by_scheduler_action"}
+
+    if classification == "validation_failure":
+        return {**base, "action": "supersede", "cleanup_reason": "validation_failure_superseded_by_scheduler_action"}
+
+    if classification == "unknown":
+        protected = _protected_reason(reason_l)
+        if protected:
+            return {**base, "action": "keep", "keep_reason": protected}
+        return {**base, "action": "supersede", "cleanup_reason": "unknown_classification_attention_auto_resolved"}
+
     if classification == "requires_orchestrator":
         return {**base, "action": "keep", "keep_reason": "orchestrator-owned items need repair or scheduler action"}
+
+    if classification == "requires_operator":
+        return {**base, "action": "keep", "keep_reason": "operator-routed items require human decision"}
 
     protected = _protected_reason(reason_l)
     if protected:

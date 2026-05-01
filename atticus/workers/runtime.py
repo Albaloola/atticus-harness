@@ -1412,7 +1412,7 @@ def _enforce_model_decision_runtime_gate(
     if not flash_policy_for_pro_work and not flagged_flash_downgrade:
         return
     if _has_active_task_certification(conn, task_id=task_id, certification_type=MODEL_DOWNGRADE_CERTIFICATION):
-        repo.emit_event(
+        _ = repo.emit_event(
             conn,
             "model_downgrade_authorized.runtime_gate",
             matter_scope=str(task["matter_scope"]),
