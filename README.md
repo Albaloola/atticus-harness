@@ -645,6 +645,7 @@ flowchart TB
 | Reducer | `atticus/reducer/` | Reducer packet review, dissent/council support, canonical writer. |
 | Retrieval and memory | `atticus/retrieval/`, `atticus/memory/` | Read-only ask/search, work reuse, typed legal memory extraction and consolidation. |
 | Work persistence | `atticus/work_runs.py` | Resume tokens, work step ledger, reuse records, stale invalidation. |
+| Monitor | `atticus/monitor/` | Interactive curses TUI, monitor state, action dispatch, JSON dump.
 
 ## Lifecycle: From Source To Canonical Work
 
@@ -1200,6 +1201,40 @@ method, tool, hash, coverage, and citation guidance. Facts found in the OCR text
 should cite the source ID unless the work order explicitly allows citing the
 derivative artifact itself.
 
+#### Provider Surface Configuration
+
+Extraction supports `--force` (regenerate even if coverage exists), `--reocr` (regenerate OCR artifacts), and `--quality-only` (assess coverage without rewriting):
+
+```bash
+python -m atticus.cli extract-sources \
+  --db data/napier-accommodation-arrears.sqlite \
+  --matter napier-accommodation-arrears \
+  --workspace matters/napier-accommodation-arrears \
+  --force \
+  --write
+
+python -m atticus.cli extract-sources \
+  --db data/napier-accommodation-arrears.sqlite \
+  --matter napier-accommodation-arrears \
+  --quality-only \
+  --json
+```
+
+OCR quality control is also available as a standalone command:
+
+```bash
+python -m atticus.cli ocr status \
+  --db data/napier-accommodation-arrears.sqlite \
+  --matter napier-accommodation-arrears \
+  --json
+
+python -m atticus.cli ocr repair \
+  --db data/napier-accommodation-arrears.sqlite \
+  --matter napier-accommodation-arrears \
+  --workspace matters/napier-accommodation-arrears \
+  --write
+```
+
 ### Schedule And Build Context
 
 ```bash
@@ -1558,6 +1593,7 @@ python -m atticus.cli maintenance report \
 | `reduce` | canonical boundary | with `--write` | Reduce candidate through the canonical writer. |
 | `reducer-review` | canonical boundary | optional | List, inspect, accept, or reject manual reducer reviews. |
 | `repairs` | recovery | optional | List, show, and advance deterministic repair plans. |
+| `repair-tick` | recovery | optional | Execute one bounded deterministic repair continuation tick. |
 | `final-gate` | recovery | optional | Inspect and repair final-gate readiness. |
 | `reject-candidate` | canonical boundary | with `--write` | Quarantine a valid but unsuitable candidate. |
 | `orchestrator` | recovery | optional | Inspect/tick/failures/signals for matter orchestrators. |
@@ -1567,6 +1603,83 @@ python -m atticus.cli maintenance report \
 | `ask` | retrieval | no | Query memory/context as orientation. |
 | `session` | retrieval | no | Inspect/resume/export sensitive sessions. |
 | `human-attention` | operator loop | optional | List or add operator-visible attention items. |
+| `human-request` | operator loop | no | Show structured human-facing requests from the harness. |
+| `human-response` | operator loop | with `--write` | Submit operator response to a harness request. |
+| `control-panel` | operator loop | no | Human-facing matter control panel and agent handoff packet. |
+| `monitor` | operator loop | no | Interactive curses terminal monitor for real-time harness visibility. |
+| `skill` | info | no | List or show bundled worker skills (e.g. scots-legal-humanizer). |
+| `source-trace` | audit | no | Trace quotes and citations to current source chunks/spans. |
+| `source-led-packet` | execution | with `--write` | Generate a deterministic quote-supported candidate from current source chunks. |
+| `citation-support` | validation | no | Verify candidate citation quote/span/proposition support. |
+| `authority` | validation | no | Verify authority currentness and proposition-support metadata. |
+| `provider-health` | diagnostic | no | Group provider control-plane health by provider policy. |
+| `provider-policy` | policy | no | Check provider/model fallback policy. |
+| `policy-check` | policy | no | Check provider/model fallback policy. |
+| `run` | execution | optional | Manage harness runs: stop, stop-current. |
+| `certify` | validation | yes | Issue a certification after validation. |
+| `bad-fixtures` | diagnostic | no | Run historical bad fixture regression suites. |
+| `budget` | planning | optional | View, set, or check budget gates. |
+| `cache-health` | audit | no | Report prompt/cache observability and explain cache breaks. |
+| `commands` | info | no | List command metadata. |
+| `command` | info | no | Show command metadata. |
+| `tools` | info | no | List Atticus legal tools. |
+| `supervisor` | diagnostic | no | Diagnose no-silent-idle next-action enforcement. |
+| `import-candidates` | recovery | with `--write` | Import legacy material as candidate artifacts. |
+| `reconcile-foundation` | validation | optional | Validate or certify foundation before live resume. |
+| `rebuild-search-index` | retrieval | with `--write` | Rebuild durable legal-memory search projection. |
+| `migrate-report` | migration | no | Build migration report for legacy workspace. |
+| `workflow` | planning | optional | List, show, or run markdown legal workflows.
+
+### Operator Control Panel
+
+The `control-panel` command produces a structured handoff packet for human operator review. It includes the matter state, recommended mode, attention routing summary, next action, live provider gate, and an `agent_packet` sub-dict for AI-agent consumption:
+
+```bash
+python -m atticus.cli control-panel \
+  --db data/napier-accommodation-arrears.sqlite \
+  --matter napier-accommodation-arrears \
+  --format json
+```
+
+Human-readable output:
+
+```bash
+python -m atticus.cli control-panel \
+  --db data/napier-accommodation-arrears.sqlite \
+  --matter napier-accommodation-arrears \
+  --format human
+```
+
+### Interactive Terminal Monitor
+
+The `monitor` command opens a curses-based interactive terminal interface for real-time harness visibility. It shows the matter state, counts, pending human requests, next action, attention routing, and actionable options:
+
+```bash
+python -m atticus.cli monitor \
+  --db data/napier-accommodation-arrears.sqlite \
+  --matter napier-accommodation-arrears \
+  --output-dir matters/napier-accommodation-arrears
+```
+
+Keybindings: `q` quit, `r` refresh, `a` actions, `h` answer human request, `s` stop run. For non-interactive JSON snapshots:
+
+```bash
+python -m atticus.cli monitor \
+  --db data/napier-accommodation-arrears.sqlite \
+  --matter napier-accommodation-arrears \
+  --once --json
+```
+
+### Bundled Agent Skills
+
+Atticus ships bundled markdown skills under `skills/`. These are instruction bundles attached to bounded work orders:
+
+```bash
+python -m atticus.cli skill list --json
+python -m atticus.cli skill show scots-legal-humanizer
+```
+
+**Scots Legal Humanizer** (`skills/scots-legal-humanizer/`, v1.1.0) rewrites AI-generated drafts into natural, credible Scottish legal and formal procedural prose. It removes AI tone, imported non-Scottish terminology, inflated language, dramatic flourishes (including em dashes), and robotic structure. Includes a post-processing verification checklist for machine-checkable quality assurance. The skill is automatically resolved for relevant task types; for manual use, include "humanize", "humanise", or "de-ai" in the task title or type.
 
 ## Security And Operational Limits
 
