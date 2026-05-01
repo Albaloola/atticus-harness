@@ -374,14 +374,28 @@ def next_resume_action(conn: sqlite3.Connection, matter_scope: str) -> dict[str,
     reducer_pending = _tasks_by_status(conn, matter_scope, ("reducer_pending",))
     if reducer_pending:
         task = _choose_reducer_pending_task(reducer_pending)
+        stage = str(task["stage"])
         candidate_id = _latest_candidate_for_task(conn, str(task["task_id"]))
+
+        if stage not in {"S6", "S7", "S8", "S9"}:
+            return {
+                "type": "supervisor_tick",
+                "owner": "scheduler",
+                "task_id": task["task_id"],
+                "stage": stage,
+                "task_type": task["task_type"],
+                "reason": f"reducer-pending candidate in stage {stage} can be auto-reduced; run free loop tick",
+                "after": "rerun matter-health after the scheduler tick",
+                "resume_command": f"ATTICUS_ENABLE_LIVE_OPENROUTER=1 python -m atticus.cli run-free-loop --db DB --matter {matter_scope} --output-dir OUT --capacity 15 --max-ticks 1 --runtime openrouter --allow-live",
+            }
+
         command = f"python -m atticus.cli inspect --db DB --type candidate --id {candidate_id}" if candidate_id else f"python -m atticus.cli inspect --db DB --type task --id {task['task_id']}"
         return {
             "type": "manual_reducer_review",
             "owner": "reducer",
             "task_id": task["task_id"],
             "candidate_id": candidate_id,
-            "stage": task["stage"],
+            "stage": stage,
             "task_type": task["task_type"],
             "reason": "high-risk or gated candidate is reducer_pending",
             "after": _after_reducer_review(report),
@@ -579,6 +593,29 @@ def triage_human_attention(item: dict[str, object]) -> str:
 
     if "operator" in reason or "human" in reason or "user intervention" in reason:
         return "requires_operator"
+
+    if "validation failed" in reason or "validation_gate" in reason:
+        if "final_quality_gate" in reason or "extraction_coverage" in reason or "privacy_redaction" in reason or "citation" in reason:
+            return "stale_validation_failure"
+        return "requires_operator"
+
+    if "worker output quarantined" in reason or "quarantined" in reason:
+        return "stale_quarantined_output"
+
+    if "proposed task rejected" in reason or "proposed task id collides" in reason or "proposed source/evidence search" in reason:
+        return "stale_proposed_task_rejection"
+
+    if "repair requires human" in reason:
+        return "stale_repair_loop_noise"
+
+    if "incomplete task dependency" in reason or "missing certification" in reason:
+        return "requires_orchestrator"
+
+    if "supervisor made no progress" in reason or "no progress" in reason:
+        return "stale_supervisor_no_progress"
+
+    if "final quality gate" in reason or "final_quality_gate" in reason:
+        return "requires_orchestrator"
 
     return "unknown"
 

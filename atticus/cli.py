@@ -2230,14 +2230,33 @@ def _classify_live_resume_next_action(
         return {"classification": "scheduler_can_continue", "command": run_command}
 
     reducer = conn.execute(
-        f"SELECT task_id FROM tasks WHERE status = ? {'AND matter_scope = ?' if matter_scope else ''} ORDER BY updated_at ASC LIMIT 1",
+        f"SELECT task_id, stage FROM tasks WHERE status = ? {'AND matter_scope = ?' if matter_scope else ''} ORDER BY updated_at ASC LIMIT 1",
         ((TaskStatus.REDUCER_PENDING, matter_scope) if matter_scope else (TaskStatus.REDUCER_PENDING,)),
     ).fetchone()
     if reducer is not None:
+        review_exists = conn.execute(
+            f"SELECT 1 FROM reducer_review_queue WHERE status = 'open' {'AND matter_scope = ?' if matter_scope else ''} LIMIT 1",
+            (matter_scope,) if matter_scope else (),
+        ).fetchone()
+        if review_exists is not None:
+            return {
+                "classification": "reducer_review_required",
+                "command": f"python -m atticus.cli reducer-review next --db {db}{matter_arg}",
+                "task_id": _row_str(reducer, "task_id"),
+            }
+        reducer_stage = _row_str(reducer, "stage")
+        if reducer_stage not in {"S6", "S7", "S8", "S9"}:
+            return {
+                "classification": "scheduler_can_continue",
+                "command": f"ATTICUS_ENABLE_LIVE_OPENROUTER=1 python -m atticus.cli run-free-loop --db {db}{matter_arg} --output-dir {output_dir} --capacity {capacity} --max-ticks 1 --runtime openrouter --allow-live",
+                "task_id": _row_str(reducer, "task_id"),
+                "note": f"reducer-pending task in stage {reducer_stage} can be auto-reduced",
+            }
         return {
             "classification": "reducer_review_required",
             "command": f"python -m atticus.cli reducer-review next --db {db}{matter_arg}",
             "task_id": _row_str(reducer, "task_id"),
+            "note": "reducer_pending in high-risk stage but no review queue entry; run 'reducer-review list --write' first",
         }
 
     human = conn.execute(

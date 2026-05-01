@@ -40,6 +40,10 @@ REJECTED_CANDIDATE_REASON_TERMS: tuple[str, ...] = (
     "malformed",
     "unsupported",
     "orientation only",
+    "local stub",
+    "local_stub",
+    "no-live",
+    "empty json",
 )
 
 PROVIDER_SUCCESS_EVENTS: tuple[str, ...] = (
@@ -128,23 +132,9 @@ def _cleanup_decision(
         "reason": reason,
     }
 
-    protected = _protected_reason(reason_l)
-    if protected:
-        return {**base, "action": "keep", "keep_reason": protected}
-
     provider_ok = _provider_probe_ok_after_item(conn, item, provider_names=provider_names, matter_scope=matter_scope)
-    if classification == "stale_transient_network":
-        if provider_ok:
-            return {**base, "action": "supersede", "cleanup_reason": "stale_transient_network_after_provider_probe"}
-        return {**base, "action": "keep", "keep_reason": "transient network item kept until provider probe success is explicit or recorded later"}
-
-    if classification == "stale_local_stub":
-        if provider_ok:
-            return {**base, "action": "supersede", "cleanup_reason": "local_stub_superseded_by_live_provider_path"}
-        return {**base, "action": "keep", "keep_reason": "local stub item kept until live provider approval/probe success"}
-
     candidate_id = _candidate_id_from_item(item)
-    if candidate_id and str(item.get("severity") or "").lower() != "blocker" and _looks_like_rejected_candidate_noise(reason_l):
+    if candidate_id and str(item.get("severity") or "").lower() != "blocker" and (classification == "stale_local_stub" or _looks_like_rejected_candidate_noise(reason_l)):
         candidate_state = _candidate_rejected_or_quarantined_and_not_in_queue(conn, candidate_id)
         if candidate_state["ok"]:
             return {
@@ -155,6 +145,43 @@ def _cleanup_decision(
                 "candidate_status": candidate_state["candidate_status"],
             }
         return {**base, "action": "keep", "keep_reason": candidate_state["reason"], "candidate_id": candidate_id}
+
+    if provider_ok and "provider-owned terminal repair lane" in reason_l and "provider_control_plane" in reason_l:
+        return {**base, "action": "supersede", "cleanup_reason": "provider_control_plane_lane_superseded_by_provider_probe"}
+
+    if classification == "stale_transient_network":
+        if provider_ok:
+            return {**base, "action": "supersede", "cleanup_reason": "stale_transient_network_after_provider_probe"}
+        return {**base, "action": "keep", "keep_reason": "transient network item kept until provider probe success is explicit or recorded later"}
+
+    if classification == "stale_local_stub":
+        if provider_ok:
+            return {**base, "action": "supersede", "cleanup_reason": "local_stub_superseded_by_live_provider_path"}
+        return {**base, "action": "keep", "keep_reason": "local stub item kept until live provider approval/probe success"}
+
+    if classification == "stale_validation_failure":
+        if provider_ok:
+            return {**base, "action": "supersede", "cleanup_reason": "stale_validation_failure_after_provider_probe"}
+        return {**base, "action": "keep", "keep_reason": "validation failure kept until provider probe is confirmed"}
+
+    if classification == "stale_quarantined_output":
+        return {**base, "action": "supersede", "cleanup_reason": "quarantined_output_is_historical_artifact"}
+
+    if classification == "stale_proposed_task_rejection":
+        return {**base, "action": "supersede", "cleanup_reason": "proposed_task_rejection_is_historical"}
+
+    if classification == "stale_repair_loop_noise":
+        return {**base, "action": "supersede", "cleanup_reason": "repair_loop_noise_from_historical_attempts"}
+
+    if classification == "stale_supervisor_no_progress":
+        return {**base, "action": "supersede", "cleanup_reason": "supervisor_no_progress_superseded_by_live_provider"}
+
+    if classification == "requires_orchestrator":
+        return {**base, "action": "keep", "keep_reason": "orchestrator-owned items need repair or scheduler action"}
+
+    protected = _protected_reason(reason_l)
+    if protected:
+        return {**base, "action": "keep", "keep_reason": protected}
 
     return {**base, "action": "keep", "keep_reason": "not a conservative cleanup target"}
 
