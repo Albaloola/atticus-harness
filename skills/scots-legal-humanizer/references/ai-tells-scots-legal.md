@@ -41,8 +41,15 @@ Use this checklist when reviewing a draft. These are not automatic errors. They 
    - Fix by matching the audience.
 
 10. Weak remedy
-   - long complaint but no clear ask.
-   - Fix by stating the order, decision, review, apology, correction, repayment, compensation, or service improvement sought.
+    - long complaint but no clear ask.
+    - Fix by stating the order, decision, review, apology, correction, repayment, compensation, or service improvement sought.
+
+11. Typographic dramatic flourishes
+    - em dashes (—) used in prose as dramatic breaks
+    - curly or smart quotation marks where straight marks fit the context
+    - decorative arrows or symbols (→, ⇒, •, ✦)
+    - en dashes used as decorative breaks rather than genuine range indicators
+    - Fix by restructuring the prose: split the sentence, use a conjunction, use a semicolon, or rewrite so the break is not needed. Never use `--` as a replacement.
 
 ## Scottish legal phrase replacements
 

@@ -1,6 +1,6 @@
 ---
 name: scots-legal-humanizer
-version: 1.0.0
+version: 1.1.0
 description: |
   Rewrite AI-generated drafts into natural, credible Scottish legal and formal procedural prose.
   Use for Scottish court documents, tribunal documents, complaints, ombudsman complaints,
@@ -371,6 +371,29 @@ Keep passive voice where the actor is unknown, irrelevant, or tactfully avoided:
 
 - "The document was not lodged in time" may be better than accusing a person if the record is unclear.
 
+### 13. Typographic dramatic flourishes
+
+Remove em dashes entirely by restructuring the prose. Do not use find-and-replace workarounds (`— → --`, `— → -`). Instead:
+
+- Split the sentence into two.
+- Use a conjunction (and, but, so, because).
+- Use a semicolon.
+- Rewrite the phrase so the break is not needed.
+
+**Correct:**
+- "Anfal disclosed hardship early. Napier did not escalate for five months."
+- "The NTQ says payment by 9 May. The meeting summary says cancellation possible until 18 May."
+
+**Incorrect:**
+- "Anfal disclosed hardship early — Napier did not escalate for five months."
+- "Anfal disclosed hardship early -- Napier did not escalate for five months."
+
+Also remove or replace:
+- ornamental or curly quotation marks where straight marks suit the context
+- decorative bullets or symbols not used in Scottish legal documents (→, ⇒, •, ✦)
+- en dashes that act as decorative breaks rather than genuine range indicators
+- fancy typographic punctuation that adds visual drama without legal meaning
+
 ## Legal humanizing method
 
 ### Pass 1: Procedure and term calibration
@@ -476,6 +499,17 @@ Before output, ask:
 - Is the remedy clear?
 - Could a sheriff, clerk, complaint handler, or opponent understand what is being asked?
 
+### Post-processing verification (machine-checkable)
+
+After rewriting, the agent must verify:
+
+- [ ] No em dashes (—) in the output text
+- [ ] No `--` used as a dash workaround
+- [ ] No curly or smart quotes (unless quoting source material that uses them)
+- [ ] No decorative arrows or special characters (→, ⇒, •, ✦)
+- [ ] No overstatement patterns from the banned list survive
+- [ ] If converting to PDF: pandoc smart typography is disabled (`-f markdown-smart`)
+
 ## Output formats
 
 Default output:
@@ -492,6 +526,8 @@ If the user asks for a full review, provide:
 - Short change log
 
 If the user asks for clean copy, provide only the final text with no commentary.
+
+> **Pipeline note.** If converting to PDF via pandoc or weasyprint, disable smart typography (`pandoc -f markdown-smart`) to prevent automatic reintroduction of em dashes, curly quotes, and other decorative characters that were removed during humanisation. The humaniser's job is to restructure the prose so that no dash workaround is needed. The pipeline must not put them back.
 
 ## Editing notes format
 
@@ -559,6 +595,7 @@ Use these carefully and contextually.
 - "aforementioned" -> "the [document/date/person]"
 - "same" as noun -> "it", "the document", "the payment", or specific noun
 - "shall" -> "must", unless quoting law or required by a formal style
+- em dash (—) -> restructure the prose: split the sentence, use a conjunction, use a semicolon, or rewrite so the break is not needed. Never use `--` as a replacement.
 
 ## Final check for legal credibility
 

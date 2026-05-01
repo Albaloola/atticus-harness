@@ -46,3 +46,28 @@ Or:
 ## Important limitation
 
 This skill edits wording. It does not replace legal advice. Check the relevant court rules, tribunal rules, complaint process, deadlines, and any professional advice before lodging or sending a document.
+
+## Pipeline configuration
+
+When converting humanised markdown to PDF via pandoc and weasyprint, disable smart typography to prevent automatic reintroduction of em dashes, curly quotes, and other decorative characters:
+
+```bash
+pandoc -f markdown-smart input.md -o output.html
+```
+
+Without this flag, pandoc's default `+smart` extension converts `--` and `---` to en and em dashes inside prose, and may also affect URLs containing `--`. This would reintroduce patterns the humaniser removed.
+
+## Humanisation policy
+
+The scots-legal-humanizer should be applied to all human-facing harness outputs, not only the final case-pack PDF. This includes:
+
+- Run reports (`reports/harness-runs/<RUN_ID>.md`)
+- Blocker reports
+- Matter-health summaries delivered as prose
+- Any text shown in Telegram or chat that is longer than a brief status line
+- Atticus worker final output reports
+- Summaries of repairs, reducer reviews, or provider health
+
+**Exemptions:** Brief inline status messages and machine-parsable JSON.
+
+The harness resolves the skill automatically via `skills_for_task()` for relevant task types. For intermediate artifacts, the skill can be attached via the work order by including "humanize", "humanise", or "de-ai" in the task title or task type.
