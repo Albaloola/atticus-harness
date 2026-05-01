@@ -76,6 +76,7 @@ def final_gate_readiness(conn: sqlite3.Connection, matter_scope: str) -> dict[st
                 "routed_owner": route["routed_owner"],
                 "routed_action": route["routed_action"],
                 "routed_command": route["routed_command"],
+                "routed_lane": attention.get("routed_lane", "human_request"),
                 "classification": route["classification"],
             }
         )
@@ -94,7 +95,8 @@ def final_gate_readiness(conn: sqlite3.Connection, matter_scope: str) -> dict[st
         )
     only_final_missing = missing == ["final_quality_gate"]
     operator_blocked = any(
-        route_human_attention(dict(a), matter_scope)["routed_owner"] == "operator"
+        str(a.get("routed_lane", "human_request")) == "human_request"
+        and route_human_attention(dict(a), matter_scope)["routed_owner"] == "operator"
         for a in report.unresolved_human_attention
     )
     state_payload = compute_final_gate_state(
@@ -136,8 +138,16 @@ def compute_final_gate_state(
     if "final_quality_gate" in active_certifications and not blocked_reasons:
         state = "certified"
         owner = "none"
-    elif any(str(reason.get("type") or "") == "open_human_attention" for reason in blocked_reasons):
-        ha_reason = next(r for r in blocked_reasons if str(r.get("type") or "") == "open_human_attention")
+    elif any(
+        str(reason.get("type") or "") == "open_human_attention"
+        and str(reason.get("routed_lane", "human_request")) == "human_request"
+        for reason in blocked_reasons
+    ):
+        ha_reason = next(
+            r for r in blocked_reasons
+            if str(r.get("type") or "") == "open_human_attention"
+            and str(r.get("routed_lane", "human_request")) == "human_request"
+        )
         state = "human_blocked"
         owner = str(ha_reason.get("routed_owner") or "operator")
     elif open_reviews:

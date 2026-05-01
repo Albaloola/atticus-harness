@@ -47,6 +47,47 @@ class ValidationHandler(Protocol):
     def __call__(self, conn: sqlite3.Connection, *, target_type: str, target_id: str) -> tuple[bool, dict[str, object]]: ...
 
 
+def validate_final_quality_gate(conn: sqlite3.Connection, *, target_type: str, target_id: str) -> tuple[bool, dict[str, object]]:
+    from atticus.status.completion import FINAL_LEGAL_DRAFT_CERTIFICATIONS, build_matter_completion_report
+
+    if target_type == "matter":
+        report = build_matter_completion_report(conn, target_id)
+        active: set[str] = set()
+        for row in conn.execute(
+            "SELECT certification_type FROM certifications WHERE subject_type='matter' AND subject_id=? AND status='active'",
+            (target_id,),
+        ).fetchall():
+            active.add(str(row["certification_type"]))
+
+        missing_certs = [c for c in FINAL_LEGAL_DRAFT_CERTIFICATIONS if c not in active]
+
+        if missing_certs:
+            return False, {"missing_certifications": missing_certs, "reason": f"prerequisite certifications not all active: {missing_certs}"}
+
+        stale = list(conn.execute(
+            "SELECT artifact_id FROM artifacts WHERE matter_scope=? AND stale=1 LIMIT 5",
+            (target_id,),
+        ).fetchall())
+        if stale:
+            stale_ids = [str(s["artifact_id"]) for s in stale]
+            return False, {"stale_artifacts": stale_ids, "reason": "stale artifacts exist"}
+
+        blocked = conn.execute(
+            "SELECT COUNT(*) FROM tasks WHERE matter_scope=? AND status='blocked'",
+            (target_id,),
+        ).fetchone()
+        blocked_count = int(blocked[0])
+        if blocked_count > 0:
+            return False, {"blocked_tasks": blocked_count, "reason": f"{blocked_count} blocked tasks remain"}
+
+        return True, {"certification": "final_quality_gate", "subject": target_id, "checks_passed": ["all_prerequisites_active", "no_stale_artifacts", "no_blocked_tasks"]}
+
+    elif target_type == "task":
+        return True, {"note": "task-level final_quality_gate validation passed"}
+
+    return True, {"note": "no specific validation for this target type"}
+
+
 def run_validation(
     conn: sqlite3.Connection,
     *,
@@ -74,6 +115,7 @@ def run_validation(
         "reducer_packet_schema": validate_reducer_packet_schema,
         "canonical_write_authorization": validate_canonical_write_authorization,
         "foundation": validate_foundation,
+        "final_quality_gate": validate_final_quality_gate,
     }
     handler = handlers.get(gate_name)
     if handler is None:

@@ -78,11 +78,19 @@ def prepare_live_resume(
             if not matching_tasks:
                 reasons.append(str(cast(list[str], mismatched_tasks[0]["reasons"])[0]))
         plan_readiness["ready"] = bool(plan_readiness.get("ready")) and bool(plan_readiness.get("runnable_task_ids"))
-        if matter_scope is not None:
-            _ = repo.resolve_local_stub_blockers_after_live_approval(conn, matter_scope=matter_scope)
+    if matter_scope is not None:
+        _ = repo.resolve_local_stub_blockers_after_live_approval(conn, matter_scope=matter_scope)
 
     leases: list[dict[str, object]] = []
     can_lease = not reasons and bool(plan_readiness.get("ready"))
+    if matter_scope:
+        cancelled_row = conn.execute(
+            "SELECT 1 FROM runs WHERE matter_scope=? AND state='cancelled' AND live_provider_permission_revoked=1 LIMIT 1",
+            (matter_scope,),
+        ).fetchone()
+        if cancelled_row is not None:
+            reasons.append("run cancelled: live provider approval revoked")
+            can_lease = False
     if can_lease and write_leases:
         try:
             runnable_task_ids = [str(task_id) for task_id in cast(list[object], plan_readiness["runnable_task_ids"])]

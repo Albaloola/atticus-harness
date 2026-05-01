@@ -7,7 +7,7 @@ import json
 import sqlite3
 from typing import cast
 
-from atticus.context.packs import build_context_pack
+from atticus.context.packs import DEFAULT_CONTEXT_TOKEN_BUDGET, build_context_pack
 from atticus.workers.result_parser import RESULT_PACKET_SCHEMA_VERSION
 
 
@@ -15,7 +15,7 @@ def build_context_diagnostics(
     conn: sqlite3.Connection,
     *,
     task_id: str,
-    token_budget: int = 32_000,
+    token_budget: int = DEFAULT_CONTEXT_TOKEN_BUDGET,
 ) -> dict[str, object]:
     task = cast(Mapping[str, object] | None, conn.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone())
     if task is None:

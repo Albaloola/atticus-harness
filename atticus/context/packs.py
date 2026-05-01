@@ -26,6 +26,7 @@ BULK_SOURCE_MATERIAL_MIN_CHARS = 80
 ARTIFACT_CONTEXT_EXCERPT_CHARS = 2_000
 FULL_TEXT_ARTIFACT_CONTEXT_CHARS = 16_000
 FULL_TEXT_ARTIFACT_TYPES = {"complaint_draft", "draft", "draft_complaint", "redacted_draft"}
+DEFAULT_CONTEXT_TOKEN_BUDGET = 64_000
 BULK_SOURCE_CONTEXT_TASK_TYPES = {
     "evidence_issue_map",
     "evidence_organization_plan",
@@ -69,7 +70,7 @@ def build_context_pack(
     *,
     task_id: str,
     pack_type: str = "work_order",
-    token_budget: int = 32_000,
+    token_budget: int = DEFAULT_CONTEXT_TOKEN_BUDGET,
     persist: bool = True,
 ) -> ContextPack:
     task = cast(Mapping[str, object] | None, cast(object, conn.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone()))

@@ -73,7 +73,11 @@ CREATE TABLE IF NOT EXISTS runs (
   reason TEXT NOT NULL DEFAULT '',
   budget_limit_usd REAL,
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  cancelled_by TEXT,
+  cancelled_at TEXT,
+  cancel_reason TEXT NOT NULL DEFAULT '',
+  live_provider_permission_revoked INTEGER NOT NULL DEFAULT 0 CHECK(live_provider_permission_revoked IN (0, 1))
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS events (
@@ -783,6 +787,55 @@ CREATE TABLE IF NOT EXISTS human_attention (
   owner TEXT NOT NULL DEFAULT 'operator',
   signature TEXT NOT NULL DEFAULT '',
   superseded_by TEXT,
+  created_at TEXT NOT NULL,
+  plain_question TEXT NOT NULL DEFAULT '',
+  why_needed TEXT NOT NULL DEFAULT '',
+  acceptable_responses TEXT NOT NULL DEFAULT '[]',
+  response_type TEXT,
+  response_statement TEXT,
+  response_artifact_id TEXT,
+  response_caveat TEXT NOT NULL DEFAULT '',
+  routed_lane TEXT NOT NULL DEFAULT 'human_request',
+  continuation_id TEXT
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS continued_commands (
+  continuation_id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL REFERENCES runs(run_id),
+  matter_scope TEXT NOT NULL,
+  command TEXT NOT NULL,
+  approval_state TEXT NOT NULL DEFAULT 'pending',
+  parent_continuation_id TEXT,
+  wake_at TEXT NOT NULL,
+  cancellation_token_checked_at TEXT,
+  owner TEXT NOT NULL DEFAULT 'scheduler',
+  provider_permission_scope TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  executed_at TEXT,
+  cancelled_at TEXT,
+  status TEXT NOT NULL DEFAULT 'scheduled',
+  result_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(result_json))
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS run_progress_signatures (
+  signature_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id TEXT NOT NULL REFERENCES runs(run_id),
+  signature TEXT NOT NULL,
+  attempt_count INTEGER NOT NULL DEFAULT 1,
+  last_distinct_progress_at TEXT,
+  stop_reason TEXT,
+  created_at TEXT NOT NULL,
+  UNIQUE(run_id, signature)
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS operator_responses (
+  response_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  attention_id INTEGER NOT NULL REFERENCES human_attention(attention_id) ON DELETE CASCADE,
+  matter_scope TEXT NOT NULL,
+  response_type TEXT NOT NULL,
+  statement TEXT NOT NULL DEFAULT '',
+  source_ids TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(source_ids)),
+  artifact_id TEXT REFERENCES artifacts(artifact_id),
   created_at TEXT NOT NULL
 ) STRICT;
 

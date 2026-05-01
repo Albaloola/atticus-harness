@@ -176,6 +176,9 @@ def build_matter_completion_report(conn: sqlite3.Connection, matter_scope: str, 
         )
     for item in attention:
         route = route_human_attention(dict(item), matter_scope)
+        evidence = dict(item, **route)
+        evidence["routed_lane"] = item.get("routed_lane", "human_request")
+        evidence["plain_question"] = item.get("plain_question", "")
         requirements.append(
             MatterCompletionRequirement(
                 requirement_id=f"human_attention:{item['attention_id']}",
@@ -187,7 +190,7 @@ def build_matter_completion_report(conn: sqlite3.Connection, matter_scope: str, 
                 blocking_reason=str(item["reason"]),
                 repair_action=route["routed_action"],
                 resume_command=route["routed_command"],
-                evidence=dict(item, **route),
+                evidence=evidence,
             )
         )
 
@@ -420,13 +423,19 @@ def next_resume_action(conn: sqlite3.Connection, matter_scope: str) -> dict[str,
 
     if report.missing_certifications:
         certification = report.missing_certifications[0]
+        # Check if coordinator planning would find existing work
+        has_existing_work = _has_existing_certification_work(conn, matter_scope, certification)
         return {
-            "type": "missing_certification",
-            "owner": "orchestrator",
+            "type": "supervisor_tick" if has_existing_work else "missing_certification",
+            "owner": "scheduler" if has_existing_work else "orchestrator",
             "certification": certification,
-            "reason": f"required certification is missing: {certification}",
+            "reason": f"existing work found for {certification}, run scheduler" if has_existing_work else f"required certification is missing: {certification}",
             "after": _after_missing_certification(certification),
-            "resume_command": f"python -m atticus.cli coordinator plan --db DB --matter {matter_scope} --goal \"create missing {certification} work\"",
+            "resume_command": f"ATTICUS_ENABLE_LIVE_OPENROUTER=1 python -m atticus.cli run-free-loop --db DB --matter {matter_scope} --output-dir OUT --capacity 15 --max-ticks 1 --runtime openrouter --allow-live" if has_existing_work else f"python -m atticus.cli coordinator plan --db DB --matter {matter_scope} --goal \"create missing {certification} work\"",
+            "stale_action": has_existing_work,
+            "supersedes": f"missing_certification:{certification}",
+            "blocked_by_human": False,
+            "blocked_by_provider": False,
         }
 
     if report.blocked_count:
@@ -452,61 +461,123 @@ def next_resume_action(conn: sqlite3.Connection, matter_scope: str) -> dict[str,
         }
 
     if report.unresolved_human_attention:
-        item = report.unresolved_human_attention[0]
-        route = route_human_attention(dict(item), matter_scope)
-        routed_owner = route["routed_owner"]
-        # Route non-blocking attention items to their correct action types
-        if routed_owner == "scheduler":
-            return {
-                "type": "supervisor_tick",
-                "owner": "scheduler",
-                "reason": f"scheduler-routed attention: {route['routed_action']}",
-                "attention_id": item["attention_id"],
-                "classification": route["classification"],
-                "routed_action": route["routed_action"],
-                "resume_command": route["routed_command"],
+        # Separate genuine human requests from internal routed items
+        human_attention_items = list(report.unresolved_human_attention)
+        human_requests = [a for a in human_attention_items if str(a.get("routed_lane", "human_request")) == "human_request"]
+        internal_items = [a for a in human_attention_items if str(a.get("routed_lane", "human_request")) != "human_request"]
+
+        # Process internal items first (non-blocking for operator)
+        if internal_items:
+            item = internal_items[0]
+            route = route_human_attention(dict(item), matter_scope)
+            routed_owner = route["routed_owner"]
+            if routed_owner == "scheduler":
+                return {
+                    "type": "supervisor_tick",
+                    "owner": "scheduler",
+                    "reason": f"scheduler-routed attention: {route['routed_action']}",
+                    "attention_id": item["attention_id"],
+                    "classification": route["classification"],
+                    "routed_action": route["routed_action"],
+                    "resume_command": route["routed_command"],
+                    "routed_lane": item.get("routed_lane", ""),
+                    "stale_action": False,
+                    "supersedes": "",
+                }
+            if routed_owner == "orchestrator":
+                return {
+                    "type": "orchestrator_repair",
+                    "owner": "orchestrator",
+                    "reason": f"orchestrator-routed attention: {route['routed_action']}",
+                    "attention_id": item["attention_id"],
+                    "classification": route["classification"],
+                    "routed_action": route["routed_action"],
+                    "resume_command": route["routed_command"],
+                    "routed_lane": item.get("routed_lane", ""),
+                    "stale_action": False,
+                    "supersedes": "",
+                }
+            if routed_owner == "provider_control_plane":
+                return {
+                    "type": "provider_control_plane",
+                    "owner": "provider",
+                    "reason": f"provider-routed attention: {route['routed_action']}",
+                    "attention_id": item["attention_id"],
+                    "classification": route["classification"],
+                    "routed_action": route["routed_action"],
+                    "resume_command": route["routed_command"],
+                    "routed_lane": item.get("routed_lane", ""),
+                    "stale_action": False,
+                    "supersedes": "",
+                }
+            if routed_owner == "reducer":
+                return {
+                    "type": "manual_reducer_review",
+                    "owner": "reducer",
+                    "reason": f"reducer-routed attention: {route['routed_action']}",
+                    "attention_id": item["attention_id"],
+                    "candidate_id": str(item.get("target_id") or ""),
+                    "classification": route["classification"],
+                    "routed_action": route["routed_action"],
+                    "resume_command": route["routed_command"],
+                    "routed_lane": item.get("routed_lane", ""),
+                    "stale_action": False,
+                    "supersedes": "",
+                }
+
+        # Process genuine human requests
+        if human_requests:
+            item = human_requests[0]
+            route = route_human_attention(dict(item), matter_scope)
+            routed_owner = route.get("routed_owner", "operator")
+
+            # Build the structured human request packet
+            request_packet = {
+                "request_id": f"human-{item.get('attention_id', '')}",
+                "attention_id": item.get("attention_id", 0),
+                "matter": matter_scope,
+                "target_type": item.get("target_type", "manual"),
+                "target_id": item.get("target_id", ""),
+                "title": item.get("reason", ""),
+                "plain_question": item.get("plain_question", str(item.get("reason", ""))),
+                "why_needed": item.get("why_needed", ""),
+                "related_sources": [],
+                "acceptable_responses": item.get("acceptable_responses", []),
             }
-        if routed_owner == "orchestrator":
+
+            if routed_owner == "operator":
+                return {
+                    "type": "human_attention",
+                    "owner": "operator",
+                    "attention_id": item.get("attention_id", 0),
+                    "reason": item.get("reason", ""),
+                    "classification": route.get("classification", "unknown"),
+                    "routed_action": route.get("routed_action", ""),
+                    "resume_command": route.get("routed_command", ""),
+                    "routed_lane": item.get("routed_lane", "human_request"),
+                    "human_request": request_packet,
+                    "stale_action": False,
+                    "supersedes": "",
+                    "blocked_by_human": True,
+                    "blocked_by_provider": False,
+                }
+            # If routed to non-operator but it's a human_request, still surface it to operator
+            # because human_request lane means it needs human attention
             return {
-                "type": "orchestrator_repair",
-                "owner": "orchestrator",
-                "reason": f"orchestrator-routed attention: {route['routed_action']}",
-                "attention_id": item["attention_id"],
-                "classification": route["classification"],
-                "routed_action": route["routed_action"],
-                "resume_command": route["routed_command"],
+                "type": "human_attention",
+                "owner": "operator",
+                "attention_id": item.get("attention_id", 0),
+                "reason": item.get("reason", ""),
+                "classification": route.get("classification", "unknown"),
+                "routed_action": route.get("routed_action", ""),
+                "resume_command": route.get("routed_command", ""),
+                "routed_lane": item.get("routed_lane", "human_request"),
+                "human_request": request_packet,
+                "stale_action": False,
+                "supersedes": "",
+                "blocked_by_human": True,
+                "blocked_by_provider": False,
             }
-        if routed_owner == "provider_control_plane":
-            return {
-                "type": "provider_control_plane",
-                "owner": "provider",
-                "reason": f"provider-routed attention: {route['routed_action']}",
-                "attention_id": item["attention_id"],
-                "classification": route["classification"],
-                "routed_action": route["routed_action"],
-                "resume_command": route["routed_command"],
-            }
-        if routed_owner == "reducer":
-            return {
-                "type": "manual_reducer_review",
-                "owner": "reducer",
-                "reason": f"reducer-routed attention: {route['routed_action']}",
-                "attention_id": item["attention_id"],
-                "candidate_id": str(item.get("target_id") or ""),
-                "classification": route["classification"],
-                "routed_action": route["routed_action"],
-                "resume_command": route["routed_command"],
-            }
-        # Operator-owned — needs Omer
-        return {
-            "type": "human_attention",
-            "owner": "operator",
-            "attention_id": item["attention_id"],
-            "reason": item["reason"],
-            "classification": route["classification"],
-            "routed_action": route["routed_action"],
-            "resume_command": route["routed_command"],
-        }
 
     return {
         "type": "unknown_incomplete",
@@ -594,7 +665,10 @@ def _open_human_attention(conn: sqlite3.Connection, matter_scope: str, *, curren
     rows = conn.execute(
         f"""
         SELECT attention_id, matter_scope, target_type, target_id, severity, reason, status,
-               owner, signature, superseded_by, created_at
+               owner, signature, superseded_by, created_at,
+               plain_question, why_needed, acceptable_responses, response_type,
+               response_statement, response_caveat,
+               COALESCE(routed_lane, 'human_request') AS routed_lane
         FROM human_attention
         WHERE matter_scope = ? AND status = 'open' {'AND superseded_by IS NULL' if current_only else ''}
         ORDER BY CASE severity WHEN 'blocker' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, attention_id DESC
@@ -648,6 +722,12 @@ def triage_human_attention(item: dict[str, object]) -> str:
     if "operator" in reason or "human" in reason or "user intervention" in reason:
         return "requires_operator"
 
+    # More specific citation/proof checks must come before stale_quarantined_output
+    if "proof_citation" in reason or "invalid citation" in reason or "impermissible citation" in reason or "non-proof material" in reason or ("memory" in reason and "citation" in reason):
+        return "proof_citation_repair"
+    if "quarantined" in reason and "citation" in reason:
+        return "proof_citation_repair"
+
     if "validation failed" in reason or "validation_gate" in reason:
         if "final_quality_gate" in reason or "extraction_coverage" in reason or "privacy_redaction" in reason or "citation" in reason:
             return "stale_validation_failure"
@@ -667,6 +747,9 @@ def triage_human_attention(item: dict[str, object]) -> str:
 
     if "supervisor made no progress" in reason or "no progress" in reason:
         return "stale_supervisor_no_progress"
+
+    if "validation_failure" in reason or "gate failed" in reason:
+        return "validation_failure"
 
     if "final quality gate" in reason or "final_quality_gate" in reason:
         return "requires_orchestrator"
@@ -735,6 +818,16 @@ ROUTE_MAP: dict[str, dict[str, str]] = {
         "routed_action": "ask Omer specific question",
         "routed_command_template": "python -m atticus.cli human-attention --db DB --matter MATTER",
     },
+    "proof_citation_repair": {
+        "routed_owner": "scheduler",
+        "routed_action": "create proof-citation repair task",
+        "routed_command_template": "python -m atticus.cli repair-tick --db DB --matter MATTER --write --json",
+    },
+    "validation_failure": {
+        "routed_owner": "scheduler",
+        "routed_action": "create validation repair task",
+        "routed_command_template": "python -m atticus.cli repair-tick --db DB --matter MATTER --write --json",
+    },
     "unknown": {
         "routed_owner": "operator",
         "routed_action": "classify manually",
@@ -757,6 +850,11 @@ def route_human_attention(item: dict[str, object], matter_scope: str = "") -> di
         "routed_command": route["routed_command_template"]
             .replace("MATTER", matter_scope),
     }
+    routed_lane = item.get("routed_lane", "human_request") if isinstance(item, Mapping) else "human_request"
+    result["routed_lane"] = str(routed_lane)
+    plain_question = item.get("plain_question", "") if isinstance(item, Mapping) else ""
+    if plain_question:
+        result["plain_question"] = str(plain_question)
     attention_id = item.get("attention_id")
     if attention_id is not None:
         result["attention_id"] = str(attention_id)
@@ -974,6 +1072,25 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, object]:
 
 def _json(value: object) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
+def _has_existing_certification_work(conn: sqlite3.Connection, matter_scope: str, certification: str) -> bool:
+    """Check if there are already tasks created for a certification."""
+    task_type_map = {
+        "authority_map": "authority_map",
+        "draft_preparation": "draft_preparation",
+        "hostile_review": "hostile_opponent_review",
+        "citation_audit": "citation_audit",
+        "final_quality_gate": "final_quality_gate",
+    }
+    task_type = task_type_map.get(certification, certification)
+    row = conn.execute(
+        """SELECT 1 FROM tasks
+           WHERE matter_scope=? AND task_type=? AND status IN ('queued', 'ready', 'leased', 'running', 'blocked', 'reducer_pending')
+           LIMIT 1""",
+        (matter_scope, task_type),
+    ).fetchone()
+    return row is not None
 
 
 def _reducer_review_id_for_next_action(conn: sqlite3.Connection, matter_scope: str, next_action: Mapping[str, object]) -> str:

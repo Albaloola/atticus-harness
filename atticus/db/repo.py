@@ -150,6 +150,10 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
         "runs": {
             "matter_scope": "TEXT NOT NULL DEFAULT 'atticus'",
             "budget_limit_usd": "REAL",
+            "cancelled_by": "TEXT",
+            "cancelled_at": "TEXT",
+            "cancel_reason": "TEXT NOT NULL DEFAULT ''",
+            "live_provider_permission_revoked": "INTEGER NOT NULL DEFAULT 0",
         },
         "sources": {
             "chain_of_custody_json": "TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(chain_of_custody_json))",
@@ -199,6 +203,15 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
             "owner": "TEXT NOT NULL DEFAULT 'operator'",
             "signature": "TEXT NOT NULL DEFAULT ''",
             "superseded_by": "TEXT",
+            "plain_question": "TEXT NOT NULL DEFAULT ''",
+            "why_needed": "TEXT NOT NULL DEFAULT ''",
+            "acceptable_responses": "TEXT NOT NULL DEFAULT '[]'",
+            "response_type": "TEXT",
+            "response_statement": "TEXT",
+            "response_artifact_id": "TEXT",
+            "response_caveat": "TEXT NOT NULL DEFAULT ''",
+            "routed_lane": "TEXT NOT NULL DEFAULT 'human_request'",
+            "continuation_id": "TEXT",
         },
         "authority_verifications": {
             "jurisdiction_status": "TEXT NOT NULL DEFAULT ''",
@@ -670,7 +683,11 @@ def add_event(conn: sqlite3.Connection, event: Event) -> str:
     previous = conn.execute(
         "SELECT event_hash FROM events ORDER BY event_id DESC LIMIT 1"
     ).fetchone()
-    previous_hash = str(previous["event_hash"]) if previous else ""
+    try:
+        previous_hash = str(previous["event_hash"]) if previous else ""
+    except (TypeError, IndexError):
+        # Handle tuple-factory connections where previous is a tuple
+        previous_hash = str(previous[0]) if previous else ""
     event_hash = event.hash(previous_hash)
     _ = conn.execute(
         """
@@ -1619,6 +1636,7 @@ def record_human_attention(
     owner: str = "operator",
     signature: str | None = None,
     superseded_by: str | None = None,
+    routed_lane: str | None = None,
 ) -> int:
     target_matter_scope = _matter_scope_for_target(conn, target_type=target_type, target_id=target_id)
     if matter_scope is not None and target_matter_scope is not None and matter_scope != target_matter_scope:
@@ -1631,13 +1649,34 @@ def record_human_attention(
         severity=severity,
         reason=reason,
     )
+    if routed_lane is None:
+        from atticus.status.completion import triage_human_attention
+        classification = triage_human_attention({"reason": reason, "status": status})
+        lane_map = {
+            "requires_operator": "human_request",
+            "requires_orchestrator": "orchestrator_attention",
+            "requires_provider": "provider_control_plane",
+            "requires_reducer": "reducer_review",
+            "stale_superseded": "orchestrator_attention",
+            "stale_local_stub": "scheduler_action",
+            "stale_transient_network": "provider_control_plane",
+            "stale_validation_failure": "scheduler_action",
+            "stale_quarantined_output": "proof_citation_repair",
+            "stale_proposed_task_rejection": "orchestrator_attention",
+            "stale_repair_loop_noise": "orchestrator_attention",
+            "stale_supervisor_no_progress": "scheduler_action",
+            "proof_citation_repair": "proof_citation_repair",
+            "validation_failure": "validation_failure",
+            "unknown": "human_request",
+        }
+        routed_lane = lane_map.get(classification, "human_request")
     cur = conn.execute(
         """
         INSERT INTO human_attention(
           matter_scope, target_type, target_id, severity, reason, status,
-          owner, signature, superseded_by, created_at
+          owner, signature, superseded_by, routed_lane, created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             resolved_matter_scope,
@@ -1649,6 +1688,7 @@ def record_human_attention(
             owner,
             resolved_signature,
             superseded_by,
+            routed_lane,
             utc_now(),
         ),
     )
@@ -1669,6 +1709,7 @@ def record_human_attention_once(
     matter_scope: str | None = None,
     owner: str = "operator",
     signature: str | None = None,
+    routed_lane: str | None = None,
 ) -> int | None:
     target_matter_scope = _matter_scope_for_target(conn, target_type=target_type, target_id=target_id)
     if matter_scope is not None and target_matter_scope is not None and matter_scope != target_matter_scope:
@@ -1703,6 +1744,7 @@ def record_human_attention_once(
         matter_scope=resolved_matter_scope,
         owner=owner,
         signature=resolved_signature,
+        routed_lane=routed_lane,
     )
 
 
@@ -1945,6 +1987,24 @@ def resolve_local_stub_blockers_after_live_approval(
                 "resolution_source": resolution_source,
             },
         )
+
+    task_rows = conn.execute(
+        """SELECT task_id FROM tasks
+           WHERE matter_scope=? AND status='blocked'
+           AND (blocked_reasons_json LIKE '%local_stub%' OR blocked_reasons_json LIKE '%local/no-live%')""",
+        (matter_scope,),
+    ).fetchall()
+    for task_row in task_rows:
+        task_id = task_row["task_id"]
+        try:
+            reasons = json.loads(conn.execute("SELECT blocked_reasons_json FROM tasks WHERE task_id=?", (task_id,)).fetchone()["blocked_reasons_json"])
+            filtered = [r for r in reasons if "local_stub" not in r and "local/no-live" not in r]
+            if not filtered:
+                conn.execute("UPDATE tasks SET status='queued', blocked_reasons_json='[]' WHERE task_id=?", (task_id,))
+            else:
+                conn.execute("UPDATE tasks SET blocked_reasons_json=? WHERE task_id=?", (json.dumps(filtered), task_id))
+        except Exception:
+            pass
 
     still_blocked = conn.execute(
         """
@@ -3740,3 +3800,259 @@ def fetch_one(conn: sqlite3.Connection, query: str, params: tuple[object, ...] =
 
 def fetch_all(conn: sqlite3.Connection, query: str, params: tuple[object, ...] = ()) -> list[sqlite3.Row]:
     return list(conn.execute(query, params))
+
+
+def record_human_request(
+    conn: sqlite3.Connection,
+    *,
+    matter_scope: str,
+    target_type: str = "manual",
+    target_id: str = "manual",
+    severity: str = "blocker",
+    reason: str,
+    plain_question: str = "",
+    why_needed: str = "",
+    acceptable_responses: Sequence[str] = (),
+    routed_lane: str = "human_request",
+    owner: str = "operator",
+) -> int:
+    attention_id = record_human_attention(
+        conn,
+        target_type=target_type,
+        target_id=target_id,
+        severity=severity,
+        reason=reason,
+        status="open",
+        matter_scope=matter_scope,
+        owner=owner,
+    )
+    conn.execute(
+        """UPDATE human_attention SET plain_question=?, why_needed=?, acceptable_responses=?, routed_lane=?
+           WHERE attention_id=?""",
+        (plain_question, why_needed, json.dumps(list(acceptable_responses)), routed_lane, attention_id),
+    )
+    return attention_id
+
+
+def record_human_response(
+    conn: sqlite3.Connection,
+    *,
+    attention_id: int,
+    response_type: str,
+    statement: str = "",
+    source_ids: Sequence[str] = (),
+    artifact_id: str | None = None,
+) -> dict[str, object]:
+    matter = conn.execute("SELECT matter_scope FROM human_attention WHERE attention_id=?", (attention_id,)).fetchone()
+    if not matter:
+        raise ValueError(f"attention_id not found: {attention_id}")
+    matter_scope = str(matter["matter_scope"])
+
+    response_id: int = conn.execute(
+        """INSERT INTO operator_responses (attention_id, matter_scope, response_type, statement, source_ids, artifact_id, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (attention_id, matter_scope, response_type, statement, json.dumps(list(source_ids)), artifact_id, utc_now()),
+    ).lastrowid  # type: ignore
+
+    caveat = ""
+    if response_type == "provided_best_available":
+        caveat = "Operator provided best available copy; use with quality caveat"
+    elif response_type == "proceed_without_source":
+        caveat = "Operator directed proceed without this source; note caveat in findings"
+    elif response_type == "declined_unavailable":
+        caveat = "Operator confirmed source unavailable; proceed without"
+    elif response_type == "authorised_existing":
+        caveat = "Operator authorised use of existing/imperfect source"
+
+    conn.execute(
+        """UPDATE human_attention SET response_type=?, response_statement=?, response_artifact_id=?,
+           response_caveat=?, status='closed'
+           WHERE attention_id=?""",
+        (response_type, statement, artifact_id, caveat, attention_id),
+    )
+
+    emit_event(conn, "human_attention.response_recorded", matter_scope=matter_scope, payload={
+        "attention_id": attention_id,
+        "response_id": response_id,
+        "response_type": response_type,
+    })
+
+    return {"response_id": response_id, "attention_id": attention_id, "matter_scope": matter_scope}
+
+
+def cancel_run(
+    conn: sqlite3.Connection,
+    *,
+    run_id: str,
+    cancelled_by: str = "operator",
+    cancel_reason: str = "",
+    revoke_live: bool = False,
+) -> dict[str, object]:
+    now = utc_now()
+    conn.execute(
+        """UPDATE runs SET state='cancelled', cancelled_by=?, cancelled_at=?, cancel_reason=?,
+           live_provider_permission_revoked=?, updated_at=?
+           WHERE run_id=?""",
+        (cancelled_by, now, cancel_reason, 1 if revoke_live else 0, now, run_id),
+    )
+    changes = conn.total_changes
+    emit_event(conn, "run.cancelled", matter_scope="", payload={
+        "run_id": run_id, "cancelled_by": cancelled_by, "cancel_reason": cancel_reason, "revoked_live": revoke_live,
+    })
+    return {"run_id": run_id, "cancelled": changes > 0, "cancelled_by": cancelled_by, "cancelled_at": now}
+
+
+def register_continuation(
+    conn: sqlite3.Connection,
+    *,
+    run_id: str,
+    matter_scope: str,
+    command: str,
+    wake_at: str,
+    owner: str = "scheduler",
+    provider_permission_scope: str = "",
+    parent_continuation_id: str | None = None,
+) -> str:
+    continuation_id = f"cnt-{uuid4().hex[:12]}"
+    conn.execute(
+        """INSERT INTO continued_commands (continuation_id, run_id, matter_scope, command, approval_state,
+           parent_continuation_id, wake_at, owner, provider_permission_scope, created_at, status)
+           VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, 'scheduled')""",
+        (continuation_id, run_id, matter_scope, command, parent_continuation_id, wake_at, owner, provider_permission_scope, utc_now()),
+    )
+    return continuation_id
+
+
+def cancel_continuation(conn: sqlite3.Connection, *, continuation_id: str) -> bool:
+    now = utc_now()
+    cur = conn.execute(
+        "UPDATE continued_commands SET approval_state='cancelled', status='cancelled', cancelled_at=? WHERE continuation_id=? AND status='scheduled'",
+        (now, continuation_id),
+    )
+    return cur.rowcount > 0
+
+
+def cancel_continuations_for_run(conn: sqlite3.Connection, *, run_id: str) -> list[str]:
+    rows = conn.execute(
+        "SELECT continuation_id FROM continued_commands WHERE run_id=? AND status='scheduled'",
+        (run_id,),
+    ).fetchall()
+    ids = [str(r["continuation_id"]) for r in rows]
+    for cid in ids:
+        cancel_continuation(conn, continuation_id=cid)
+    return ids
+
+
+def mark_attention_handled(
+    conn: sqlite3.Connection,
+    *,
+    attention_id: int,
+    superseded_by: str | None = None,
+) -> bool:
+    cur = conn.execute(
+        "UPDATE human_attention SET status='closed', superseded_by=? WHERE attention_id=? AND status='open'",
+        (superseded_by, attention_id),
+    )
+    return cur.rowcount > 0
+
+
+def get_human_request(conn: sqlite3.Connection, *, attention_id: int) -> dict[str, object] | None:
+    row = conn.execute(
+        """SELECT attention_id, matter_scope, target_type, target_id, severity, reason, status,
+                  owner, plain_question, why_needed, acceptable_responses, response_type,
+                  response_statement, response_caveat, routed_lane, superseded_by, created_at
+           FROM human_attention WHERE attention_id=?""",
+        (attention_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    result = dict(row)
+    if result.get("acceptable_responses"):
+        try:
+            result["acceptable_responses"] = json.loads(str(result["acceptable_responses"]))
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return result
+
+
+def get_human_requests_for_matter(
+    conn: sqlite3.Connection,
+    *,
+    matter_scope: str,
+    current_only: bool = True,
+    lane: str = "human_request",
+    status: str = "open",
+) -> list[dict[str, object]]:
+    extra = ""
+    params: list[object] = [matter_scope, lane, status]
+    if current_only:
+        extra = "AND superseded_by IS NULL"
+    rows = conn.execute(
+        f"""SELECT attention_id, matter_scope, target_type, target_id, severity, reason, status,
+                   owner, plain_question, why_needed, acceptable_responses, response_type,
+                   response_statement, response_caveat, routed_lane, superseded_by, created_at
+            FROM human_attention
+            WHERE matter_scope=? AND routed_lane=? AND status=? {extra}
+            ORDER BY attention_id DESC LIMIT 50""",
+        params,
+    ).fetchall()
+    result = []
+    for row in rows:
+        d = dict(row)
+        if d.get("acceptable_responses"):
+            try:
+                d["acceptable_responses"] = json.loads(str(d["acceptable_responses"]))
+            except (json.JSONDecodeError, TypeError):
+                pass
+        result.append(d)
+    return result
+
+
+def record_progress_signature(
+    conn: sqlite3.Connection,
+    *,
+    run_id: str,
+    signature: str,
+    last_distinct_progress_at: str | None = None,
+    stop_reason: str | None = None,
+) -> dict[str, object]:
+    existing = conn.execute(
+        "SELECT signature_id, attempt_count FROM run_progress_signatures WHERE run_id=? AND signature=?",
+        (run_id, signature),
+    ).fetchone()
+    now = utc_now()
+    if existing:
+        new_count = int(existing["attempt_count"]) + 1
+        conn.execute(
+            "UPDATE run_progress_signatures SET attempt_count=?, last_distinct_progress_at=COALESCE(?, last_distinct_progress_at), stop_reason=? WHERE signature_id=?",
+            (new_count, last_distinct_progress_at, stop_reason, existing["signature_id"]),
+        )
+        return {"signature_id": existing["signature_id"], "attempt_count": new_count, "new": False}
+    else:
+        conn.execute(
+            "INSERT INTO run_progress_signatures (run_id, signature, attempt_count, last_distinct_progress_at, stop_reason, created_at) VALUES (?, ?, 1, ?, ?, ?)",
+            (run_id, signature, last_distinct_progress_at, stop_reason, now),
+        )
+        return {"signature": signature, "attempt_count": 1, "new": True}
+
+
+def check_run_cancelled(conn: sqlite3.Connection, *, run_id: str) -> dict[str, object] | None:
+    row = conn.execute(
+        "SELECT state, cancelled_by, cancelled_at, cancel_reason, live_provider_permission_revoked FROM runs WHERE run_id=?",
+        (run_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    if str(row["state"]) != "cancelled":
+        return None
+    return dict(row)
+
+
+def check_run_live_allowed(conn: sqlite3.Connection, *, run_id: str) -> bool:
+    row = conn.execute(
+        "SELECT state, live_provider_permission_revoked FROM runs WHERE run_id=?",
+        (run_id,),
+    ).fetchone()
+    if row is None:
+        return False
+    return str(row["state"]) != "cancelled" and int(row["live_provider_permission_revoked"]) == 0

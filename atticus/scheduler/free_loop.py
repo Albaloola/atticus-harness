@@ -251,6 +251,24 @@ def run_free_loop_once(
         },
     )
     _commit_progress(conn)
+
+    if matter_scope:
+        try:
+            from atticus.status.human_attention_cleanup import plan_human_attention_cleanup
+
+            cleanup = plan_human_attention_cleanup(
+                conn,
+                matter_scope=matter_scope,
+                write=True,
+                resolution_source="free_loop_auto_cleanup",
+            )
+            result["auto_cleanup"] = {
+                "superseded": cleanup.get("superseded", 0),
+                "action_count": len(cleanup.get("actions", [])),
+            }
+        except Exception:
+            pass
+
     return result
 
 
@@ -269,8 +287,44 @@ def run_free_loop(
 ) -> dict[str, object]:
     """Run a bounded autonomous free loop and return per-tick summaries."""
 
+    if max_ticks <= 0:
+        return {"ok": False, "ticks": [], "tick_count": 0, "stopped_by": "max_ticks_zero"}
+
     ticks: list[dict[str, object]] = []
     for _ in range(max(0, max_ticks)):
+        run_id = _detect_active_run_id(conn, matter_scope)
+        if run_id:
+            cancelled = repo.check_run_cancelled(conn, run_id=run_id)
+            if cancelled is not None:
+                return {
+                    "ok": False,
+                    "ticks": ticks,
+                    "tick_count": len(ticks),
+                    "stopped_by": "run_cancelled",
+                    "cancel_reason": str(cancelled.get("cancel_reason", "")),
+                    "cancelled_by": str(cancelled.get("cancelled_by", "")),
+                    "cancelled_at": str(cancelled.get("cancelled_at", "")),
+                }
+
+        if matter_scope:
+            spent = repo.budget_spent(conn, scope_type="matter", scope_id=matter_scope)
+            budget_row = conn.execute(
+                "SELECT limit_usd, hard_stop FROM budgets WHERE scope_type='matter' AND scope_id=?",
+                (matter_scope,),
+            ).fetchone()
+            if budget_row is not None and budget_row["hard_stop"]:
+                limit = float(budget_row["limit_usd"])
+                if spent >= limit:
+                    return {
+                        "ok": False,
+                        "ticks": ticks,
+                        "tick_count": len(ticks),
+                        "stopped_by": "budget_ceiling",
+                        "reason": f"spent ${spent:.2f} >= limit ${limit:.2f}",
+                        "spent": spent,
+                        "limit": limit,
+                    }
+
         tick = run_free_loop_once(
             conn,
             output_dir=output_dir,
@@ -284,6 +338,34 @@ def run_free_loop(
             matter_scope=matter_scope,
         )
         ticks.append(tick)
+
+        if matter_scope and run_id:
+            signature = _build_progress_signature(conn, matter_scope, tick)
+            prog_result = repo.record_progress_signature(
+                conn,
+                run_id=run_id,
+                signature=signature,
+                last_distinct_progress_at=utc_now() if _tick_made_progress(tick) else None,
+            )
+            if prog_result.get("attempt_count", 1) >= 3:
+                stop_reason = f"non_progress_loop: {signature} repeated {prog_result['attempt_count']} times"
+                repo.record_progress_signature(
+                    conn,
+                    run_id=run_id,
+                    signature=signature,
+                    stop_reason=stop_reason,
+                )
+                return {
+                    "ok": False,
+                    "ticks": ticks,
+                    "tick_count": len(ticks),
+                    "stopped_by": "non_progress_loop",
+                    "stop_reason": stop_reason,
+                    "loop_signature": signature,
+                    "same_signature_count": prog_result["attempt_count"],
+                    "last_distinct_progress_at": prog_result.get("last_distinct_progress_at"),
+                }
+
         if _matter_complete(conn, matter_scope):
             break
         if not _tick_made_progress(tick):
@@ -867,3 +949,34 @@ def _safe_next_action(conn: sqlite3.Connection, matter_scope: str | None) -> dic
         return next_resume_action(conn, matter_scope)
     except Exception:
         return {}
+
+
+def _detect_active_run_id(conn: sqlite3.Connection, matter_scope: str | None) -> str | None:
+    if not matter_scope:
+        return None
+    row = conn.execute(
+        "SELECT run_id FROM runs WHERE matter_scope=? AND state IN ('running', 'active', 'initialized') ORDER BY created_at DESC LIMIT 1",
+        (matter_scope,),
+    ).fetchone()
+    return str(row["run_id"]) if row else None
+
+
+def _build_progress_signature(conn: sqlite3.Connection, matter_scope: str, tick: dict[str, object]) -> str:
+    parts = []
+    try:
+        from atticus.status.completion import build_matter_completion_report, next_resume_action
+
+        report = build_matter_completion_report(conn, matter_scope)
+        next_action = next_resume_action(conn, matter_scope)
+        parts.append(f"done:{report.done}")
+        parts.append(f"blocked:{report.blocked}")
+        parts.append(f"runnable:{report.runnable_count}")
+        parts.append(f"reducer:{report.reducer_pending_count}")
+        parts.append(f"missing:{','.join(report.missing_certifications) if report.missing_certifications else 'none'}")
+        parts.append(f"next_type:{next_action.get('type', 'unknown')}")
+        parts.append(f"next_owner:{next_action.get('owner', 'unknown')}")
+    except Exception:
+        parts.append("health_error")
+    made_progress = _tick_made_progress(tick)
+    parts.append(f"progress:{made_progress}")
+    return "|".join(parts)

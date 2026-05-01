@@ -30,6 +30,7 @@ from atticus.agents.maintenance import maintenance_report, maintenance_status, m
 from atticus.agents.repair_executor import execute_repair_plan, repair_tick_payload
 from atticus.config import DEFAULT_DB_PATH
 from atticus.context.diagnostics import build_context_diagnostics
+from atticus.context.packs import DEFAULT_CONTEXT_TOKEN_BUDGET
 from atticus.core.events import utc_now
 from atticus.core.matters import authorized_matter_from_env, require_matter_access
 from atticus.core.policies import TaskStatus
@@ -48,6 +49,7 @@ from atticus.memory.extraction import extract_memory_candidates
 from atticus.migration.import_old_run import import_candidates
 from atticus.migration.reconcile import reconcile_foundation
 from atticus.migration.report import build_migration_report
+from atticus.operator_control import build_operator_control_panel, render_operator_control_panel
 from atticus.providers.budget import budget_status, check_budget
 from atticus.providers.live_readiness import LIVE_ENABLE_ENV, probe_live_openrouter
 from atticus.providers.model_policy import (
@@ -216,6 +218,17 @@ class CliArgs(Protocol):
     quote: str
     explain_breaks: bool
     group_by_policy: bool
+    attention_id: int | None
+    response_type: str
+    statement: str
+    kill_descendants: bool
+    revoke_live: bool
+    run_id: str
+    response_action: str | None
+    run_action: str | None
+    file: list[str] | None
+    lane: str
+    current_only: bool
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -444,7 +457,7 @@ def build_parser() -> argparse.ArgumentParser:
     context = sub.add_parser("context", help="read-only context pack diagnostics for legal audit")
     _ = context.add_argument("--db", required=True)
     _ = context.add_argument("--task-id", required=True)
-    _ = context.add_argument("--token-budget", type=int, default=32_000)
+    _ = context.add_argument("--token-budget", type=int, default=DEFAULT_CONTEXT_TOKEN_BUDGET)
     _ = context.add_argument("--json", dest="json_output", action="store_true")
     _ = context.add_argument("--explain", action="store_true")
 
@@ -696,6 +709,66 @@ def build_parser() -> argparse.ArgumentParser:
     _ = doctor.add_argument("--write", action="store_true", help="allow doctor repair to write")
     _ = doctor.add_argument("--json", dest="json_output", action="store_true")
 
+    control_panel = sub.add_parser(
+        "control-panel",
+        aliases=["panel"],
+        help="human-facing matter control panel and agent handoff packet",
+        description="Show one readable matter status, the next safe harness action, and the exact question an agent must ask the operator if human input is genuinely needed.",
+    )
+    _ = control_panel.add_argument("action", choices=["status", "agent-packet"])
+    _ = control_panel.add_argument("--db", required=True)
+    _ = control_panel.add_argument("--matter", required=True)
+    _ = control_panel.add_argument("--output-dir", default="OUT", help="output directory used when materialising resume commands")
+    _ = control_panel.add_argument("--live-approved", action="store_true", help="accepted for backwards compatibility; live provider work is not treated as a separate human blocker by the control panel")
+    _ = control_panel.add_argument("--format", choices=["human", "json"], default="human")
+    _ = control_panel.add_argument("--json", dest="json_output", action="store_true")
+
+    hr_parser = sub.add_parser("human-request", help="show structured human-facing requests from the harness")
+    _ = hr_parser.add_argument("action", choices=["show", "next"])
+    _ = hr_parser.add_argument("--db", required=True)
+    _ = hr_parser.add_argument("--matter", required=True)
+    _ = hr_parser.add_argument("--attention-id", type=int, help="show a specific request by ID")
+    _ = hr_parser.add_argument("--current-only", action="store_true", default=True, help="show only current (non-superseded) items")
+    _ = hr_parser.add_argument("--lane", default="human_request", help="routed lane filter (default: human_request)")
+    _ = hr_parser.add_argument("--format", choices=["human", "json"], default="human", help="output format")
+    _ = hr_parser.add_argument("--json", dest="json_output", action="store_true", help="always output JSON")
+
+    hresp_parser = sub.add_parser("human-response", help="submit operator response to a harness request")
+    resp_sub = hresp_parser.add_subparsers(dest="response_action", required=True)
+    submit_parser = resp_sub.add_parser("submit", help="submit a response with files and statement")
+    _ = submit_parser.add_argument("--db", required=True)
+    _ = submit_parser.add_argument("--matter", required=True)
+    _ = submit_parser.add_argument("--attention-id", type=int, required=True)
+    _ = submit_parser.add_argument("--response-type", required=True, choices=[
+        "provided_best_available", "authorised_existing", "proceed_without_source",
+        "declined_unavailable", "proceed_with_caveat", "upload_document"
+    ])
+    _ = submit_parser.add_argument("--file", action="append", default=[], help="file path(s) to register as supplemental sources; repeatable")
+    _ = submit_parser.add_argument("--statement", default="", help="operator statement explaining the response")
+    _ = submit_parser.add_argument("--write", action="store_true", help="actually write the response; dry-run is default")
+    _ = submit_parser.add_argument("--json", dest="json_output", action="store_true")
+
+    run_parser = sub.add_parser("run", help="manage harness runs: stop")
+    run_sub = run_parser.add_subparsers(dest="run_action", required=True)
+    stop_parser = run_sub.add_parser("stop", help="cancel a run with descendant/lease/live-provider cascade")
+    _ = stop_parser.add_argument("--db", required=True)
+    _ = stop_parser.add_argument("--run-id", required=True, help="run ID to cancel")
+    _ = stop_parser.add_argument("--matter", default="", help="matter scope")
+    _ = stop_parser.add_argument("--kill-descendants", action="store_true", help="attempt to kill descendant processes")
+    _ = stop_parser.add_argument("--revoke-live", action="store_true", help="revoke live provider approval for the run")
+    _ = stop_parser.add_argument("--reason", default="operator requested stop", help="reason for cancellation")
+    _ = stop_parser.add_argument("--write", action="store_true", help="write cancellation state")
+    _ = stop_parser.add_argument("--json", dest="json_output", action="store_true")
+
+    stop_current_parser = run_sub.add_parser("stop-current", help="stop the current/active run for a matter")
+    _ = stop_current_parser.add_argument("--db", required=True)
+    _ = stop_current_parser.add_argument("--matter", required=True, help="matter scope")
+    _ = stop_current_parser.add_argument("--kill-descendants", action="store_true")
+    _ = stop_current_parser.add_argument("--revoke-live", action="store_true")
+    _ = stop_current_parser.add_argument("--reason", default="operator requested stop")
+    _ = stop_current_parser.add_argument("--write", action="store_true")
+    _ = stop_current_parser.add_argument("--json", dest="json_output", action="store_true")
+
     return parser
 
 
@@ -713,6 +786,60 @@ def _add_fallback_mode_args(parser: argparse.ArgumentParser) -> None:
     fallback = parser.add_mutually_exclusive_group()
     _ = fallback.add_argument("--allow-fallback", dest="allow_fallback", action="store_true", default=False)
     _ = fallback.add_argument("--no-fallback", dest="allow_fallback", action="store_false")
+
+
+def _print_human_request_human(items: list[dict[str, object]], matter_scope: str) -> None:
+    if not items:
+        print(f"\nThe harness has no open requests for matter: {matter_scope}\n")
+        return
+    print(f"\nThe harness has {len(items)} open request(s) for matter: {matter_scope}\n")
+    for item in items:
+        attention_id = item.get("attention_id", "?")
+        reason = item.get("reason", "No reason provided")
+        plain_q = item.get("plain_question", "")
+        why = item.get("why_needed", "")
+        lane = item.get("routed_lane", "human_request")
+        classification = item.get("classification", "")
+        routing = item.get("routing", {})
+        routed_owner = routing.get("routed_owner", "") if isinstance(routing, dict) else ""
+
+        print(f"--- Request #{attention_id} ---")
+        if lane != "human_request":
+            print(f"  [Internal: {lane}, routed to: {routed_owner}]")
+        print(f"  Task: {reason}")
+        if plain_q:
+            print(f"  Question: {plain_q}")
+        if why:
+            print(f"  Why: {why}")
+        acceptable = item.get("acceptable_responses", [])
+        if acceptable:
+            print(f"  Acceptable responses:")
+            for i, resp in enumerate(acceptable, 1):
+                print(f"    {i}. {resp}")
+        print(f"  Classification: {classification}")
+        print()
+
+
+def _print_human_packet_human(packet: dict[str, object]) -> None:
+    title = packet.get("title", "Unknown request")
+    question = packet.get("plain_question", "")
+    why = packet.get("why_needed", "")
+    acceptable = packet.get("acceptable_responses", [])
+    cmd_template = packet.get("response_command_template", "")
+
+    print(f"\nThe harness needs one thing from you:\n")
+    print(f"Task: {title}")
+    if why:
+        print(f"Why: {why}")
+    if question and question != title:
+        print(f"Question: {question}")
+    if acceptable:
+        print(f"Acceptable answers:")
+        for i, resp in enumerate(acceptable, 1):
+            print(f"  {i}. {resp}")
+    print(f"\nIf you provide files, they will be registered as supplemental sources,")
+    print(f"OCRed locally, linked to this blocker, and the blocker will be marked handled.")
+    print()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -2001,6 +2128,323 @@ def _main(args: CliArgs) -> int:
                 },
             }
         )
+        return 0
+
+    if args.command == "control-panel":
+        with repo.db_connection(args.db, read_only=True) as conn:
+            panel = build_operator_control_panel(
+                conn,
+                db_path=args.db,
+                matter_scope=args.matter,
+                output_dir=args.output_dir,
+                live_approved=bool(args.live_approved),
+            )
+        if args.action == "agent-packet":
+            packet = panel.get("agent_packet", {})
+            print_json(packet)
+            return 0
+        if args.format == "json" or args.json_output:
+            print_json(panel)
+        else:
+            print(render_operator_control_panel(panel), end="")
+        return 0
+
+    if args.command == "human-request":
+        with repo.db_connection(args.db, read_only=True) as conn:
+            if args.action == "show":
+                if args.attention_id:
+                    item = repo.get_human_request(conn, attention_id=args.attention_id)
+                    if item is None:
+                        print_json({"error": f"attention_id {args.attention_id} not found"})
+                        return 2
+                    items = [item]
+                else:
+                    items = repo.get_human_requests_for_matter(
+                        conn,
+                        matter_scope=args.matter,
+                        current_only=args.current_only,
+                        lane=args.lane,
+                    )
+                from atticus.status.completion import triage_human_attention, route_human_attention
+                for item in items:
+                    item["classification"] = triage_human_attention(item)
+                    item["routing"] = route_human_attention(item, matter_scope=args.matter)
+
+                if args.format == "human" and not args.json_output:
+                    _print_human_request_human(items, matter_scope=args.matter)
+                else:
+                    print_json({"matter_scope": args.matter, "requests": items})
+            elif args.action == "next":
+                items = repo.get_human_requests_for_matter(
+                    conn,
+                    matter_scope=args.matter,
+                    current_only=True,
+                    lane="human_request",
+                    status="open",
+                )
+                if not items:
+                    print_json({"result": "none", "matter_scope": args.matter, "message": "no human requests pending"})
+                    return 0
+                item = items[0]
+                from atticus.status.completion import triage_human_attention, route_human_attention
+                item["classification"] = triage_human_attention(item)
+                item["routing"] = route_human_attention(item, matter_scope=args.matter)
+
+                packet = {
+                    "request_id": f"human-{item.get('attention_id', '')}",
+                    "attention_id": item.get("attention_id", 0),
+                    "matter": args.matter,
+                    "target_type": item.get("target_type", "manual"),
+                    "target_id": item.get("target_id", ""),
+                    "title": item.get("reason", ""),
+                    "plain_question": item.get("plain_question", str(item.get("reason", ""))),
+                    "why_needed": item.get("why_needed", ""),
+                    "related_sources": [],
+                    "acceptable_responses": item.get("acceptable_responses", []),
+                    "response_command_template": f"python -m atticus.cli human-response submit --db DB --matter {args.matter} --attention-id {item.get('attention_id', 0)} --response-type TYPE --file PATH --statement '...' --write",
+                }
+                if args.format == "human" and not args.json_output:
+                    _print_human_packet_human(packet)
+                else:
+                    print_json(packet)
+        return 0
+
+    if args.command == "human-response" and getattr(args, "response_action", None) == "submit":
+        write = bool(args.write)
+        with repo.db_connection(args.db, read_only=not write) as conn:
+            if not write:
+                print_json({
+                    "dry_run": True,
+                    "attention_id": args.attention_id,
+                    "response_type": args.response_type,
+                    "file_count": len(args.file or []),
+                    "statement": args.statement,
+                    "matter": args.matter,
+                    "would_register_sources": len(args.file or []) > 0,
+                    "would_ocr": len(args.file or []) > 0,
+                    "would_create_artifact": True,
+                    "would_mark_attention_handled": True,
+                    "would_update_task": True,
+                })
+                return 0
+
+            registered_sources = []
+            workspace = Path(args.db).parent / "workspace" / args.matter
+            for file_path in (args.file or []):
+                src = Path(file_path)
+                if not src.exists():
+                    print_json({"error": f"file not found: {file_path}"})
+                    return 2
+                source_id = f"{args.matter.upper()}-SRC-OPR-{uuid4().hex[:8].upper()}"
+                dest_dir = workspace / "sources"
+                dest_dir.mkdir(parents=True, exist_ok=True)
+                import shutil
+                dest_path = dest_dir / f"{source_id}{src.suffix}"
+                shutil.copy2(str(src), str(dest_path))
+                repo.add_source(
+                    conn,
+                    source_id=source_id,
+                    matter_scope=args.matter,
+                    path=str(dest_path),
+                    source_type="operator_submission",
+                    sha256=repo._hash_file(str(dest_path)),
+                    size_bytes=dest_path.stat().st_size,
+                    trust_status="operator_submitted",
+                    stage="S9_FINAL_QUALITY_GATE",
+                    imported_from="operator_response",
+                    stale=0,
+                    chain_of_custody={"submitted_by": "operator", "original_path": str(src), "attention_id": args.attention_id},
+                )
+                registered_sources.append(source_id)
+
+            response_result = repo.record_human_response(
+                conn,
+                attention_id=args.attention_id,
+                response_type=args.response_type,
+                statement=args.statement,
+                source_ids=registered_sources,
+            )
+
+            artifact_id = f"{args.matter}-ART-OPR-RSP-{uuid4().hex[:8].upper()}"
+            response_text = f"Operator Response to Attention {args.attention_id}\n\nType: {args.response_type}\nStatement: {args.statement}\nSources: {', '.join(registered_sources)}\n"
+            repo.add_artifact(
+                conn,
+                artifact_id=artifact_id,
+                matter_scope=args.matter,
+                path=f"operator-responses/{artifact_id}.md",
+                artifact_type="operator_response",
+                stage="S9_FINAL_QUALITY_GATE",
+                trust_status="operator_submitted",
+                sha256="",
+                title=f"Operator Response - Attention {args.attention_id}",
+                content=response_text,
+                imported_from="operator_response",
+                source_ids=registered_sources,
+                artifact_dependency_ids=[],
+                produced_by_task_id="",
+                stale=0,
+            )
+
+            task_id = None
+            task_row = conn.execute(
+                "SELECT target_id FROM human_attention WHERE attention_id=?",
+                (args.attention_id,),
+            ).fetchone()
+            if task_row:
+                task_id = str(task_row["target_id"])
+                task_exists = conn.execute(
+                    "SELECT 1 FROM tasks WHERE task_id=? AND matter_scope=?",
+                    (task_id, args.matter),
+                ).fetchone()
+                if task_exists:
+                    repo.update_task_status(conn, task_id, "queued", reason=f"operator responded to attention {args.attention_id}")
+
+            result = {
+                "dry_run": False,
+                "response": response_result,
+                "registered_sources": registered_sources,
+                "artifact_id": artifact_id,
+                "attention_handled": True,
+                "task_unblocked": task_id if task_id else None,
+            }
+
+            report = build_matter_completion_report(conn, args.matter)
+            result["matter_done"] = report.done
+            result["next_action"] = next_resume_action(conn, args.matter)
+
+            print_json(result)
+        return 0
+
+    if args.command == "run" and getattr(args, "run_action", None) == "stop":
+        write = bool(args.write)
+        with repo.db_connection(args.db, read_only=not write) as conn:
+            if not write:
+                run = conn.execute("SELECT run_id, state FROM runs WHERE run_id=?", (args.run_id,)).fetchone()
+                if run is None:
+                    print_json({"error": f"run not found: {args.run_id}"})
+                    return 2
+                print_json({
+                    "dry_run": True,
+                    "run_id": args.run_id,
+                    "run_state": str(run["state"]),
+                    "would_cancel": True,
+                    "would_revoke_live": args.revoke_live,
+                    "would_kill_descendants": args.kill_descendants,
+                    "would_cancel_continuations": True,
+                })
+                return 0
+
+            cancel_result = repo.cancel_run(
+                conn,
+                run_id=args.run_id,
+                cancelled_by="operator",
+                cancel_reason=args.reason,
+                revoke_live=args.revoke_live,
+            )
+
+            cancelled_continuations = repo.cancel_continuations_for_run(conn, run_id=args.run_id)
+
+            kill_results = []
+            if args.kill_descendants:
+                try:
+                    import subprocess
+                    result_proc = subprocess.run(
+                        ["pgrep", "-f", args.run_id],
+                        capture_output=True, text=True, timeout=10,
+                    )
+                    if result_proc.returncode == 0:
+                        pids = [p.strip() for p in result_proc.stdout.strip().split("\n") if p.strip()]
+                        for pid in pids:
+                            try:
+                                subprocess.run(["kill", pid], timeout=5)
+                                kill_results.append({"pid": pid, "killed": True})
+                            except Exception as exc:
+                                kill_results.append({"pid": pid, "killed": False, "error": str(exc)})
+                except Exception as exc:
+                    kill_results.append({"error": str(exc)})
+
+            released_leases = []
+            lease_rows = conn.execute(
+                "SELECT lease_id, task_id FROM leases WHERE lease_id LIKE ? AND status='active'",
+                (f"%{args.run_id[:8]}%",),
+            ).fetchall()
+            for lease_row in lease_rows:
+                conn.execute("UPDATE leases SET status='cancelled' WHERE lease_id=?", (str(lease_row["lease_id"]),))
+                released_leases.append(str(lease_row["lease_id"]))
+
+            result = {
+                "dry_run": False,
+                "run_id": args.run_id,
+                "cancelled": cancel_result.get("cancelled", False),
+                "cancelled_by": "operator",
+                "cancelled_at": cancel_result.get("cancelled_at", ""),
+                "live_provider_revoked": args.revoke_live,
+                "cancelled_continuations": cancelled_continuations,
+                "released_leases": released_leases,
+                "kill_results": kill_results,
+                "verification": [
+                    "run marked cancelled",
+                    f"live provider approval revoked: {args.revoke_live}",
+                    f"{len(cancelled_continuations)} continuations cancelled",
+                    f"{len(released_leases)} leases released",
+                ],
+            }
+            print_json(result)
+        return 0
+
+    if args.command == "run" and getattr(args, "run_action", None) == "stop-current":
+        write = bool(args.write)
+        with repo.db_connection(args.db, read_only=not write) as conn:
+            run_row = conn.execute(
+                "SELECT run_id FROM runs WHERE matter_scope=? AND state IN ('running', 'active', 'initialized') ORDER BY created_at DESC LIMIT 1",
+                (args.matter,),
+            ).fetchone()
+            if run_row is None:
+                print_json({"error": f"no active run found for matter: {args.matter}"})
+                return 2
+            run_id = str(run_row["run_id"])
+
+            if not write:
+                print_json({
+                    "dry_run": True,
+                    "run_id": run_id,
+                    "matter": args.matter,
+                    "would_cancel": True,
+                    "would_revoke_live": args.revoke_live,
+                    "would_kill_descendants": args.kill_descendants,
+                })
+                return 0
+
+            cancel_result = repo.cancel_run(
+                conn,
+                run_id=run_id,
+                cancelled_by="operator",
+                cancel_reason=args.reason,
+                revoke_live=args.revoke_live,
+            )
+            cancelled_continuations = repo.cancel_continuations_for_run(conn, run_id=run_id)
+
+            released_leases = []
+            lease_rows = conn.execute(
+                "SELECT lease_id FROM leases WHERE lease_id LIKE ? AND status='active'",
+                (f"%{run_id[:8]}%",),
+            ).fetchall()
+            for lease_row in lease_rows:
+                conn.execute("UPDATE leases SET status='cancelled' WHERE lease_id=?", (str(lease_row["lease_id"]),))
+                released_leases.append(str(lease_row["lease_id"]))
+
+            result = {
+                "dry_run": False,
+                "run_id": run_id,
+                "matter": args.matter,
+                "cancelled": cancel_result.get("cancelled", False),
+                "cancelled_by": "operator",
+                "cancelled_at": cancel_result.get("cancelled_at", ""),
+                "live_provider_revoked": args.revoke_live,
+                "cancelled_continuations": cancelled_continuations,
+                "released_leases": released_leases,
+            }
+            print_json(result)
         return 0
 
     return 1

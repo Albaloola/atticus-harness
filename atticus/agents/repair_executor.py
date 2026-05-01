@@ -247,12 +247,23 @@ def _execute_plan_action(conn: sqlite3.Connection, *, matter_scope: str, plan: R
                 source_ids=None,
                 write=True,
             )
+            unblocked_ids: list[str] = []
+            if write and plan.blocker_type == "local_runtime_capability":
+                try:
+                    conn.execute(
+                        "UPDATE tasks SET status='queued', blocked_reasons_json='[]' WHERE task_id=? AND status='blocked'",
+                        (plan.target_id,),
+                    )
+                    unblocked_ids = [plan.target_id]
+                except Exception:
+                    pass
             return {
                 **base,
                 "bucket": "applied",
                 "created_candidate_id": result.candidate_id,
                 "task_id": plan.target_id,
                 "candidate_info": result.support_summary,
+                "unblocked_task_ids": unblocked_ids,
             }
         except Exception as exc:
             return {**base, "bucket": "terminal", "reason": f"source-led packet generation failed: {exc}"}
