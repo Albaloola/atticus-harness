@@ -372,7 +372,7 @@ CREATE TABLE IF NOT EXISTS certifications (
   certification_type TEXT NOT NULL,
   status TEXT NOT NULL,
   validator TEXT NOT NULL,
-  validation_result_id INTEGER NOT NULL REFERENCES validation_results(validation_result_id),
+  validation_result_id INTEGER NOT NULL REFERENCES validation_results(validation_result_id) ON DELETE CASCADE,
   evidence_json TEXT NOT NULL CHECK(json_valid(evidence_json)),
   created_at TEXT NOT NULL
 ) STRICT;
@@ -472,10 +472,10 @@ CREATE TABLE IF NOT EXISTS leases (
   worker_id TEXT NOT NULL,
   lease_role TEXT NOT NULL DEFAULT 'worker',
   status TEXT NOT NULL,
-  fencing_token INTEGER NOT NULL,
+  fencing_token INTEGER NOT NULL DEFAULT 1,
   expires_at TEXT NOT NULL,
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL DEFAULT ''
 ) STRICT;
 
 CREATE UNIQUE INDEX IF NOT EXISTS leases_one_active_per_task
@@ -500,7 +500,7 @@ CREATE TABLE IF NOT EXISTS reducer_packets (
   candidate_id TEXT NOT NULL REFERENCES candidate_outputs(candidate_id) ON DELETE CASCADE,
   reducer_lease_id TEXT,
   decision TEXT NOT NULL,
-  validation_result_id INTEGER REFERENCES validation_results(validation_result_id),
+  validation_result_id INTEGER REFERENCES validation_results(validation_result_id) ON DELETE SET NULL,
   canonical_artifact_id TEXT REFERENCES artifacts(artifact_id) ON DELETE SET NULL,
   dissent_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(dissent_json)),
   created_at TEXT NOT NULL
@@ -796,12 +796,12 @@ CREATE TABLE IF NOT EXISTS human_attention (
   response_artifact_id TEXT,
   response_caveat TEXT NOT NULL DEFAULT '',
   routed_lane TEXT NOT NULL DEFAULT 'human_request',
-  continuation_id TEXT
+  continuation_id TEXT REFERENCES continued_commands(continuation_id) ON DELETE SET NULL
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS continued_commands (
   continuation_id TEXT PRIMARY KEY,
-  run_id TEXT NOT NULL REFERENCES runs(run_id),
+  run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
   matter_scope TEXT NOT NULL,
   command TEXT NOT NULL,
   approval_state TEXT NOT NULL DEFAULT 'pending',
@@ -819,7 +819,7 @@ CREATE TABLE IF NOT EXISTS continued_commands (
 
 CREATE TABLE IF NOT EXISTS run_progress_signatures (
   signature_id INTEGER PRIMARY KEY AUTOINCREMENT,
-  run_id TEXT NOT NULL REFERENCES runs(run_id),
+  run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
   signature TEXT NOT NULL,
   attempt_count INTEGER NOT NULL DEFAULT 1,
   last_distinct_progress_at TEXT,
@@ -835,7 +835,7 @@ CREATE TABLE IF NOT EXISTS operator_responses (
   response_type TEXT NOT NULL,
   statement TEXT NOT NULL DEFAULT '',
   source_ids TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(source_ids)),
-  artifact_id TEXT REFERENCES artifacts(artifact_id),
+  artifact_id TEXT REFERENCES artifacts(artifact_id) ON DELETE SET NULL,
   created_at TEXT NOT NULL
 ) STRICT;
 
@@ -955,6 +955,28 @@ CREATE TABLE IF NOT EXISTS migration_reports (
   created_at TEXT NOT NULL
 ) STRICT;
 
+CREATE TABLE IF NOT EXISTS ocr_quality (
+  quality_id TEXT PRIMARY KEY,
+  source_id TEXT NOT NULL REFERENCES sources(source_id) ON DELETE CASCADE,
+  source_sha256 TEXT NOT NULL,
+  method TEXT NOT NULL,
+  page_count INTEGER NOT NULL DEFAULT 0,
+  quality_status TEXT NOT NULL DEFAULT 'unknown',
+  confidence REAL NOT NULL DEFAULT 0.0,
+  text_bytes INTEGER NOT NULL DEFAULT 0,
+  warnings_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(warnings_json)),
+  page_quality_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(page_quality_json)),
+  ocr_engine TEXT,
+  rendered_image_hash TEXT,
+  signature_pages TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(signature_pages)),
+  form_fields_detected INTEGER NOT NULL DEFAULT 0 CHECK(form_fields_detected IN (0, 1)),
+  needs_visual_ocr INTEGER NOT NULL DEFAULT 0 CHECK(needs_visual_ocr IN (0, 1)),
+  has_handwriting INTEGER NOT NULL DEFAULT 0 CHECK(has_handwriting IN (0, 1)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(source_id, source_sha256, method)
+) STRICT;
+
 CREATE INDEX IF NOT EXISTS events_type_idx ON events(event_type, created_at);
 CREATE INDEX IF NOT EXISTS tasks_status_stage_idx ON tasks(status, stage);
 CREATE INDEX IF NOT EXISTS tasks_scope_stage_idx ON tasks(matter_scope, stage, status);
@@ -1001,4 +1023,10 @@ CREATE INDEX IF NOT EXISTS legal_memories_scope_type_idx ON legal_memories(matte
 CREATE INDEX IF NOT EXISTS sessions_scope_status_idx ON sessions(matter_scope, status, updated_at);
 CREATE INDEX IF NOT EXISTS session_messages_session_idx ON session_messages(session_id, created_at);
 CREATE INDEX IF NOT EXISTS hook_invocations_event_idx ON hook_invocations(hook_event, matter_scope, created_at);
+CREATE INDEX IF NOT EXISTS tasks_scope_type_status_idx ON tasks(matter_scope, task_type, status);
+CREATE INDEX IF NOT EXISTS continued_commands_run_status_idx ON continued_commands(run_id, status);
+CREATE INDEX IF NOT EXISTS artifacts_scope_stale_idx ON artifacts(matter_scope, stale, updated_at);
+CREATE INDEX IF NOT EXISTS events_scope_type_created_idx ON events(matter_scope, event_type, created_at);
+CREATE INDEX IF NOT EXISTS repair_plans_target_idx ON repair_plans(matter_scope, target_type, target_id, status);
+CREATE INDEX IF NOT EXISTS leases_active_role_idx ON leases(status, lease_role) WHERE status = 'active';
 """

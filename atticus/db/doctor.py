@@ -18,6 +18,7 @@ REQUIRED_INDEXES = frozenset(_INDEX_RE.findall(DDL)) | {
     "validation_target_idx",
     "human_attention_scope_status_idx",
     "human_attention_signature_idx",
+    "human_attention_target_idx",
 }
 
 REQUIRED_COLUMNS: dict[str, frozenset[str]] = {
@@ -37,6 +38,7 @@ REQUIRED_COLUMNS: dict[str, frozenset[str]] = {
             "provider_policy_json",
             "context_pack_id",
             "task_provenance_json",
+            "matter_dependencies_json",
         }
     ),
     "provider_runs": frozenset(

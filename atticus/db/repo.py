@@ -275,6 +275,9 @@ def _ensure_indexes(conn: sqlite3.Connection) -> None:
     _ = conn.execute(
         "CREATE INDEX IF NOT EXISTS human_attention_signature_idx ON human_attention(matter_scope, signature, status)"
     )
+    _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS human_attention_target_idx ON human_attention(matter_scope, target_type, target_id, severity, status)"
+    )
 
 
 def _backfill_validation_matter_scope(conn: sqlite3.Connection) -> None:
@@ -1978,7 +1981,7 @@ def resolve_local_stub_blockers_after_live_approval(
     changed += int(cur2.rowcount if cur2.rowcount is not None and cur2.rowcount > 0 else 0)
 
     if changed:
-        emit_event(
+        _ = emit_event(
             conn,
             "human_attention.local_stub_blockers_resolved",
             matter_scope=matter_scope,
@@ -2003,8 +2006,10 @@ def resolve_local_stub_blockers_after_live_approval(
                 conn.execute("UPDATE tasks SET status='queued', blocked_reasons_json='[]' WHERE task_id=?", (task_id,))
             else:
                 conn.execute("UPDATE tasks SET blocked_reasons_json=? WHERE task_id=?", (json.dumps(filtered), task_id))
-        except Exception:
-            pass
+        except Exception as exc:
+            _ = emit_event(conn, "human_attention.resolve_local_stub_blocker_failed",
+                           matter_scope=matter_scope,
+                           payload={"task_id": task_id, "error": str(exc)})
 
     still_blocked = conn.execute(
         """
@@ -3871,7 +3876,7 @@ def record_human_response(
         (response_type, statement, artifact_id, caveat, attention_id),
     )
 
-    emit_event(conn, "human_attention.response_recorded", matter_scope=matter_scope, payload={
+    _ = emit_event(conn, "human_attention.response_recorded", matter_scope=matter_scope, payload={
         "attention_id": attention_id,
         "response_id": response_id,
         "response_type": response_type,
@@ -3896,7 +3901,9 @@ def cancel_run(
         (cancelled_by, now, cancel_reason, 1 if revoke_live else 0, now, run_id),
     )
     changes = conn.total_changes
-    emit_event(conn, "run.cancelled", matter_scope="", payload={
+    cancel_continuations_for_run(conn, run_id=run_id)
+    cancel_matter_scope = _matter_scope_for_target(conn, target_type="run", target_id=run_id) or "unknown"
+    _ = emit_event(conn, "run.cancelled", matter_scope=cancel_matter_scope, payload={
         "run_id": run_id, "cancelled_by": cancelled_by, "cancel_reason": cancel_reason, "revoked_live": revoke_live,
     })
     return {"run_id": run_id, "cancelled": changes > 0, "cancelled_by": cancelled_by, "cancelled_at": now}
@@ -4027,13 +4034,13 @@ def record_progress_signature(
             "UPDATE run_progress_signatures SET attempt_count=?, last_distinct_progress_at=COALESCE(?, last_distinct_progress_at), stop_reason=? WHERE signature_id=?",
             (new_count, last_distinct_progress_at, stop_reason, existing["signature_id"]),
         )
-        return {"signature_id": existing["signature_id"], "attempt_count": new_count, "new": False}
+        return {"signature_id": existing["signature_id"], "signature": signature, "attempt_count": new_count, "new": False, "last_distinct_progress_at": last_distinct_progress_at}
     else:
-        conn.execute(
+        cursor = conn.execute(
             "INSERT INTO run_progress_signatures (run_id, signature, attempt_count, last_distinct_progress_at, stop_reason, created_at) VALUES (?, ?, 1, ?, ?, ?)",
             (run_id, signature, last_distinct_progress_at, stop_reason, now),
         )
-        return {"signature": signature, "attempt_count": 1, "new": True}
+        return {"signature_id": cursor.lastrowid, "signature": signature, "attempt_count": 1, "new": True, "last_distinct_progress_at": last_distinct_progress_at}
 
 
 def check_run_cancelled(conn: sqlite3.Connection, *, run_id: str) -> dict[str, object] | None:
