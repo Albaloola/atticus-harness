@@ -11,7 +11,7 @@ from typing import cast
 from atticus.core.policies import LegalStage, TaskStatus
 from atticus.core.tasks import TaskSpec
 from atticus.db import repo
-from atticus.status.completion import FINAL_LEGAL_DRAFT_CERTIFICATIONS, build_matter_completion_report
+from atticus.status.completion import FINAL_LEGAL_DRAFT_CERTIFICATIONS, build_matter_completion_report, route_human_attention
 
 
 CERTIFICATION_TASK_POLICY: dict[str, tuple[str, LegalStage, str]] = {
@@ -63,15 +63,20 @@ def final_gate_readiness(conn: sqlite3.Connection, matter_scope: str) -> dict[st
             "resume_command": f"python -m atticus.cli inspect --db DB --type artifact --id {artifact_id}",
         })
     for attention in report.unresolved_human_attention:
+        route = route_human_attention(dict(attention), matter_scope)
         blocked_reasons.append(
             {
                 "type": "open_human_attention",
                 "attention_id": attention["attention_id"],
                 "reason": attention["reason"],
-                "owner": attention.get("owner") or "operator",
+                "owner": route["routed_owner"],
                 "signature": attention.get("signature") or f"human_attention:{attention['attention_id']}",
-                "repair": "resolve or supersede human attention item",
-                "resume_command": f"python -m atticus.cli human-attention --db DB --matter {matter_scope}",
+                "repair": route["routed_action"],
+                "resume_command": route["routed_command"],
+                "routed_owner": route["routed_owner"],
+                "routed_action": route["routed_action"],
+                "routed_command": route["routed_command"],
+                "classification": route["classification"],
             }
         )
     failed_without_plan = _failed_final_tasks_without_repair_plan(conn, matter_scope)
@@ -128,8 +133,9 @@ def compute_final_gate_state(
         state = "certified"
         owner = "none"
     elif any(str(reason.get("type") or "") == "open_human_attention" for reason in blocked_reasons):
+        ha_reason = next(r for r in blocked_reasons if str(r.get("type") or "") == "open_human_attention")
         state = "human_blocked"
-        owner = "operator"
+        owner = str(ha_reason.get("routed_owner") or "operator")
     elif open_reviews:
         state = "waiting_reducer_review"
         owner = "reducer"
@@ -341,9 +347,10 @@ def _next_final_gate_action(
             "resume_command": f"python -m atticus.cli final-gate create-missing --db DB --matter {matter_scope} --write --json",
         }
     first = blocked_reasons[0]
+    owner = str(first.get("routed_owner") or first.get("owner") or "orchestrator")
     return {
         "type": first["type"],
-        "owner": first.get("owner") or "orchestrator",
+        "owner": owner,
         "signature": first.get("signature") or f"final_gate_blocker:{first['type']}",
         "resume_command": first.get("resume_command") or f"python -m atticus.cli matter-health --db DB --matter {matter_scope} --why-not-done --json",
     }

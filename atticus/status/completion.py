@@ -175,6 +175,7 @@ def build_matter_completion_report(conn: sqlite3.Connection, matter_scope: str, 
             )
         )
     for item in attention:
+        route = route_human_attention(dict(item), matter_scope)
         requirements.append(
             MatterCompletionRequirement(
                 requirement_id=f"human_attention:{item['attention_id']}",
@@ -182,11 +183,11 @@ def build_matter_completion_report(conn: sqlite3.Connection, matter_scope: str, 
                 stage="",
                 name=str(item["reason"]),
                 status="blocked",
-                owner="operator",
+                owner=route["routed_owner"],
                 blocking_reason=str(item["reason"]),
-                repair_action="operator_resolve_human_attention",
-                resume_command=f"python -m atticus.cli human-attention --db DB --matter {matter_scope}",
-                evidence=dict(item),
+                repair_action=route["routed_action"],
+                resume_command=route["routed_command"],
+                evidence=dict(item, **route),
             )
         )
 
@@ -452,12 +453,15 @@ def next_resume_action(conn: sqlite3.Connection, matter_scope: str) -> dict[str,
 
     if report.unresolved_human_attention:
         item = report.unresolved_human_attention[0]
+        route = route_human_attention(dict(item), matter_scope)
         return {
             "type": "human_attention",
-            "owner": "operator",
+            "owner": route["routed_owner"],
             "attention_id": item["attention_id"],
             "reason": item["reason"],
-            "resume_command": f"python -m atticus.cli human-attention --db DB --matter {matter_scope}",
+            "classification": route["classification"],
+            "routed_action": route["routed_action"],
+            "resume_command": route["routed_command"],
         }
 
     return {
@@ -618,6 +622,96 @@ def triage_human_attention(item: dict[str, object]) -> str:
         return "requires_orchestrator"
 
     return "unknown"
+
+
+ROUTE_MAP: dict[str, dict[str, str]] = {
+    "stale_superseded": {
+        "routed_owner": "orchestrator",
+        "routed_action": "mark closed, no further action",
+        "routed_command_template": "python -m atticus.cli human-attention --db DB --matter MATTER --cleanup --write",
+    },
+    "stale_local_stub": {
+        "routed_owner": "scheduler",
+        "routed_action": "run free loop tick (live provider now available)",
+        "routed_command_template": "ATTICUS_ENABLE_LIVE_OPENROUTER=1 python -m atticus.cli run-free-loop --db DB --matter MATTER --output-dir OUT --capacity 15 --max-ticks 1 --runtime openrouter --allow-live",
+    },
+    "stale_transient_network": {
+        "routed_owner": "provider_control_plane",
+        "routed_action": "re-probe provider",
+        "routed_command_template": "python -m atticus.cli provider-probe --db DB --matter MATTER --provider openrouter --model deepseek/deepseek-v4-pro",
+    },
+    "stale_validation_failure": {
+        "routed_owner": "scheduler",
+        "routed_action": "create repair task for validation",
+        "routed_command_template": "python -m atticus.cli repair-tick --db DB --matter MATTER --write --json",
+    },
+    "stale_quarantined_output": {
+        "routed_owner": "orchestrator",
+        "routed_action": "create repair task to regenerate output",
+        "routed_command_template": "python -m atticus.cli orchestrator tick --db DB --matter MATTER --write",
+    },
+    "stale_proposed_task_rejection": {
+        "routed_owner": "orchestrator",
+        "routed_action": "create repair task with corrected params",
+        "routed_command_template": "python -m atticus.cli orchestrator tick --db DB --matter MATTER --write",
+    },
+    "stale_repair_loop_noise": {
+        "routed_owner": "orchestrator",
+        "routed_action": "escalate to reducer with bounded retries",
+        "routed_command_template": "python -m atticus.cli reducer-review list --db DB --matter MATTER --write --json",
+    },
+    "stale_supervisor_no_progress": {
+        "routed_owner": "scheduler",
+        "routed_action": "run free loop tick with --execute-ticks",
+        "routed_command_template": "ATTICUS_ENABLE_LIVE_OPENROUTER=1 python -m atticus.cli run-free-loop --db DB --matter MATTER --output-dir OUT --capacity 15 --max-ticks 3 --runtime openrouter --allow-live",
+    },
+    "requires_orchestrator": {
+        "routed_owner": "orchestrator",
+        "routed_action": "create repair task",
+        "routed_command_template": "python -m atticus.cli orchestrator tick --db DB --matter MATTER --write",
+    },
+    "requires_provider": {
+        "routed_owner": "provider_control_plane",
+        "routed_action": "probe or reconfigure provider",
+        "routed_command_template": "python -m atticus.cli provider-probe --db DB --matter MATTER --provider openrouter --model deepseek/deepseek-v4-pro",
+    },
+    "requires_reducer": {
+        "routed_owner": "reducer",
+        "routed_action": "enqueue reducer review",
+        "routed_command_template": "python -m atticus.cli reducer-review list --db DB --matter MATTER --write --json",
+    },
+    "requires_operator": {
+        "routed_owner": "operator",
+        "routed_action": "ask Omer specific question",
+        "routed_command_template": "python -m atticus.cli human-attention --db DB --matter MATTER",
+    },
+    "unknown": {
+        "routed_owner": "operator",
+        "routed_action": "classify manually",
+        "routed_command_template": "python -m atticus.cli human-attention --db DB --matter MATTER --classify",
+    },
+}
+
+
+def route_human_attention(item: dict[str, object], matter_scope: str = "") -> dict[str, str]:
+    """Map a human-attention item's triage classification to a routed owner, action, and command.
+
+    Returns a dict with: classification, routed_owner, routed_action, routed_command.
+    """
+    classification = triage_human_attention(item)
+    route = ROUTE_MAP.get(classification, ROUTE_MAP["unknown"])
+    result: dict[str, str] = {
+        "classification": classification,
+        "routed_owner": route["routed_owner"],
+        "routed_action": route["routed_action"],
+        "routed_command": route["routed_command_template"]
+            .replace("MATTER", matter_scope)
+            .replace("DB", "--db DB"),
+    }
+    attention_id = item.get("attention_id")
+    if attention_id is not None:
+        result["attention_id"] = str(attention_id)
+    return result
 
 
 def _open_reducer_review_queue(conn: sqlite3.Connection, matter_scope: str) -> list[dict[str, object]]:

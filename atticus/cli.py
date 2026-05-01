@@ -1933,9 +1933,11 @@ def _main(args: CliArgs) -> int:
                 if args.current_only:
                     rows = [row for row in rows if row.get("superseded_by") is None]
                 if args.classify:
-                    from atticus.status.completion import triage_human_attention
+                    from atticus.status.completion import triage_human_attention, route_human_attention
+                    matter_scope_val = args.matter or ""
                     for row in rows:
                         row["classification"] = triage_human_attention(dict(row))
+                        row["routing"] = route_human_attention(dict(row), matter_scope=matter_scope_val)
                 print_json({"items": rows})
         return 0
 
@@ -2264,9 +2266,13 @@ def _classify_live_resume_next_action(
         (matter_scope,) if matter_scope else (),
     ).fetchone()
     if human is not None:
+        from atticus.status.completion import route_human_attention
+        route = route_human_attention(dict(human), matter_scope or "")
         return {
-            "classification": "human_attention_terminal",
-            "command": f"python -m atticus.cli human-attention --db {db}{matter_arg}",
+            "classification": route["classification"],
+            "routed_owner": route["routed_owner"],
+            "routed_action": route["routed_action"],
+            "command": route["routed_command"],
             "attention_id": _row_str(human, "attention_id"),
             "reason": _row_str(human, "reason"),
         }
