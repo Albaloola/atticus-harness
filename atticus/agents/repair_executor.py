@@ -329,19 +329,58 @@ def _ensure_internal_repair_task(conn: sqlite3.Connection, *, matter_scope: str,
     from atticus.core.policies import LegalStage
     from atticus.core.tasks import TaskSpec
 
+    # Check if this is a citation-audit or final-gate task — these need strict citation rules
+    is_citation_task = False
+    original_stage = LegalStage.S0_SOURCE_INVENTORY
+    if plan.target_type == "task":
+        orig = conn.execute(
+            "SELECT task_type, stage FROM tasks WHERE task_id = ?",
+            (plan.target_id,),
+        ).fetchone()
+        if orig is not None:
+            tt = str(orig["task_type"] or "")
+            if tt in {"citation_audit", "citation_repair", "final_quality_gate", "hostile_review", "draft", "draft_preparation"}:
+                is_citation_task = True
+            try:
+                original_stage = LegalStage(str(orig["stage"] or ""))
+            except (ValueError, KeyError):
+                original_stage = LegalStage.S0_SOURCE_INVENTORY
+
+    base_instructions = (
+        f"Perform bounded internal repair action {action_type} for {plan.target_type}:{plan.target_id}. "
+        "Do not perform provider retries, external legal actions, or fake proof. Record a blocker if safe repair is impossible."
+    )
+
+    if is_citation_task:
+        instructions = (
+            f"REPAIR: {action_type} for citation/quality-gate task {plan.target_id}.\n\n"
+            "Your predecessor produced quarantined output because they cited memory, validation results, "
+            "derivative extraction artifacts, stale artifacts, rough drafts, or orientation-only material "
+            "instead of proof-allowed sources.\n\n"
+            "STRICT CITATION RULES — you MUST follow these:\n"
+            "1. Cite EVERY factual, legal, procedural, contradiction, or risk finding to a proof-allowed target.\n"
+            "2. PROOF-ALLOWED citation targets: sources (source_id), artifacts (artifact_id), authorities (authority_id), "
+            "chronology events, and verified claims only.\n"
+            "3. FORBIDDEN citation targets: memory (legal_memories), validation results, derivative extraction artifacts, "
+            "stale artifacts, rough drafts, orientation-only material.\n"
+            "4. If a finding cannot be cited to a proof-allowed target, mark it as 'uncertain' with the specific reason.\n"
+            "5. Use the source_id as the citation target for extracted/OCR source material, not the extraction artifact_id.\n"
+            "6. Do not invent evidence, authorities, quotations, dates, amounts, or legal conclusions.\n\n"
+            f"{base_instructions}"
+        )
+    else:
+        instructions = base_instructions
+
     repo.add_task(
         conn,
         TaskSpec(
             task_id=task_id,
             title=f"Repair {plan.blocker_type} for {plan.target_type}:{plan.target_id}",
             task_type="internal_repair",
-            stage=LegalStage.S0_SOURCE_INVENTORY,
+            stage=original_stage,
             matter_scope=matter_scope,
             status=TaskStatus.QUEUED,
-            instructions=(
-                f"Perform bounded internal repair action {action_type} for {plan.target_type}:{plan.target_id}. "
-                "Do not perform provider retries, external legal actions, or fake proof. Record a blocker if safe repair is impossible."
-            ),
+            instructions=instructions,
             expected_value=0.2,
         ),
     )
