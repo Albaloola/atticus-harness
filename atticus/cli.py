@@ -49,7 +49,7 @@ from atticus.migration.import_old_run import import_candidates
 from atticus.migration.reconcile import reconcile_foundation
 from atticus.migration.report import build_migration_report
 from atticus.providers.budget import budget_status, check_budget
-from atticus.providers.live_readiness import probe_live_openrouter
+from atticus.providers.live_readiness import LIVE_ENABLE_ENV, probe_live_openrouter
 from atticus.providers.model_policy import (
     ModelRoutingPolicy,
     default_smart_model_policy,
@@ -90,6 +90,7 @@ from atticus.status.completion import (
     next_resume_action,
     record_completion_snapshot,
 )
+from atticus.status.human_attention_cleanup import plan_human_attention_cleanup
 from atticus.status.inspect import inspect_record
 from atticus.status.report import generate_status
 from atticus.status.runbook import export_runbook
@@ -636,8 +637,14 @@ def build_parser() -> argparse.ArgumentParser:
     _ = live_resume.add_argument("--model", default="deepseek/deepseek-v4-pro", help="OpenRouter model to probe for live resume")
     _ = live_resume.add_argument("--probe", action="store_true", help="run a live OpenRouter probe before planning")
     _ = live_resume.add_argument("--probe-result-json", help="preverified provider probe JSON from provider-probe")
+    _ = live_resume.add_argument("--allow-live", action="store_true", help="permit live OpenRouter probe/planning and set the child env gate for this command only")
+    _ = live_resume.add_argument("--write", action="store_true", help="write smart provider policy updates and leases")
+    _ = live_resume.add_argument("--execute", action="store_true", help="alias for --write; does not launch workers")
     _ = live_resume.add_argument("--write-leases", action="store_true")
     _ = live_resume.add_argument("--worker-prefix", default="atticus-openrouter")
+    _ = live_resume.add_argument("--execute-ticks", type=int, default=0, help="run N free-loop ticks after successful live-resume preparation")
+    _ = live_resume.add_argument("--max-ticks", type=int, default=1, help="max ticks per execute batch (default: 1)")
+    _ = live_resume.add_argument("--output-dir", help="output directory for free-loop workers (required when --execute-ticks > 0)")
 
     free_loop = sub.add_parser("run-free-loop", help="run bounded autonomous supervisor ticks; live provider calls require --allow-live and provider env gates")
     _ = free_loop.add_argument("--db", required=True)
@@ -669,6 +676,12 @@ def build_parser() -> argparse.ArgumentParser:
     _ = attention.add_argument("--target-id", default="manual")
     _ = attention.add_argument("--severity", default="info")
     _ = attention.add_argument("--reason", default="")
+    _ = attention.add_argument("--current-only", action="store_true", help="show only current (non-superseded) attention items")
+    _ = attention.add_argument("--classify", action="store_true", help="add triage classification per attention item")
+    _ = attention.add_argument("--cleanup", action="store_true", help="plan conservative stale/noisy human-attention cleanup")
+    _ = attention.add_argument("--provider-probe-passed", action="append", default=[], help="explicit successful provider probe, e.g. openrouter; repeatable")
+    _ = attention.add_argument("--write", action="store_true", help="apply human-attention cleanup plan; default is dry-run")
+    _ = attention.add_argument("--json", dest="json_output", action="store_true", help="accepted for command symmetry; output is always JSON")
 
     migrate = sub.add_parser("migrate-report", help="dry-run migration report for legacy workspace")
     _ = migrate.add_argument("--workspace", required=True)
@@ -1780,6 +1793,9 @@ def _main(args: CliArgs) -> int:
 
     if args.command == "live-resume":
         env = dict(os.environ)
+        write = bool(args.write or args.execute or args.write_leases)
+        if args.allow_live:
+            env[LIVE_ENABLE_ENV] = "1"
         probe_result: object
         if args.probe_result_json:
             try:
@@ -1793,17 +1809,55 @@ def _main(args: CliArgs) -> int:
             )
         else:
             probe_result = {"ok": False, "reason": "live-resume requires --probe or --probe-result-json"}
-        with repo.db_connection(args.db, read_only=not args.write_leases) as conn:
+        with repo.db_connection(args.db, read_only=not write) as conn:
             matter_scope = _resolve_scheduler_matter_scope(conn, matter_scope=args.matter, all_matters=args.all_matters)
+            policy_plan = _ensure_live_resume_smart_provider_policy(
+                conn,
+                matter_scope=matter_scope,
+                dry_run=not write,
+            )
             plan = prepare_live_resume(
                 conn,
                 capacity=args.capacity,
                 env=env,
                 matter_scope=matter_scope,
                 probe_result=probe_result,
-                write_leases=args.write_leases,
+                write_leases=write,
                 worker_prefix=args.worker_prefix,
             )
+            plan["provider_policy_plan"] = policy_plan
+            plan["live_env_gate"] = {
+                "name": LIVE_ENABLE_ENV,
+                "established_for_child_commands": bool(args.allow_live),
+                "enabled": env.get(LIVE_ENABLE_ENV) == "1",
+            }
+            plan["next"] = _classify_live_resume_next_action(
+                conn,
+                plan=plan,
+                db=args.db,
+                matter_scope=matter_scope,
+                output_dir="OUT",
+                capacity=args.capacity,
+            )
+            execute_output: dict[str, object] = {}
+            if args.execute_ticks and args.execute_ticks > 0 and write and plan.get("ready") is True and args.allow_live:
+                output_dir = args.output_dir or "OUT"
+                try:
+                    tick_result = run_free_loop(
+                        conn,
+                        output_dir=output_dir,
+                        capacity=args.capacity or 15,
+                        max_ticks=args.execute_ticks,
+                        runtime="openrouter",
+                        allow_live=True,
+                        env=env,
+                        matter_scope=matter_scope,
+                    )
+                    plan["free_loop_ticks"] = tick_result
+                    plan["_auto_continued"] = True
+                except Exception as exc:
+                    plan["free_loop_error"] = str(exc)
+                    plan["_auto_continued"] = False
         print_json(plan)
         return 0 if plan["ready"] else 2
 
@@ -1837,7 +1891,19 @@ def _main(args: CliArgs) -> int:
         return 0 if result["ready_for_live_resume"] else 2
 
     if args.command == "human-attention":
-        with repo.db_connection(args.db) as conn:
+        with repo.db_connection(args.db, read_only=not (bool(getattr(args, "write", False)) or bool(getattr(args, "add", False)))) as conn:
+            if args.cleanup:
+                if not args.matter:
+                    raise ValueError("human-attention --cleanup requires --matter")
+                print_json(
+                    plan_human_attention_cleanup(
+                        conn,
+                        matter_scope=args.matter,
+                        provider_probe_passed=cast(list[str], args.provider_probe_passed),
+                        write=bool(args.write),
+                    )
+                )
+                return 0
             if args.add:
                 matter_scope = cast(str | None, args.matter)
                 if matter_scope is None and repo.matter_scope_for_target(conn, target_type=args.target_type, target_id=args.target_id) is None:
@@ -1864,6 +1930,12 @@ def _main(args: CliArgs) -> int:
                         params,
                     )
                 ]
+                if args.current_only:
+                    rows = [row for row in rows if row.get("superseded_by") is None]
+                if args.classify:
+                    from atticus.status.completion import triage_human_attention
+                    for row in rows:
+                        row["classification"] = triage_human_attention(dict(row))
                 print_json({"items": rows})
         return 0
 
@@ -2061,6 +2133,136 @@ def _set_model_policy_for_matter(
         "tasks_updated": 0 if dry_run else len(changed),
         "task_ids": [str(row["task_id"]) for row in rows],
         "resolved": resolved,
+    }
+
+
+def _ensure_live_resume_smart_provider_policy(
+    conn: sqlite3.Connection,
+    *,
+    matter_scope: str | None,
+    dry_run: bool,
+) -> JsonObject:
+    """Apply smart OpenRouter policy to live-resume candidates with unset policy only."""
+
+    matter_clause = "AND matter_scope = ?" if matter_scope else ""
+    params: tuple[object, ...] = (matter_scope,) if matter_scope else ()
+    rows = [
+        cast(Mapping[str, object], row)
+        for row in conn.execute(
+            f"""
+            SELECT task_id, matter_scope, stage, task_type, expected_value, provider_policy_json
+            FROM tasks
+            WHERE status IN ('queued', 'ready', 'blocked')
+            {matter_clause}
+            ORDER BY expected_value DESC, created_at ASC
+            """,
+            params,
+        )
+    ]
+    policy = default_smart_model_policy()
+    changed: list[str] = []
+    resolved: list[JsonObject] = []
+    skipped: list[JsonObject] = []
+    for row in rows:
+        task_id = str(row["task_id"])
+        try:
+            current = json.loads(str(row["provider_policy_json"] or "{}"))
+        except (json.JSONDecodeError, TypeError) as exc:
+            skipped.append({"task_id": task_id, "reason": f"malformed provider_policy_json: {exc}"})
+            continue
+        if not isinstance(current, Mapping):
+            skipped.append({"task_id": task_id, "reason": "provider_policy_json is not a JSON object"})
+            continue
+        current_policy = {str(key): value for key, value in cast(Mapping[object, object], current).items()}
+        if str(current_policy.get("provider") or "").strip() and str(current_policy.get("model") or "").strip():
+            skipped.append({"task_id": task_id, "reason": "provider policy already set"})
+            continue
+        provider_policy = smart_provider_policy_for_route(
+            policy,
+            layer="worker",
+            stage=str(row["stage"]),
+            task_type=str(row["task_type"]),
+            task_id=task_id,
+            matter_scope=str(row["matter_scope"]),
+            expected_value=float(str(row["expected_value"] or 0.0)),
+        )
+        resolved.append({"task_id": task_id, "provider_policy": provider_policy})
+        changed.append(task_id)
+        if not dry_run:
+            _ = conn.execute(
+                "UPDATE tasks SET provider_policy_json = ?, updated_at = ? WHERE task_id = ?",
+                (json.dumps(provider_policy, sort_keys=True, separators=(",", ":")), utc_now(), task_id),
+            )
+    if changed and not dry_run:
+        _ = repo.emit_event(
+            conn,
+            "live_resume.provider_policy.smart_defaults",
+            matter_scope=matter_scope or "multi",
+            payload={"task_ids": changed},
+        )
+    return {
+        "dry_run": dry_run,
+        "smart_defaults": True,
+        "tasks_scanned": len(rows),
+        "tasks_would_update": len(changed),
+        "tasks_updated": 0 if dry_run else len(changed),
+        "task_ids": changed,
+        "resolved": resolved,
+        "skipped": skipped,
+    }
+
+
+def _classify_live_resume_next_action(
+    conn: sqlite3.Connection,
+    *,
+    plan: Mapping[str, object],
+    db: str,
+    matter_scope: str | None,
+    output_dir: str,
+    capacity: int,
+) -> JsonObject:
+    matter_arg = f" --matter {matter_scope}" if matter_scope else " --all-matters"
+    run_command = (
+        f"ATTICUS_ENABLE_LIVE_OPENROUTER=1 python -m atticus.cli run-free-loop --db {db}{matter_arg} "
+        f"--output-dir {output_dir} --capacity {capacity} --max-ticks 1 --runtime openrouter --allow-live"
+    )
+    if plan.get("ready") is True:
+        return {"classification": "scheduler_can_continue", "command": run_command}
+
+    reducer = conn.execute(
+        f"SELECT task_id FROM tasks WHERE status = ? {'AND matter_scope = ?' if matter_scope else ''} ORDER BY updated_at ASC LIMIT 1",
+        ((TaskStatus.REDUCER_PENDING, matter_scope) if matter_scope else (TaskStatus.REDUCER_PENDING,)),
+    ).fetchone()
+    if reducer is not None:
+        return {
+            "classification": "reducer_review_required",
+            "command": f"python -m atticus.cli reducer-review next --db {db}{matter_arg}",
+            "task_id": _row_str(reducer, "task_id"),
+        }
+
+    human = conn.execute(
+        f"SELECT attention_id, reason FROM human_attention WHERE status = 'open' {'AND matter_scope = ?' if matter_scope else ''} ORDER BY attention_id DESC LIMIT 1",
+        (matter_scope,) if matter_scope else (),
+    ).fetchone()
+    if human is not None:
+        return {
+            "classification": "human_attention_terminal",
+            "command": f"python -m atticus.cli human-attention --db {db}{matter_arg}",
+            "attention_id": _row_str(human, "attention_id"),
+            "reason": _row_str(human, "reason"),
+        }
+
+    blocked_tasks = plan.get("blocked_tasks")
+    blocked_text = json.dumps(blocked_tasks if isinstance(blocked_tasks, list) else [], sort_keys=True).lower()
+    if "local/stub" in blocked_text or "provider must be openrouter" in blocked_text or "deterministic source-led" in blocked_text:
+        return {
+            "classification": "stale_local_stub_or_source_led_repair_required",
+            "command": f"python -m atticus.cli repairs next --db {db}{matter_arg}",
+        }
+
+    return {
+        "classification": "provider_or_readiness_blocker",
+        "command": f"python -m atticus.cli live-resume --db {db}{matter_arg} --capacity {capacity} --allow-live --probe --write",
     }
 
 
@@ -2390,7 +2592,9 @@ def _context_markdown(diagnostics: Mapping[str, object]) -> str:
 
 def _materialize_resume_commands(value: object, db_path: str) -> object:
     if isinstance(value, str):
-        return value.replace("--db DB", f"--db {db_path}")
+        result = value.replace("--db DB", f"--db {db_path}")
+        result = result.replace("--output-dir OUT", f"--output-dir {Path(db_path).parent / 'OUT'}")
+        return result
     if isinstance(value, Mapping):
         return {str(key): _materialize_resume_commands(item, db_path) for key, item in value.items()}
     if isinstance(value, list | tuple):

@@ -72,6 +72,10 @@ PROVIDER_CONTROL_PLANE_ATTENTION_PREFIXES = (
     "provider preflight failed:",
     "provider runtime requires user intervention:",
     "provider runtime failed:",
+    "OpenRouter provider call failed after dispatch: OpenRouter network error",
+    "OpenRouter provider call failed after dispatch: OpenRouter HTTP 5",
+    "OpenRouter provider call failed after dispatch: OpenRouter request failed",
+    "OpenRouter probe failed: network",
 )
 
 
@@ -1835,7 +1839,7 @@ def resolve_provider_control_plane_attention(
 ) -> int:
     """Close stale provider user-intervention attention after a provider probe succeeds."""
 
-    params: list[object] = [matter_scope, matter_scope]
+    params: list[object] = [matter_scope, matter_scope, matter_scope]
     clauses = [f"reason LIKE ? ESCAPE '\\'" for _ in PROVIDER_CONTROL_PLANE_ATTENTION_PREFIXES]
     params.extend(_like_prefix(prefix) for prefix in PROVIDER_CONTROL_PLANE_ATTENTION_PREFIXES)
     cur = conn.execute(
@@ -1843,8 +1847,7 @@ def resolve_provider_control_plane_attention(
         UPDATE human_attention
         SET status = 'closed'
         WHERE matter_scope = ?
-          AND target_type = 'matter'
-          AND target_id = ?
+          AND ((target_type = 'matter' AND target_id = ?) OR (target_type = 'task' AND target_id IN (SELECT task_id FROM tasks WHERE matter_scope = ?)))
           AND status = 'open'
           AND ({' OR '.join(clauses)})
         """,
@@ -1867,12 +1870,13 @@ def resolve_provider_control_plane_attention(
         """
         SELECT 1
         FROM human_attention
-        WHERE matter_scope = ? AND target_type = 'matter' AND target_id = ?
+        WHERE matter_scope = ?
+          AND ((target_type = 'matter' AND target_id = ?) OR (target_type = 'task' AND target_id IN (SELECT task_id FROM tasks WHERE matter_scope = ?)))
           AND severity = 'blocker' AND status = 'open'
           AND reason LIKE '%requires user intervention%'
         LIMIT 1
         """,
-        (matter_scope, matter_scope),
+        (matter_scope, matter_scope, matter_scope),
     ).fetchone()
     if still_requires_user is None:
         _ = conn.execute(
@@ -1883,6 +1887,80 @@ def resolve_provider_control_plane_attention(
             """,
             (utc_now(), matter_scope, ORCHESTRATOR_TERMINAL_STATUS),
         )
+    return changed
+
+
+def resolve_local_stub_blockers_after_live_approval(
+    conn: sqlite3.Connection,
+    *,
+    matter_scope: str,
+    resolution_source: str = "live_provider_approved",
+) -> int:
+    """Close stale local-stub capability blockers after live provider is approved.
+
+    When a live provider probe succeeds, local-stub blockers (which said "use a
+    provider-backed worker") are superseded because the provider-backed worker is
+    now available. This function closes those stale attention items so they don't
+    remain as false blockers in matter completion reports.
+    """
+
+    patterns = (
+        "%local_stub capability block%",
+        "%local/no-live runtime%",
+        "%use a provider-backed worker%",
+    )
+    cur = conn.execute(
+        """
+        UPDATE human_attention
+        SET status = 'closed'
+        WHERE matter_scope = ?
+          AND status = 'open'
+          AND (reason LIKE ? OR reason LIKE ? OR reason LIKE ?)
+          AND target_type = 'task'
+        """,
+        (matter_scope, *patterns),
+    )
+    changed = int(cur.rowcount if cur.rowcount is not None and cur.rowcount > 0 else 0)
+
+    cur2 = conn.execute(
+        """
+        UPDATE human_attention
+        SET status = 'closed'
+        WHERE matter_scope = ?
+          AND status = 'open'
+          AND (reason LIKE ? OR reason LIKE ? OR reason LIKE ?)
+          AND target_type = 'matter'
+        """,
+        (matter_scope, *patterns),
+    )
+    changed += int(cur2.rowcount if cur2.rowcount is not None and cur2.rowcount > 0 else 0)
+
+    if changed:
+        emit_event(
+            conn,
+            "human_attention.local_stub_blockers_resolved",
+            matter_scope=matter_scope,
+            payload={
+                "resolved_count": changed,
+                "resolution_source": resolution_source,
+            },
+        )
+
+    still_blocked = conn.execute(
+        """
+        SELECT 1 FROM human_attention
+        WHERE matter_scope = ? AND status = 'open'
+          AND severity = 'blocker'
+        LIMIT 1
+        """,
+        (matter_scope,),
+    ).fetchone()
+    if still_blocked is None:
+        conn.execute(
+            "UPDATE matter_orchestrators SET status = 'repair_required', updated_at = ? WHERE matter_scope = ? AND status = ?",
+            (utc_now(), matter_scope, ORCHESTRATOR_TERMINAL_STATUS),
+        )
+
     return changed
 
 

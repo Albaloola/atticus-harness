@@ -121,7 +121,7 @@ class MatterCompletionSnapshot:
         return asdict(self)
 
 
-def build_matter_completion_report(conn: sqlite3.Connection, matter_scope: str) -> MatterCompletionReport:
+def build_matter_completion_report(conn: sqlite3.Connection, matter_scope: str, current_only: bool = False) -> MatterCompletionReport:
     required_certifications = required_certifications_for_goal(conn, matter_scope)
     active_certifications = _active_certifications(conn, matter_scope)
     missing_certifications = tuple(cert for cert in required_certifications if cert not in active_certifications)
@@ -131,7 +131,7 @@ def build_matter_completion_report(conn: sqlite3.Connection, matter_scope: str) 
     failed = _tasks_by_status(conn, matter_scope, ("failed",))
     blocked_tasks = _tasks_by_status(conn, matter_scope, ("blocked",))
     stale_artifacts = tuple(_stale_artifact_ids(conn, matter_scope))
-    attention = tuple(_open_human_attention(conn, matter_scope))
+    attention = tuple(_open_human_attention(conn, matter_scope, current_only=current_only))
 
     requirements: list[MatterCompletionRequirement] = []
     for certification in required_certifications:
@@ -400,7 +400,7 @@ def next_resume_action(conn: sqlite3.Connection, matter_scope: str) -> dict[str,
             "task_type": task["task_type"],
             "reason": f"runnable{requeue_note} tasks remain",
             "after": "rerun matter-health after the scheduler tick",
-            "resume_command": f"python -m atticus.cli run-free-loop --db DB --matter {matter_scope} --output-dir OUT --capacity 15 --max-ticks 1",
+            "resume_command": f"ATTICUS_ENABLE_LIVE_OPENROUTER=1 python -m atticus.cli run-free-loop --db DB --matter {matter_scope} --output-dir OUT --capacity 15 --max-ticks 1 --runtime openrouter --allow-live",
         }
 
     if report.missing_certifications:
@@ -528,19 +528,59 @@ def _stale_artifact_ids(conn: sqlite3.Connection, matter_scope: str) -> list[str
     return [str(row["artifact_id"]) for row in rows]
 
 
-def _open_human_attention(conn: sqlite3.Connection, matter_scope: str) -> list[dict[str, object]]:
+def _open_human_attention(conn: sqlite3.Connection, matter_scope: str, *, current_only: bool = False) -> list[dict[str, object]]:
     rows = conn.execute(
-        """
+        f"""
         SELECT attention_id, matter_scope, target_type, target_id, severity, reason, status,
                owner, signature, superseded_by, created_at
         FROM human_attention
-        WHERE matter_scope = ? AND status = 'open'
+        WHERE matter_scope = ? AND status = 'open' {'AND superseded_by IS NULL' if current_only else ''}
         ORDER BY CASE severity WHEN 'blocker' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, attention_id DESC
         LIMIT 50
         """,
         (matter_scope,),
     ).fetchall()
     return [_row_to_dict(row) for row in rows]
+
+
+def triage_human_attention(item: dict[str, object]) -> str:
+    """Classify a human-attention item by current relevance.
+
+    Returns one of:
+    - 'stale_superseded' — item has been superseded by another action
+    - 'stale_local_stub' — local-stub blocker that is stale (live provider exists)
+    - 'stale_transient_network' — transient network failure that may have resolved
+    - 'requires_operator' — genuinely needs operator decision
+    - 'requires_provider' — provider config/credential issue
+    - 'requires_reducer' — reducer/candidate review needed
+    - 'unknown' — cannot classify
+    """
+    if not isinstance(item, Mapping):
+        return "unknown"
+
+    reason = str(item.get("reason") or "").lower()
+    status = str(item.get("status") or "")
+    superseded_by = item.get("superseded_by")
+
+    if superseded_by:
+        return "stale_superseded"
+
+    if "local_stub" in reason or "local/no-live runtime" in reason or "use a provider-backed worker" in reason:
+        return "stale_local_stub"
+
+    if "network error" in reason or "http 5" in reason or "transient" in reason or "timeout" in reason:
+        return "stale_transient_network"
+
+    if "provider" in reason or "openrouter" in reason or "api_key" in reason or "unauthorized" in reason:
+        return "requires_provider"
+
+    if "reducer" in reason or "candidate" in reason or "review" in reason:
+        return "requires_reducer"
+
+    if "operator" in reason or "human" in reason or "user intervention" in reason:
+        return "requires_operator"
+
+    return "unknown"
 
 
 def _open_reducer_review_queue(conn: sqlite3.Connection, matter_scope: str) -> list[dict[str, object]]:

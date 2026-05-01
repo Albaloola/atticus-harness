@@ -402,6 +402,7 @@ def _openrouter_preflight(
                 provider="openrouter",
                 resolution_source="provider.preflight_ok",
             )
+            _ = repo.resolve_local_stub_blockers_after_live_approval(conn, matter_scope=matter_scope)
             allowed.extend(tasks)
             preflight_groups.append(
                 {

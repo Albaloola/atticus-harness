@@ -227,7 +227,37 @@ def _execute_plan_action(conn: sqlite3.Connection, *, matter_scope: str, plan: R
         dependency_task_id = str(action.get("dependency_task_id") or _dependency_from_plan(plan) or plan.target_id)
         return _repair_dependency(conn, matter_scope=matter_scope, blocked_task_id=plan.target_id if plan.target_type == "task" else "", dependency_task_id=dependency_task_id, base=base, write=write)
 
-    if action_type in {"decompose_or_compact_context", "repair_worker_contract_or_prompt", "orchestrator_repair_plan", "refresh_stale_dependency", "use_deterministic_source_led_generator_or_import_packet"}:
+    if action_type == "use_deterministic_source_led_generator_or_import_packet":
+        if plan.target_type == "human_attention":
+            return {**base, "bucket": "skipped", "reason": "existing human_attention blocks automatic source-led generation"}
+        if plan.target_type != "task":
+            if not write:
+                return {**base, "bucket": "applied", "dry_run": True, "would_create_repair_task": action_type}
+            task_id = _ensure_internal_repair_task(conn, matter_scope=matter_scope, plan=plan, action_type=action_type)
+            return {**base, "bucket": "applied", "created_task_ids": [task_id], "repair_task_id": task_id}
+        if not write:
+            return {**base, "bucket": "applied", "dry_run": True, "would_create_source_led_packet": True}
+        try:
+            from atticus.workflows.source_led_packet import create_source_led_candidate_for_task
+            result = create_source_led_candidate_for_task(
+                conn,
+                matter_scope=matter_scope or plan.matter_scope or "unknown",
+                task_id=plan.target_id,
+                max_sources=12,
+                source_ids=None,
+                write=True,
+            )
+            return {
+                **base,
+                "bucket": "applied",
+                "created_candidate_id": result.candidate_id,
+                "task_id": plan.target_id,
+                "candidate_info": result.support_summary,
+            }
+        except Exception as exc:
+            return {**base, "bucket": "terminal", "reason": f"source-led packet generation failed: {exc}"}
+
+    if action_type in {"decompose_or_compact_context", "repair_worker_contract_or_prompt", "orchestrator_repair_plan", "refresh_stale_dependency"}:
         if plan.target_type == "human_attention":
             return {**base, "bucket": "skipped", "reason": "existing human_attention remains operator/provider-owned; not creating recursive repair work"}
         if not write:
