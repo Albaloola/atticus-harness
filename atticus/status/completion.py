@@ -568,9 +568,15 @@ def triage_human_attention(item: dict[str, object]) -> str:
     - 'stale_superseded' — item has been superseded by another action
     - 'stale_local_stub' — local-stub blocker that is stale (live provider exists)
     - 'stale_transient_network' — transient network failure that may have resolved
+    - 'stale_validation_failure' — validation failure that may have been superseded
+    - 'stale_quarantined_output' — worker output quarantined, historical artifact
+    - 'stale_proposed_task_rejection' — rejected proposed task, historical
+    - 'stale_repair_loop_noise' — repetitive repair loop requiring escalation
+    - 'stale_supervisor_no_progress' — no-progress signal after conditions changed
     - 'requires_operator' — genuinely needs operator decision
     - 'requires_provider' — provider config/credential issue
     - 'requires_reducer' — reducer/candidate review needed
+    - 'requires_orchestrator' — orchestrator repair/scheduler action needed
     - 'unknown' — cannot classify
     """
     if not isinstance(item, Mapping):
@@ -705,8 +711,7 @@ def route_human_attention(item: dict[str, object], matter_scope: str = "") -> di
         "routed_owner": route["routed_owner"],
         "routed_action": route["routed_action"],
         "routed_command": route["routed_command_template"]
-            .replace("MATTER", matter_scope)
-            .replace("DB", "--db DB"),
+            .replace("MATTER", matter_scope),
     }
     attention_id = item.get("attention_id")
     if attention_id is not None:
