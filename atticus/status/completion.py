@@ -130,6 +130,7 @@ def build_matter_completion_report(conn: sqlite3.Connection, matter_scope: str, 
     reducer_review_queue = tuple(_open_reducer_review_queue(conn, matter_scope))
     failed = _tasks_by_status(conn, matter_scope, ("failed",))
     blocked_tasks = _tasks_by_status(conn, matter_scope, ("blocked",))
+    running_or_leased = _tasks_by_status(conn, matter_scope, ("running", "leased"))
     stale_artifacts = tuple(_stale_artifact_ids(conn, matter_scope))
     attention = tuple(_open_human_attention(conn, matter_scope, current_only=current_only))
 
@@ -194,9 +195,9 @@ def build_matter_completion_report(conn: sqlite3.Connection, matter_scope: str, 
             )
         )
 
-    done = not missing_certifications and not runnable and not reducer_pending and not failed and not blocked_tasks and not stale_artifacts and not attention
+    done = not missing_certifications and not runnable and not reducer_pending and not failed and not blocked_tasks and not stale_artifacts and not attention and not reducer_review_queue and not running_or_leased
     safe_to_finalize = done and "final_quality_gate" in active_certifications
-    blocked = not done and (bool(missing_certifications) or bool(reducer_pending) or bool(failed) or bool(blocked_tasks) or bool(stale_artifacts) or bool(attention))
+    blocked = not done
     return MatterCompletionReport(
         matter_scope=matter_scope,
         done=done,
@@ -290,6 +291,7 @@ def record_completion_snapshot(conn: sqlite3.Connection, matter_scope: str) -> M
             snapshot.created_at,
         ),
     )
+    conn.commit()
     return snapshot
 
 
@@ -332,6 +334,7 @@ def assert_completion_has_next_action(conn: sqlite3.Connection, matter_scope: st
         "failed_task",
         "human_attention",
         "supervisor_tick",
+        "orchestrator_repair",
     }
     has_owner_proof = bool(reducer_review_id or runnable_task_id or repair_plan_id or attention_id or action_type in {"missing_certification", "supervisor_tick"})
     ok = has_primary and classified and has_owner_proof
@@ -483,6 +486,8 @@ def next_resume_action(conn: sqlite3.Connection, matter_scope: str) -> dict[str,
                     "routed_lane": item.get("routed_lane", ""),
                     "stale_action": False,
                     "supersedes": "",
+                    "blocked_by_human": False,
+                    "blocked_by_provider": False,
                 }
             if routed_owner == "orchestrator":
                 return {
@@ -496,6 +501,8 @@ def next_resume_action(conn: sqlite3.Connection, matter_scope: str) -> dict[str,
                     "routed_lane": item.get("routed_lane", ""),
                     "stale_action": False,
                     "supersedes": "",
+                    "blocked_by_human": False,
+                    "blocked_by_provider": False,
                 }
             if routed_owner == "provider_control_plane":
                 return {
@@ -509,6 +516,8 @@ def next_resume_action(conn: sqlite3.Connection, matter_scope: str) -> dict[str,
                     "routed_lane": item.get("routed_lane", ""),
                     "stale_action": False,
                     "supersedes": "",
+                    "blocked_by_human": False,
+                    "blocked_by_provider": True,
                 }
             if routed_owner == "reducer":
                 return {
@@ -523,7 +532,10 @@ def next_resume_action(conn: sqlite3.Connection, matter_scope: str) -> dict[str,
                     "routed_lane": item.get("routed_lane", ""),
                     "stale_action": False,
                     "supersedes": "",
+                    "blocked_by_human": False,
+                    "blocked_by_provider": False,
                 }
+
 
         # Process genuine human requests
         if human_requests:
@@ -713,13 +725,16 @@ def triage_human_attention(item: dict[str, object]) -> str:
     if "network error" in reason or "http 5" in reason or "transient" in reason or "timeout" in reason:
         return "stale_transient_network"
 
+    if "repair requires human" in reason:
+        return "stale_repair_loop_noise"
+
     if "provider" in reason or "openrouter" in reason or "api_key" in reason or "unauthorized" in reason:
         return "requires_provider"
 
     if "reducer" in reason or "candidate" in reason or "review" in reason:
         return "requires_reducer"
 
-    if "operator" in reason or "human" in reason or "user intervention" in reason:
+    if "operator" in reason or "requires human" in reason or "human intervention" in reason or "human decision" in reason or "user intervention" in reason:
         return "requires_operator"
 
     # More specific citation/proof checks must come before stale_quarantined_output
@@ -731,16 +746,13 @@ def triage_human_attention(item: dict[str, object]) -> str:
     if "validation failed" in reason or "validation_gate" in reason:
         if "final_quality_gate" in reason or "extraction_coverage" in reason or "privacy_redaction" in reason or "citation" in reason:
             return "stale_validation_failure"
-        return "requires_operator"
+        return "requires_orchestrator"
 
     if "worker output quarantined" in reason or "quarantined" in reason:
         return "stale_quarantined_output"
 
     if "proposed task rejected" in reason or "proposed task id collides" in reason or "proposed source/evidence search" in reason:
         return "stale_proposed_task_rejection"
-
-    if "repair requires human" in reason:
-        return "stale_repair_loop_noise"
 
     if "incomplete task dependency" in reason or "missing certification" in reason:
         return "requires_orchestrator"
@@ -1000,7 +1012,7 @@ def _latest_candidate_for_task(conn: sqlite3.Connection, task_id: str) -> str:
 def _owner_for_blocked_task(task: Mapping[str, object]) -> str:
     reason = _blocked_reason_text(task).lower()
     if "provider" in reason or "openrouter" in reason or "api_key" in reason:
-        return "provider"
+        return "provider_control_plane"
     if "human" in reason or "operator" in reason or "user intervention" in reason:
         return "operator"
     if "reducer" in reason or "candidate" in reason:
