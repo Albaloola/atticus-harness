@@ -52,6 +52,7 @@ def _commands() -> tuple[CommandDef, ...]:
         CommandDef("matter-profile", "Show, propose, apply, or reset matter-local adaptive stage profiles.", supports_dry_run=True),
         CommandDef("migrate-report", "Build migration report for legacy workspace.", supports_dry_run=True),
         CommandDef("model-policy", "Validate or resolve a model routing policy file.", read_only_safe=True),
+        CommandDef("monitor", "Interactive terminal monitor for the Atticus harness.", aliases=("tui", "console"), read_only_safe=True),
         CommandDef("next-action", "Show the exact next safe action for an incomplete matter.", read_only_safe=True),
         CommandDef("orchestrator", "Status, tick, failures, and repair proposals for matter orchestrators.", supports_dry_run=True),
         CommandDef("policy-check", "Check provider/model fallback policy.", read_only_safe=True, aliases=("provider-policy",)),

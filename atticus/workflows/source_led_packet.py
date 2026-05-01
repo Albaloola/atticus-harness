@@ -23,6 +23,20 @@ from atticus.workers.contracts import safe_path_component
 from atticus.workers.outputs import record_worker_result
 from atticus.workers.result_parser import RESULT_PACKET_SCHEMA_VERSION
 
+KEY_CLAUSE_PATTERNS: dict[str, list[tuple[str, str]]] = {
+    "tenancy": [
+        ("parties", r"(landlord|tenant|lessor|lessee)"),
+        ("premises", r"(premises|dwelling|flat\b|property\s+address)"),
+        ("dates", r"(commencement\s*date|term\s+of|start\s*date|end\s*date|expir)"),
+        ("rent", r"(rent\b|£[\d,]+[\.\d]*|payment\s*schedule|rental\s*amount|weekly\s*rent)"),
+        ("guarantor", r"(guarantor|guarantee|surety)"),
+        ("termination", r"(notice\s*to\s*quit|terminat|break\s*clause)"),
+        ("jurisdiction", r"(scots\s*law|jurisdiction|governing\s*law)"),
+        ("disputes", r"(complaint|dispute\s*resolution|ombudsman|arbitrat)"),
+        ("student_exclusion", r"(student\s*accommodation|exclusion\s*wording|not\s+a\s+student)"),
+    ],
+}
+
 
 @dataclass(frozen=True)
 class SourceLedPacketResult:
@@ -102,14 +116,30 @@ def build_source_led_packet(
     if not source_ids:
         raise ValueError(f"task {task_id} has no source dependencies for source-led packet generation")
     query_text = " ".join([str(task["title"] or ""), str(task["instructions"] or ""), _default_query_terms()])
-    chunks = retrieve_source_chunks_for_task(
-        conn,
-        matter_scope=matter_scope,
-        source_ids=source_ids,
-        query_text=query_text,
-        max_chunks_per_source=1,
-        max_total_chunks=max_sources,
-    )
+    task_type = str(task["task_type"] or "")
+    title_str = str(task["title"] or "")
+    review_task = _task_is_document_review(task_type, title_str)
+    clause_patterns = _patterns_for_task(title_str) if review_task else []
+    if review_task:
+        chunks = retrieve_source_chunks_for_task(
+            conn,
+            matter_scope=matter_scope,
+            source_ids=source_ids,
+            query_text=query_text,
+            max_chunks_per_source=3,
+            max_total_chunks=24,
+        )
+        if clause_patterns:
+            chunks = _select_multi_clause_chunks(chunks, clause_patterns)
+    else:
+        chunks = retrieve_source_chunks_for_task(
+            conn,
+            matter_scope=matter_scope,
+            source_ids=source_ids,
+            query_text=query_text,
+            max_chunks_per_source=1,
+            max_total_chunks=max_sources,
+        )
     if not chunks:
         raise ValueError(f"task {task_id} has no current source chunks; run source extraction/chunking first")
 
@@ -125,7 +155,10 @@ def build_source_led_packet(
     selected_sources: list[str] = []
     for index, chunk in enumerate(chunks, start=1):
         source_id = str(chunk["source_id"])
-        quote = _quote_from_chunk(str(chunk.get("text") or ""), query_text=query_text)
+        if review_task:
+            quote = _multi_clause_quote(str(chunk.get("text") or ""), clause_patterns=clause_patterns)
+        else:
+            quote = _quote_from_chunk(str(chunk.get("text") or ""), query_text=query_text)
         if not quote:
             continue
         citation_id = f"src-{index}"
@@ -270,3 +303,70 @@ def _default_query_terms() -> str:
         "hardship notice to quit NTQ arrears rent accommodation pause enforcement "
         "debt escalation student loan bursary support failure payment chronology"
     )
+
+
+def _task_is_document_review(task_type: str, title: str) -> bool:
+    text = f"{task_type} {title}".casefold()
+    review_indicators = {"review", "triage", "audit", "examination", "check"}
+    document_indicators = {"tenancy", "agreement", "contract", "lease", "deed", "document", "licence", "license"}
+    return any(r in text for r in review_indicators) and any(d in text for d in document_indicators)
+
+
+def _patterns_for_task(title: str) -> list[tuple[str, str]]:
+    title_lower = title.casefold()
+    for keywords, patterns in KEY_CLAUSE_PATTERNS.items():
+        if keywords in title_lower:
+            return patterns
+    return []
+
+
+def _select_multi_clause_chunks(chunks: list[dict[str, object]], clause_patterns: list[tuple[str, str]], max_chunks: int = 8) -> list[dict[str, object]]:
+    scored: list[tuple[dict[str, object], set[str], int]] = []
+    for chunk in chunks:
+        text = str(chunk.get("text") or "").casefold()
+        matched_types: set[str] = set()
+        for clause_type, pattern in clause_patterns:
+            if re.search(pattern, text, re.IGNORECASE):
+                matched_types.add(clause_type)
+        scored.append((chunk, matched_types, len(matched_types)))
+    scored.sort(key=lambda x: (-x[2], -len(str(x[0].get("text", "")))))
+    covered: set[str] = set()
+    selected: list[dict[str, object]] = []
+    for chunk, types, count in scored:
+        if count == 0:
+            continue
+        if len(selected) >= max_chunks:
+            break
+        new_types = types - covered
+        if new_types or len(selected) < 3:
+            selected.append(chunk)
+            covered.update(types)
+    if len(selected) < 3 and chunks:
+        for c in chunks:
+            if c not in selected:
+                selected.append(c)
+            if len(selected) >= 3:
+                break
+    return selected[:max_chunks]
+
+
+def _multi_clause_quote(text: str, *, clause_patterns: list[tuple[str, str]]) -> str:
+    if not clause_patterns or not text.strip():
+        return text[:700].strip()
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+|\n+", text) if len(s.strip()) >= 20]
+    if not sentences:
+        return text[:700].strip()
+    seen: set[int] = set()
+    selected: list[str] = []
+    for _clause_type, pattern in clause_patterns:
+        for i, sentence in enumerate(sentences):
+            if i in seen:
+                continue
+            if re.search(pattern, sentence, re.IGNORECASE):
+                selected.append(sentence)
+                seen.add(i)
+                break
+    if not selected:
+        selected = [sentences[0]]
+    quote = " … ".join(selected)
+    return quote[:700].strip()

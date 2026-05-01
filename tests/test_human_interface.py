@@ -88,9 +88,36 @@ class TestTriageAndRouting:
         finally:
             conn.close()
 
-    @pytest.mark.skip(reason="requires live DB with existing items")
-    def test_human_request_lane_operator_blocked(self) -> None:
-        pass
+    def test_human_request_lane_operator_blocked(self, tmp_path: Path) -> None:
+        conn, db_path = init_db(tmp_path)
+        try:
+            now = utc_now()
+            for cert in ("source_inventory", "extraction_coverage", "evidence_registry",
+                         "production_mapping", "chronology_citations", "issue_route_map",
+                         "authority_map", "hostile_review", "draft_preparation",
+                         "privacy_redaction_audit", "citation_audit"):
+                conn.execute(
+                    "INSERT OR IGNORE INTO certifications (certification_id, subject_type, subject_id, certification_type, status, validator, validation_result_id, evidence_json, created_at) VALUES (?, 'matter', ?, ?, 'active', 'test', 0, '{}', ?)",
+                    (f"cert-{cert}-auto", MATTER, cert, now),
+                )
+            conn.commit()
+
+            attention_id = add_human_attention(
+                conn,
+                target_type="matter",
+                target_id=MATTER,
+                reason="operator decision required for final quality gate",
+                plain_question="Should we proceed with the current draft?",
+                why_needed="Final gate requires operator sign-off on legal risk",
+            )
+            conn.commit()
+
+            readiness = final_gate_readiness(conn, MATTER)
+            assert readiness["can_create_final_gate"] is False, "operator attention should block final gate creation"
+            blocked_types = [r["type"] for r in readiness.get("blocked_reasons", [])]
+            assert "open_human_attention" in blocked_types
+        finally:
+            conn.close()
 
 
 class TestHumanRequest:

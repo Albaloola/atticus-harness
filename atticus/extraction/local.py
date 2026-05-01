@@ -93,6 +93,7 @@ def repair_source_extractions(
     source_ids: Iterable[str] = (),
     dry_run: bool = True,
     timeout_seconds: float = 90.0,
+    force: bool = False,
 ) -> LocalExtractionResult:
     """Repair missing extraction/OCR coverage for matter-local sources."""
 
@@ -119,7 +120,7 @@ def repair_source_extractions(
 
     for row in rows:
         source_id = str(row["source_id"])
-        if _has_coverage(conn, source_id=source_id, source_sha256=str(row["sha256"])):
+        if not force and _has_coverage(conn, source_id=source_id, source_sha256=str(row["sha256"])):
             already_covered += 1
             skipped.append({"source_id": source_id, "reason": "already covered"})
             continue
@@ -252,6 +253,24 @@ def repair_source_extractions(
                         "text_sha256": content_hash,
                     },
                 )
+            page_count = int(extracted.metadata.get("page_count", 1))  # type: ignore[arg-type]
+            _warnings, _quality_status = assess_extraction_quality(
+                conn,
+                source_id=source_id,
+                source_sha256=str(row["sha256"]),
+                method=extracted.method,
+                text=normalized_text,
+                page_count=page_count,
+                metadata={
+                    "extracted_by": "atticus.local_extraction",
+                    "extractor_tool": extracted.metadata.get("extractor") or extracted.method,
+                    "source_id": source_id,
+                    "source_path": str(source_path),
+                    "source_sha256": row["sha256"],
+                    "output_path": str(output_path),
+                    "text_sha256": content_hash,
+                },
+            )
             _ = repo.emit_event(
                 conn,
                 "source.extracted",
@@ -307,7 +326,8 @@ def extract_text_from_path(
     if suffix in DOCX_SUFFIXES:
         return ExtractedText(_extract_docx(path), "docx_text", {"extractor": "python-docx-zip"})
     if suffix == ".pdf" or _is_pdf(path):
-        return ExtractedText(_extract_pdf(path, timeout_seconds=timeout_seconds), "pdf_text", {"extractor": "pdftotext"})
+        pdf_result = _extract_pdf(path, timeout_seconds=timeout_seconds, source_id=source_id, workspace=workspace)
+        return ExtractedText(pdf_result, "pdf_text", {"extractor": "pdftotext"})
     if suffix in DOC_SUFFIXES:
         text, method = _extract_legacy_doc(path, timeout_seconds=timeout_seconds)
         return ExtractedText(text, method, {"extractor": method})
@@ -451,9 +471,23 @@ def _extract_docx_xml(data: bytes) -> str:
     return "\n".join(text.strip() for text in root.itertext() if text.strip())
 
 
-def _extract_pdf(path: Path, *, timeout_seconds: float) -> str:
+def _extract_pdf(
+    path: Path,
+    *,
+    timeout_seconds: float,
+    source_id: str | None = None,
+    workspace: Path | None = None,
+) -> str:
     if shutil.which("pdftotext") is None:
         raise ExtractionUnavailable("pdftotext is not available for PDF extraction")
+    if source_id is not None and workspace is not None:
+        result = _extract_pdf_with_visual_ocr(
+            path,
+            source_id=source_id,
+            workspace=workspace,
+            timeout_seconds=timeout_seconds,
+        )
+        return result.text
     completed = _run_local_command(
         ["pdftotext", "-layout", "-enc", "UTF-8", str(path), "-"],
         timeout_seconds=timeout_seconds,
@@ -721,6 +755,264 @@ def _record_attention_once(conn: sqlite3.Connection, *, target_id: str, reason: 
         reason=reason,
     )
     return 1
+
+
+def _detect_signature_pages(text: str) -> tuple[list[int], bool]:
+    pages = text.split("\f") if "\f" in text else [text]
+    signature_pages: list[int] = []
+    form_fields_detected = False
+    pattern = re.compile(r"(?i)(?:signature|handwritten|date|full\s+name|handwriting|print\s+name|signed)")
+    for i, page_text in enumerate(pages):
+        if pattern.search(page_text):
+            signature_pages.append(i)
+            form_fields_detected = True
+    return signature_pages, form_fields_detected
+
+
+def _compute_quality_status(
+    confidence: float,
+    warnings: list[str],
+    has_handwriting: bool,
+) -> str:
+    if not warnings and confidence >= 0.8:
+        return "complete"
+    if warnings:
+        warning_text = " ".join(warnings).lower()
+        if "scanned" in warning_text or "image" in warning_text or "low_text_density" in warning_text:
+            return "needs_visual_ocr"
+    if has_handwriting and confidence < 0.85:
+        return "partial"
+    if confidence < 0.5:
+        return "failed"
+    if confidence < 0.75:
+        return "low_confidence"
+    return "complete"
+
+
+def assess_extraction_quality(
+    conn: sqlite3.Connection,
+    *,
+    source_id: str,
+    source_sha256: str,
+    method: str,
+    text: str,
+    page_count: int,
+    metadata: dict[str, object] | None = None,
+) -> tuple[list[str], str]:
+    warnings: list[str] = []
+    text_bytes = len(text.encode("utf-8"))
+    confidence = _confidence_for_method(method)
+    signature_pages, form_fields_detected = _detect_signature_pages(text)
+    has_handwriting = bool(signature_pages)
+
+    pages = text.split("\f") if "\f" in text else [text]
+    if page_count > 0 and len(pages) != page_count and len(pages) > 1:
+        pass
+
+    page_quality: list[dict[str, object]] = []
+    low_density_count = 0
+    for i in range(max(page_count, len(pages))):
+        page_text = pages[i] if i < len(pages) else ""
+        page_text_bytes = len(page_text.encode("utf-8"))
+        line_count = page_text.count("\n") + 1 if page_text.strip() else 0
+        non_empty_lines = sum(1 for line in page_text.split("\n") if line.strip())
+        text_density = non_empty_lines / max(line_count, 1)
+        is_image_only = non_empty_lines < 3 and page_text_bytes > 0
+        if is_image_only:
+            low_density_count += 1
+            if "possible_scanned_pages" not in warnings:
+                warnings.append("possible_scanned_pages")
+        if text_density < 0.15 and non_empty_lines >= 3:
+            low_density_count += 1
+        page_quality.append({
+            "page": i,
+            "text_bytes": page_text_bytes,
+            "line_count": line_count,
+            "non_empty_lines": non_empty_lines,
+            "text_density": round(text_density, 4),
+            "has_signature_fields": i in signature_pages,
+            "is_image_only": is_image_only,
+        })
+
+    if low_density_count > 0 and low_density_count >= max(page_count, 1) // 2:
+        if "low_text_density" not in warnings:
+            warnings.append("low_text_density")
+
+    if method in {"tesseract_ocr"}:
+        ocr_engine = "tesseract"
+    elif method in {"pdf_text", "pdftotext"}:
+        ocr_engine = "pdftotext"
+    else:
+        ocr_engine = method
+
+    needs_visual_ocr = "low_text_density" in warnings or "possible_scanned_pages" in warnings
+
+    quality_status = _compute_quality_status(confidence, warnings, has_handwriting)
+    if needs_visual_ocr and quality_status not in {"needs_visual_ocr", "failed"}:
+        quality_status = "needs_visual_ocr"
+
+    quality_id = f"qual-{source_id}-{source_sha256[:12]}"
+    now = utc_now()
+    conn.execute(
+        """
+        INSERT INTO ocr_quality(
+          quality_id, source_id, source_sha256, method, page_count,
+          quality_status, confidence, text_bytes, warnings_json,
+          page_quality_json, ocr_engine, rendered_image_hash,
+          signature_pages, form_fields_detected, needs_visual_ocr,
+          has_handwriting, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(source_id, source_sha256, method) DO UPDATE SET
+          quality_status = excluded.quality_status,
+          confidence = excluded.confidence,
+          text_bytes = excluded.text_bytes,
+          warnings_json = excluded.warnings_json,
+          page_quality_json = excluded.page_quality_json,
+          ocr_engine = excluded.ocr_engine,
+          signature_pages = excluded.signature_pages,
+          form_fields_detected = excluded.form_fields_detected,
+          needs_visual_ocr = excluded.needs_visual_ocr,
+          has_handwriting = excluded.has_handwriting,
+          updated_at = excluded.updated_at
+        """,
+        (
+            quality_id,
+            source_id,
+            source_sha256,
+            method,
+            page_count,
+            quality_status,
+            confidence,
+            text_bytes,
+            _json(warnings),
+            _json(page_quality),
+            ocr_engine,
+            None,
+            _json(signature_pages),
+            1 if form_fields_detected else 0,
+            1 if needs_visual_ocr else 0,
+            1 if has_handwriting else 0,
+            now,
+            now,
+        ),
+    )
+    return warnings, quality_status
+
+
+def _extract_pdf_with_visual_ocr(
+    path: Path,
+    *,
+    source_id: str,
+    workspace: Path,
+    timeout_seconds: float,
+) -> ExtractedText:
+    if shutil.which("pdftotext") is None:
+        raise ExtractionUnavailable("pdftotext is not available for PDF extraction")
+
+    page_count = 0
+    if shutil.which("pdfinfo") is not None:
+        try:
+            info = _run_local_command(
+                ["pdfinfo", str(path)],
+                timeout_seconds=timeout_seconds,
+            )
+            for line in info.stdout.splitlines():
+                if line.startswith("Pages:"):
+                    page_count = int(line.split("\t", 1)[-1].strip())
+                    break
+        except ExtractionUnavailable:
+            pass
+
+    text_result = _run_local_command(
+        ["pdftotext", "-layout", "-enc", "UTF-8", str(path), "-"],
+        timeout_seconds=timeout_seconds,
+    )
+    full_text = text_result.stdout
+    pages = full_text.split("\f") if "\f" in full_text else [full_text]
+    if page_count == 0:
+        page_count = max(len(pages), 1)
+
+    signature_pages_list, form_fields = _detect_signature_pages(full_text)
+    ocr_dir = workspace / "03-working" / "ocr" / safe_path_component(source_id)
+    ocr_dir.mkdir(parents=True, exist_ok=True)
+
+    combined_text_parts: list[str] = []
+    page_provenance: list[dict[str, object]] = []
+    used_visual_ocr = False
+    has_pdftoppm = shutil.which("pdftoppm") is not None
+    has_tesseract = shutil.which("tesseract") is not None
+    can_visual_ocr = has_pdftoppm and has_tesseract
+
+    for i in range(page_count):
+        pdftotext_page = pages[i] if i < len(pages) else ""
+        page_lines = [l for l in pdftotext_page.split("\n") if l.strip()]
+        text_density = len(page_lines) / max(pdftotext_page.count("\n") + 1, 1) if pdftotext_page.strip() else 0
+        low_text = len(page_lines) < 5 or text_density < 0.15
+        needs_ocr = low_text or i in signature_pages_list
+
+        page_text = pdftotext_page
+        ocr_engine_used = "pdftotext"
+        image_hash: str | None = None
+
+        if needs_ocr and can_visual_ocr and i < max(page_count, len(pages)):
+            try:
+                with tempfile.TemporaryDirectory(prefix="atticus-visual-ocr-") as tmp:
+                    ppm_prefix = str(Path(tmp) / f"page-{i+1:04d}")
+                    _ = _run_local_command(
+                        ["pdftoppm", "-png", "-f", str(i + 1), "-l", str(i + 1), str(path), ppm_prefix],
+                        timeout_seconds=timeout_seconds,
+                    )
+                    rendered = sorted(Path(tmp).glob("*.png"))
+                    if rendered:
+                        image_data = rendered[0].read_bytes()
+                        image_hash = hashlib.sha256(image_data).hexdigest()
+                        ocr_result = _run_local_command(
+                            ["tesseract", str(rendered[0]), "stdout"],
+                            timeout_seconds=timeout_seconds,
+                        )
+                        ocr_text = ocr_result.stdout
+                        if ocr_text.strip():
+                            page_text = ocr_text
+                            ocr_engine_used = "tesseract_via_pdftoppm"
+                            used_visual_ocr = True
+                        else:
+                            page_text = pdftotext_page
+            except ExtractionUnavailable:
+                page_text = pdftotext_page
+
+        page_file = ocr_dir / f"page-{i+1:03d}.txt"
+        page_file.write_text(page_text, encoding="utf-8")
+
+        combined_text_parts.append(page_text)
+        page_provenance.append({
+            "page": i,
+            "page_number": i + 1,
+            "source": ocr_engine_used,
+            "has_visual_ocr": ocr_engine_used == "tesseract_via_pdftoppm",
+            "text_bytes": len(page_text.encode("utf-8")),
+            "image_hash": image_hash,
+        })
+
+    combined_text = "\f".join(combined_text_parts)
+
+    method = "visual_ocr_pipeline" if used_visual_ocr else "pdf_text"
+    metadata: dict[str, object] = {
+        "extractor": method,
+        "page_count": page_count,
+        "page_provenance": page_provenance,
+        "visual_ocr_used": used_visual_ocr,
+        "has_pdftoppm": has_pdftoppm,
+        "has_tesseract": has_tesseract,
+        "signature_pages": signature_pages_list,
+        "form_fields_detected": form_fields,
+        "ocr_output_dir": str(ocr_dir),
+    }
+    return ExtractedText(
+        text=combined_text,
+        method=method,
+        metadata=metadata,
+        ocr_engine="tesseract_pdftoppm" if used_visual_ocr else "pdftotext",
+    )
 
 
 def _confidence_for_method(method: str) -> float:
