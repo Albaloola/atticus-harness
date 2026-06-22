@@ -1,0 +1,321 @@
+from __future__ import annotations
+
+from collections.abc import Mapping
+from pathlib import Path
+from typing import cast
+import json
+
+from atticus.cli import main as cli_main
+from atticus.core.policies import LegalStage
+from atticus.db import repo
+from atticus.workers.work_order import build_work_order
+
+
+def init_db(tmp_path: Path) -> Path:
+    db_path = tmp_path / "atticus.sqlite3"
+    repo.initialize_database(db_path)
+    return db_path
+
+
+def _count(conn, table: str) -> int:
+    row = conn.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()
+    assert row is not None
+    return int(row["n"])
+
+
+def test_coordinator_plan_is_dry_run_and_creates_self_contained_tasks(tmp_path: Path, capsys):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        source_id = repo.add_source(conn, matter_scope="alpha", path="/alpha/source.pdf", sha256="a" * 64)
+
+    assert (
+        cli_main(
+            [
+                "coordinator",
+                "plan",
+                "--db",
+                str(db_path),
+                "--matter",
+                "alpha",
+                "--goal",
+                "Draft a formal complaint about rent arrears handling",
+                "--source-id",
+                source_id,
+            ]
+        )
+        == 0
+    )
+    output = cast(Mapping[str, object], json.loads(capsys.readouterr().out))
+    tasks = cast(list[Mapping[str, object]], output["tasks"])
+
+    with repo.db_connection(db_path) as conn:
+        assert _count(conn, "tasks") == 0
+        assert _count(conn, "leases") == 0
+        assert _count(conn, "candidate_outputs") == 0
+        assert _count(conn, "provider_runs") == 0
+
+    assert output["dry_run"] is True
+    assert output["external_actions"] == "blocked"
+    assert all(task["matter_scope"] == "alpha" for task in tasks)
+    assert any(task["role"] == "drafting_worker" for task in tasks)
+    assert any(task["role"] == "hostile_reviewer" for task in tasks)
+    assert any(task["role"] == "citation_auditor" for task in tasks)
+    assert all(source_id in cast(list[str], task["source_dependencies"]) for task in tasks)
+    assert all("Workers produce candidate packets only" in str(task["instructions"]) for task in tasks)
+    assert all("Do not send, file, serve, upload, email, contact, message" in str(task["instructions"]) for task in tasks)
+    assert all("matter_scope: alpha" in str(task["instructions"]) for task in tasks)
+
+
+def test_coordinator_write_is_idempotent_and_preserves_task_instructions(tmp_path: Path, capsys):
+    db_path = init_db(tmp_path)
+    goal = "Prepare a court correspondence draft and hostile review"
+
+    first = [
+        "coordinator",
+        "create-tasks",
+        "--db",
+        str(db_path),
+        "--matter",
+        "alpha",
+        "--goal",
+        goal,
+        "--write",
+    ]
+    assert cli_main(first) == 0
+    first_output = cast(Mapping[str, object], json.loads(capsys.readouterr().out))
+    assert cli_main(first) == 0
+    second_output = cast(Mapping[str, object], json.loads(capsys.readouterr().out))
+
+    with repo.db_connection(db_path) as conn:
+        tasks = conn.execute(
+            "SELECT task_id, task_type, matter_scope, status, instructions FROM tasks WHERE matter_scope = 'alpha' ORDER BY task_id"
+        ).fetchall()
+        task_count = len(tasks)
+        leases = _count(conn, "leases")
+        candidates = _count(conn, "candidate_outputs")
+        provider_runs = _count(conn, "provider_runs")
+        final_task = next(row for row in tasks if row["task_type"] == "final_quality_gate")
+        work_order = build_work_order(conn, task_id=str(final_task["task_id"]), persist_context=False)
+
+    assert first_output["dry_run"] is False
+    assert cast(list[str], first_output["created_task_ids"])
+    assert second_output["created_task_ids"] == []
+    assert task_count == len(cast(list[object], first_output["tasks"]))
+    assert all(row["matter_scope"] == "alpha" and row["status"] == "queued" for row in tasks)
+    assert all("candidate packets only" in str(row["instructions"]) for row in tasks)
+    assert "Task-specific coordinator contract" in work_order.instructions
+    assert "final quality gate" in work_order.instructions.lower()
+    assert leases == 0
+    assert candidates == 0
+    assert provider_runs == 0
+
+
+def test_coordinator_write_assigns_smart_model_decisions(tmp_path: Path, capsys):
+    db_path = init_db(tmp_path)
+
+    assert (
+        cli_main(
+            [
+                "coordinator",
+                "create-tasks",
+                "--db",
+                str(db_path),
+                "--matter",
+                "alpha",
+                "--goal",
+                "Draft a formal complaint and run hostile review",
+                "--write",
+            ]
+        )
+        == 0
+    )
+    _ = capsys.readouterr()
+
+    with repo.db_connection(db_path) as conn:
+        rows = conn.execute(
+            "SELECT task_type, provider_policy_json FROM tasks WHERE matter_scope = 'alpha' ORDER BY task_id"
+        ).fetchall()
+
+    policies = {str(row["task_type"]): cast(Mapping[str, object], json.loads(str(row["provider_policy_json"]))) for row in rows}
+    evidence_decision = cast(Mapping[str, object], policies["evidence_issue_map"]["model_decision"])
+    hostile_decision = cast(Mapping[str, object], policies["hostile_opponent_review"]["model_decision"])
+
+    assert policies["evidence_issue_map"]["model"] == "deepseek/deepseek-v4-flash"
+    assert evidence_decision["decision_tier"] == "flash_worker"
+    assert policies["hostile_opponent_review"]["model"] == "deepseek/deepseek-v4-pro"
+    assert hostile_decision["decision_tier"] == "pro_orchestrator"
+
+
+def test_coordinator_bounds_broad_evidence_map_generation(tmp_path: Path, capsys):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        for index in range(30):
+            _ = repo.add_source(conn, matter_scope="alpha", path=f"/alpha/source-{index:04d}.pdf", sha256=f"{index:064x}"[-64:])
+
+    assert (
+        cli_main(
+            [
+                "coordinator",
+                "create-tasks",
+                "--db",
+                str(db_path),
+                "--matter",
+                "alpha",
+                "--goal",
+                "Draft a formal complaint",
+                "--write",
+            ]
+        )
+        == 0
+    )
+    _ = capsys.readouterr()
+
+    with repo.db_connection(db_path) as conn:
+        row = conn.execute(
+            "SELECT provider_policy_json FROM tasks WHERE matter_scope = 'alpha' AND task_type = 'evidence_issue_map'"
+        ).fetchone()
+    assert row is not None
+    policy = cast(Mapping[str, object], json.loads(str(row["provider_policy_json"])))
+    assert policy["max_tokens"] == 4096
+
+
+def test_coordinator_draft_goal_binds_existing_sources_and_prerequisite_stages(tmp_path: Path, capsys):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        alpha_source = repo.add_source(conn, matter_scope="alpha", path="/alpha/source.pdf", sha256="a" * 64)
+        _ = repo.add_source(conn, matter_scope="beta", path="/beta/source.pdf", sha256="b" * 64)
+
+    assert (
+        cli_main(
+            [
+                "coordinator",
+                "plan",
+                "--db",
+                str(db_path),
+                "--matter",
+                "alpha",
+                "--goal",
+                "Draft a formal complaint",
+            ]
+        )
+        == 0
+    )
+    output = cast(Mapping[str, object], json.loads(capsys.readouterr().out))
+    tasks = cast(list[Mapping[str, object]], output["tasks"])
+    task_types = [str(task["task_type"]) for task in tasks]
+    source_dependencies = {source for task in tasks for source in cast(list[str], task["source_dependencies"])}
+
+    assert source_dependencies == {alpha_source}
+    assert task_types[:5] == [
+        "evidence_issue_map",
+        "production_mapping",
+        "chronology_event_extraction",
+        "issue_route_map",
+        "authority_map",
+    ]
+    draft = next(task for task in tasks if task["task_type"] == "draft_preparation")
+    draft_dependencies = cast(list[str], draft["task_dependencies"])
+    task_id_by_type = {str(task["task_type"]): str(task["task_id"]) for task in tasks}
+    assert task_id_by_type["chronology_event_extraction"] in draft_dependencies
+    assert task_id_by_type["authority_map"] in draft_dependencies
+
+
+def test_coordinator_respects_active_matter_profile_stage_filter(tmp_path: Path, capsys):
+    db_path = init_db(tmp_path)
+    stages = [
+        {
+            "stage": stage.value,
+            "enabled": stage.value in {"S0", "S1"},
+            "gate_policy": {"external_actions_enabled": False},
+            "worker_policy": {"candidate_only": True, "canonical_writes": "reducer_only"},
+            "model_policy": {"high_risk_flash_requires_human_review": True},
+        }
+        for stage in LegalStage
+    ]
+    with repo.db_connection(db_path) as conn:
+        repo.create_matter_profile(
+            conn,
+            matter_scope="alpha",
+            profile_name="Source-only profile",
+            stages=stages,
+            reason="operator narrowed matter to source work",
+        )
+
+    assert (
+        cli_main(
+            [
+                "coordinator",
+                "plan",
+                "--db",
+                str(db_path),
+                "--matter",
+                "alpha",
+                "--goal",
+                "Draft a formal complaint",
+            ]
+        )
+        == 0
+    )
+    output = cast(Mapping[str, object], json.loads(capsys.readouterr().out))
+
+    assert output["tasks"] == []
+    assert any("disabled S8" in reason for reason in cast(list[str], output["profile_skipped_tasks"]))
+
+
+def test_coordinator_adds_evidence_organization_stage_without_file_mutation(tmp_path: Path, capsys):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        source_id = repo.add_source(conn, matter_scope="alpha", path="/alpha/source.pdf", sha256="a" * 64)
+
+    assert (
+        cli_main(
+            [
+                "coordinator",
+                "plan",
+                "--db",
+                str(db_path),
+                "--matter",
+                "alpha",
+                "--goal",
+                "Organize evidence bundle and propose rename/order after OCR",
+                "--source-id",
+                source_id,
+            ]
+        )
+        == 0
+    )
+    output = cast(Mapping[str, object], json.loads(capsys.readouterr().out))
+    tasks = cast(list[Mapping[str, object]], output["tasks"])
+
+    assert len(tasks) == 1
+    task = tasks[0]
+    assert task["task_type"] == "evidence_organization_plan"
+    assert task["stage"] == "S3"
+    assert task["role"] == "production_organizer"
+    assert "without renaming source files" in str(task["instructions"])
+    assert "generated artifact treated as evidence" in cast(list[str], task["risk_focus"])
+    assert task["provider_policy"]["model"] == "deepseek/deepseek-v4-flash"
+
+
+def test_coordinator_rejects_cross_matter_dependencies(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        beta_source = repo.add_source(conn, matter_scope="beta", path="/beta/source.pdf", sha256="b" * 64)
+
+    assert (
+        cli_main(
+            [
+                "coordinator",
+                "plan",
+                "--db",
+                str(db_path),
+                "--matter",
+                "alpha",
+                "--goal",
+                "Build a chronology",
+                "--source-id",
+                beta_source,
+            ]
+        )
+        == 2
+    )

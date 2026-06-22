@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "profiles": {
+    "all": {
+      "provider": "openai-codex",
+      "model": "gpt-5.5",
+      "runtime": "codex",
+      "allow_fallback": false,
+      "estimated_cost_usd": 0.0
+    }
+  },
+  "routes": {
+    "default": "all"
+  }
+}

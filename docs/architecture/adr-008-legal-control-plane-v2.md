@@ -1,0 +1,194 @@
+# ADR 008: Legal Control Plane V2
+
+Atticus remains an evidence-first legal harness: model output is candidate
+material until validation and reducer acceptance make it canonical. The v2
+control-plane additions strengthen that boundary rather than replacing it with
+agent convenience.
+
+## Worker Result Packet V2
+
+Workers must return `worker_result_packet.v2` packets with these top-level
+fields:
+
+- `schema_version`
+- `task_id`
+- `summary`
+- `findings`
+- `citations`
+- `proposed_artifacts`
+- `proposed_tasks`
+- `uncertainties`
+- `contradictions`
+- `risk_flags`
+- `redaction_flags`
+- `external_action_requests`
+
+Findings cite explicit citation IDs. Citations must target records visible in
+the work-order context or matter-scoped legal graph. External action requests
+are not executed; they are blocked and recorded.
+
+## Prompt Discipline
+
+Prompt-bearing surfaces are part of the safety model. Worker, provider,
+workflow, skill, and context prompts must tell agents that output is
+`candidate`, not canonical; reducers decide what becomes trusted. Prompts must
+preserve matter scope, separate fact, law, procedure, inference, contradiction,
+risk, drafting notes, and uncertainty, and require citations for factual,
+legal, procedural, contradiction, and risk findings unless the finding is
+explicitly uncertain or queued for research.
+
+Prompt text must not encourage external legal action, hidden fallback,
+uncited legal propositions, memory-as-proof, or polished overstatement. A
+well-written legal prompt is useful because it is auditable and
+verification-ready, not because it sounds confident.
+
+## Context Packs V2
+
+Context packs are built from deterministic sections:
+
+- stable system prefix
+- matter posture
+- task contract
+- evidence manifest
+- artifact bundle
+- authority map
+- legal memory index
+- validation gates
+- risk flags
+- open contradictions
+- required output schema
+- attached skills
+- available tools
+
+Operators can inspect what a worker would see:
+
+```bash
+python -m atticus.cli context --db data/atticus.sqlite3 --task-id TASK_ID --json
+python -m atticus.cli context --db data/atticus.sqlite3 --task-id TASK_ID --explain
+```
+
+## Legal Tools
+
+The tool registry classifies tools by read/write behavior, destructive risk,
+live-provider requirements, and matter scoping:
+
+```bash
+python -m atticus.cli tools list --db data/atticus.sqlite3 --json
+```
+
+Read-only tools inspect sources, artifacts, memory, validation gates, and
+context packs. Mutating tools are guarded and matter-scoped. The central tool
+invocation path enforces `permission_mode` before writes, enforces each tool's
+`max_result_size`, and records successful, blocked, and failed invocations in
+the event stream when the database connection is writable. Draft artifact
+editing uses read-before-write hashes and creates artifact versions; validated
+or certified drafts are not edited by ordinary worker tools.
+
+## Legal Memory
+
+Typed legal memory is a matter-scoped operational projection, not proof.
+Evidence, law, procedure, contradiction, authority, and risk memories require
+citations to existing source, artifact, authority, claim, chronology, memory, or
+validation records. Drafting preferences and user profiles may be uncited only
+when they are clearly user-provided.
+
+```bash
+python -m atticus.cli memory list --db data/atticus.sqlite3 --matter MATTER
+python -m atticus.cli memory show MEMORY_ID --db data/atticus.sqlite3 --matter MATTER
+python -m atticus.cli memory mark-stale --db data/atticus.sqlite3 --matter MATTER --memory-id MEMORY_ID --reason "newer evidence" --write
+python -m atticus.cli memory export-index --db data/atticus.sqlite3 --matter MATTER
+python -m atticus.cli memory extract-candidates --db data/atticus.sqlite3 --matter MATTER --candidate-id CANDIDATE_ID
+python -m atticus.cli memory consolidate --db data/atticus.sqlite3 --matter MATTER
+```
+
+Memory extraction is reducer-gated. It only proposes candidate legal memories
+from a `reduced` candidate with an accepted reducer packet; raw worker output is
+refused. Write mode stores extracted items as `status='candidate'` memory, not
+active trusted memory. Consolidation is also dry-run-first: it gathers active,
+candidate, stale, duplicate, and contradictory memories and creates review
+tasks rather than silently merging, deleting, or certifying memory.
+
+## Verifier And Workflows
+
+Independent verifier checks can attack candidate packets before reduction:
+
+```bash
+python -m atticus.cli verifier run --db data/atticus.sqlite3 --candidate-id CANDIDATE_ID --type citation_audit --json
+python -m atticus.cli verifier run --db data/atticus.sqlite3 --candidate-id CANDIDATE_ID --type hostile_opponent_review --write --json
+```
+
+Markdown workflows create task graphs in dry-run mode by default:
+
+```bash
+python -m atticus.cli workflow list
+python -m atticus.cli workflow show complaint-draft
+python -m atticus.cli workflow run chronology-build --db data/atticus.sqlite3 --matter MATTER
+python -m atticus.cli workflow run hostile-review --db data/atticus.sqlite3 --matter MATTER --write
+```
+
+Built-in workflows cover chronology, complaint drafting, witness statement
+preparation, bundle preparation, authority mapping, SAR/disclosure review,
+contradiction detection, hostile review, pleading review, and court
+correspondence drafting.
+
+## Coordinator Mode
+
+The coordinator creates self-contained task graphs from an operator goal. It is
+deterministic local planning, not a provider call:
+
+```bash
+python -m atticus.cli coordinator plan --db data/atticus.sqlite3 --matter MATTER --goal "Draft a cited complaint" --source-id SOURCE_ID
+python -m atticus.cli coordinator create-tasks --db data/atticus.sqlite3 --matter MATTER --goal "Build chronology and hostile review" --write
+```
+
+The plan is dry-run by default. Write mode creates queued tasks only. It does
+not create leases, provider runs, candidate outputs, canonical artifacts, or
+external actions. Coordinator tasks carry persisted task-specific instructions
+into the work order and context pack, including matter scope, dependencies,
+deliverable, validation gates, citation discipline, verifier role, and blocked
+external-action rules. Drafting goals automatically include citation audit,
+hostile review, privacy/redaction audit, and a final quality-gate task.
+
+## Sessions And Hooks
+
+Sessions persist sensitive matter-scoped transcripts without replaying provider
+calls:
+
+```bash
+python -m atticus.cli session list --db data/atticus.sqlite3 --matter MATTER
+python -m atticus.cli session show SESSION_ID --db data/atticus.sqlite3
+python -m atticus.cli session resume SESSION_ID --db data/atticus.sqlite3
+python -m atticus.cli session export SESSION_ID --db data/atticus.sqlite3
+```
+
+The hook system is internal Python only. It logs lifecycle evaluations and
+blocks unsafe external legal actions, cross-matter context, and final drafting
+without required hostile-review certification. It warns on stale evidence so
+uncertainty remains visible.
+
+## OpenRouter Cache Telemetry
+
+OpenRouter DeepSeek prompt caching is provider-side and automatic when the
+selected endpoint supports it. The harness does not add hidden provider
+fallback or cache-control routing to make that happen. It does normalize
+OpenRouter cache usage telemetry into `provider_runs.cache_hit_tokens` and
+`provider_runs.cache_miss_tokens` when the provider returns
+`usage.prompt_tokens_details.cached_tokens`.
+
+OpenRouter response caching is a separate request-level cache for identical
+requests. It is not enabled silently because legal outputs should remain tied to
+explicit operator/runtime policy. If enabled later, it must be represented as an
+audited provider policy option, not as a default side effect.
+
+## Command Registry
+
+CLI commands now have auditable metadata:
+
+```bash
+python -m atticus.cli commands list --json
+python -m atticus.cli command show run-free-loop --json
+```
+
+The registry marks read-only, write, dry-run, live-provider, workflow, and
+prompt command surfaces so operators can review safety behavior before running
+them.

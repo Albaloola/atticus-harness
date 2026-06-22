@@ -1,0 +1,1032 @@
+"""SQLite schema for the Atticus legal harness.
+
+The schema intentionally keeps an append-only event stream beside mutable
+projection tables. SQLite is the current durable store; every table here is
+designed so it can later be replayed or migrated to Postgres without changing
+the legal operating model.
+"""
+
+from __future__ import annotations
+
+SCHEMA_VERSION = 12
+
+DDL = """
+PRAGMA foreign_keys = ON;
+PRAGMA journal_mode = WAL;
+
+CREATE TABLE IF NOT EXISTS schema_meta (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS matters (
+  matter_scope TEXT PRIMARY KEY,
+  title TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'active',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS matter_profiles (
+  matter_profile_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL REFERENCES matters(matter_scope) ON DELETE CASCADE,
+  profile_name TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active',
+  base_template TEXT NOT NULL DEFAULT 'default_s0_s9',
+  profile_version INTEGER NOT NULL DEFAULT 1,
+  fingerprint TEXT NOT NULL,
+  created_by TEXT NOT NULL DEFAULT 'atticus',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS matter_profiles_one_active_per_matter
+ON matter_profiles(matter_scope)
+WHERE status = 'active';
+
+CREATE TABLE IF NOT EXISTS matter_profile_stages (
+  profile_stage_id TEXT PRIMARY KEY,
+  matter_profile_id TEXT NOT NULL REFERENCES matter_profiles(matter_profile_id) ON DELETE CASCADE,
+  stage TEXT NOT NULL,
+  enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
+  gate_policy_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(gate_policy_json)),
+  worker_policy_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(worker_policy_json)),
+  model_policy_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(model_policy_json)),
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS matter_profile_changes (
+  matter_profile_change_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL,
+  old_profile_id TEXT,
+  new_profile_id TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  requested_by TEXT NOT NULL DEFAULT 'operator',
+  diff_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(diff_json)),
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS runs (
+  run_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL DEFAULT 'atticus',
+  state TEXT NOT NULL,
+  reason TEXT NOT NULL DEFAULT '',
+  budget_limit_usd REAL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  cancelled_by TEXT,
+  cancelled_at TEXT,
+  cancel_reason TEXT NOT NULL DEFAULT '',
+  live_provider_permission_revoked INTEGER NOT NULL DEFAULT 0 CHECK(live_provider_permission_revoked IN (0, 1))
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS events (
+  event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_type TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  matter_scope TEXT NOT NULL,
+  payload_json TEXT NOT NULL CHECK(json_valid(payload_json)),
+  previous_hash TEXT,
+  event_hash TEXT NOT NULL,
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TRIGGER IF NOT EXISTS events_no_update
+BEFORE UPDATE ON events
+BEGIN
+  SELECT RAISE(ABORT, 'events are append-only');
+END;
+
+CREATE TRIGGER IF NOT EXISTS events_no_delete
+BEFORE DELETE ON events
+BEGIN
+  SELECT RAISE(ABORT, 'events are append-only');
+END;
+
+CREATE TABLE IF NOT EXISTS sources (
+  source_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL,
+  path TEXT NOT NULL,
+  source_type TEXT NOT NULL,
+  sha256 TEXT NOT NULL,
+  size_bytes INTEGER NOT NULL DEFAULT 0,
+  trust_status TEXT NOT NULL,
+  stage TEXT NOT NULL,
+  imported_from TEXT,
+  chain_of_custody_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(chain_of_custody_json)),
+  stale INTEGER NOT NULL DEFAULT 0 CHECK(stale IN (0, 1)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT ''
+) STRICT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS sources_scope_path_uq ON sources(matter_scope, path);
+
+CREATE TABLE IF NOT EXISTS source_snapshots (
+  snapshot_id TEXT PRIMARY KEY,
+  source_id TEXT NOT NULL REFERENCES sources(source_id) ON DELETE CASCADE,
+  sha256 TEXT NOT NULL,
+  size_bytes INTEGER NOT NULL DEFAULT 0,
+  captured_by TEXT NOT NULL,
+  custody_note TEXT NOT NULL DEFAULT '',
+  metadata_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(metadata_json)),
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS artifacts (
+  artifact_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL,
+  path TEXT NOT NULL,
+  artifact_type TEXT NOT NULL,
+  stage TEXT NOT NULL,
+  trust_status TEXT NOT NULL,
+  sha256 TEXT,
+  title TEXT NOT NULL DEFAULT '',
+  content TEXT NOT NULL DEFAULT '',
+  imported_from TEXT,
+  produced_by_task_id TEXT,
+  replaced_by_artifact_id TEXT,
+  stale INTEGER NOT NULL DEFAULT 0 CHECK(stale IN (0, 1)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT ''
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS artifact_versions (
+  artifact_version_id TEXT PRIMARY KEY,
+  artifact_id TEXT NOT NULL REFERENCES artifacts(artifact_id) ON DELETE CASCADE,
+  version_number INTEGER NOT NULL,
+  sha256 TEXT,
+  content_hash TEXT NOT NULL,
+  status TEXT NOT NULL,
+  created_by_task_id TEXT,
+  created_by_role TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  UNIQUE(artifact_id, version_number)
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS artifact_sources (
+  artifact_id TEXT NOT NULL REFERENCES artifacts(artifact_id) ON DELETE CASCADE,
+  source_id TEXT NOT NULL REFERENCES sources(source_id) ON DELETE CASCADE,
+  dependency_type TEXT NOT NULL DEFAULT 'supports',
+  PRIMARY KEY (artifact_id, source_id)
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS artifact_dependencies (
+  artifact_id TEXT NOT NULL REFERENCES artifacts(artifact_id) ON DELETE CASCADE,
+  dependency_artifact_id TEXT NOT NULL REFERENCES artifacts(artifact_id) ON DELETE CASCADE,
+  dependency_type TEXT NOT NULL DEFAULT 'derived_from',
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (artifact_id, dependency_artifact_id, dependency_type)
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS extraction_records (
+  extraction_id TEXT PRIMARY KEY,
+  source_id TEXT NOT NULL REFERENCES sources(source_id) ON DELETE CASCADE,
+  artifact_id TEXT REFERENCES artifacts(artifact_id) ON DELETE SET NULL,
+  method TEXT NOT NULL,
+  coverage_status TEXT NOT NULL,
+  confidence REAL NOT NULL DEFAULT 0,
+  metadata_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(metadata_json)),
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS ocr_records (
+  ocr_id TEXT PRIMARY KEY,
+  source_id TEXT NOT NULL REFERENCES sources(source_id) ON DELETE CASCADE,
+  artifact_id TEXT REFERENCES artifacts(artifact_id) ON DELETE SET NULL,
+  engine TEXT NOT NULL,
+  page_count INTEGER NOT NULL DEFAULT 0,
+  coverage_status TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(metadata_json)),
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS transcription_records (
+  transcription_id TEXT PRIMARY KEY,
+  source_id TEXT NOT NULL REFERENCES sources(source_id) ON DELETE CASCADE,
+  artifact_id TEXT REFERENCES artifacts(artifact_id) ON DELETE SET NULL,
+  engine TEXT NOT NULL,
+  duration_seconds REAL,
+  coverage_status TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(metadata_json)),
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS production_mappings (
+  mapping_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL,
+  source_id TEXT REFERENCES sources(source_id) ON DELETE SET NULL,
+  artifact_id TEXT REFERENCES artifacts(artifact_id) ON DELETE SET NULL,
+  production_id TEXT NOT NULL,
+  produced_path TEXT NOT NULL DEFAULT '',
+  bates_start TEXT NOT NULL DEFAULT '',
+  bates_end TEXT NOT NULL DEFAULT '',
+  integrity_status TEXT NOT NULL DEFAULT 'candidate',
+  metadata_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(metadata_json)),
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS issues (
+  issue_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL,
+  title TEXT NOT NULL,
+  route TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'candidate',
+  summary TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS chronology_events (
+  chronology_event_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL,
+  event_date TEXT NOT NULL DEFAULT '',
+  event_date_precision TEXT NOT NULL DEFAULT '',
+  description TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'candidate',
+  created_by_artifact_id TEXT REFERENCES artifacts(artifact_id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS legal_authorities (
+  authority_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL,
+  jurisdiction TEXT NOT NULL DEFAULT '',
+  citation TEXT NOT NULL,
+  authority_type TEXT NOT NULL,
+  title TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'candidate',
+  source_url TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS authority_verifications (
+  authority_verification_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL,
+  authority_id TEXT NOT NULL REFERENCES legal_authorities(authority_id) ON DELETE CASCADE,
+  jurisdiction TEXT NOT NULL DEFAULT '',
+  jurisdiction_status TEXT NOT NULL DEFAULT '',
+  binding_status TEXT NOT NULL DEFAULT '',
+  currentness_status TEXT NOT NULL DEFAULT 'unknown',
+  proposition_supported INTEGER NOT NULL DEFAULT 0 CHECK(proposition_supported IN (0, 1)),
+  proposition_hash TEXT NOT NULL DEFAULT '',
+  verification_method TEXT NOT NULL DEFAULT '',
+  source_url_or_reference TEXT NOT NULL DEFAULT '',
+  expires_at TEXT,
+  checked_by TEXT NOT NULL DEFAULT '',
+  checked_at TEXT NOT NULL,
+  details_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(details_json))
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS claims (
+  claim_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL,
+  claim_text TEXT NOT NULL,
+  issue_id TEXT REFERENCES issues(issue_id) ON DELETE SET NULL,
+  support_status TEXT NOT NULL DEFAULT 'candidate',
+  created_by_artifact_id TEXT REFERENCES artifacts(artifact_id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS citation_spans (
+  citation_span_id TEXT PRIMARY KEY,
+  target_type TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  source_id TEXT REFERENCES sources(source_id) ON DELETE SET NULL,
+  artifact_id TEXT REFERENCES artifacts(artifact_id) ON DELETE SET NULL,
+  authority_id TEXT REFERENCES legal_authorities(authority_id) ON DELETE SET NULL,
+  start_offset INTEGER,
+  end_offset INTEGER,
+  quoted_text_hash TEXT NOT NULL DEFAULT '',
+  locator TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'candidate',
+  created_at TEXT NOT NULL,
+  CHECK(source_id IS NOT NULL OR artifact_id IS NOT NULL OR authority_id IS NOT NULL)
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS validation_results (
+  validation_result_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  matter_scope TEXT NOT NULL DEFAULT 'unknown',
+  target_type TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  gate_name TEXT NOT NULL,
+  passed INTEGER NOT NULL CHECK(passed IN (0, 1)),
+  severity TEXT NOT NULL DEFAULT 'info',
+  details_json TEXT NOT NULL CHECK(json_valid(details_json)),
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS citation_support_results (
+  citation_support_result_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL,
+  candidate_id TEXT,
+  artifact_id TEXT,
+  finding_id TEXT NOT NULL,
+  citation_id TEXT NOT NULL,
+  target_type TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  quote_text TEXT NOT NULL DEFAULT '',
+  quote_hash TEXT NOT NULL DEFAULT '',
+  proposition_text TEXT NOT NULL DEFAULT '',
+  semantic_support_status TEXT NOT NULL DEFAULT 'unchecked_requires_human',
+  authority_support_status TEXT NOT NULL DEFAULT '',
+  source_chunk_id TEXT,
+  start_offset INTEGER,
+  end_offset INTEGER,
+  support_confidence REAL,
+  requires_human_review INTEGER NOT NULL DEFAULT 0 CHECK(requires_human_review IN (0, 1)),
+  support_status TEXT NOT NULL,
+  support_level TEXT NOT NULL DEFAULT '',
+  reason TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS source_chunks (
+  chunk_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  source_snapshot_id TEXT,
+  extraction_id TEXT,
+  artifact_id TEXT,
+  chunk_kind TEXT NOT NULL DEFAULT 'text',
+  page_label TEXT NOT NULL DEFAULT '',
+  page_number INTEGER,
+  line_start INTEGER,
+  line_end INTEGER,
+  start_offset INTEGER,
+  end_offset INTEGER,
+  span_index_status TEXT NOT NULL DEFAULT 'indexed',
+  text_hash TEXT NOT NULL,
+  text TEXT NOT NULL,
+  confidence REAL,
+  metadata_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(metadata_json)),
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS certifications (
+  certification_id TEXT PRIMARY KEY,
+  subject_type TEXT NOT NULL,
+  subject_id TEXT NOT NULL,
+  certification_type TEXT NOT NULL,
+  status TEXT NOT NULL,
+  validator TEXT NOT NULL,
+  validation_result_id INTEGER NOT NULL REFERENCES validation_results(validation_result_id) ON DELETE CASCADE,
+  evidence_json TEXT NOT NULL CHECK(json_valid(evidence_json)),
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS tasks (
+  task_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL,
+  stage TEXT NOT NULL,
+  status TEXT NOT NULL,
+  task_type TEXT NOT NULL,
+  title TEXT NOT NULL,
+  instructions TEXT NOT NULL DEFAULT '',
+  source_dependencies_json TEXT NOT NULL CHECK(json_valid(source_dependencies_json)),
+  artifact_dependencies_json TEXT NOT NULL CHECK(json_valid(artifact_dependencies_json)),
+  task_dependencies_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(task_dependencies_json)),
+  matter_dependencies_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(matter_dependencies_json)),
+  required_certifications_json TEXT NOT NULL CHECK(json_valid(required_certifications_json)),
+  output_schema TEXT NOT NULL DEFAULT '',
+  validation_gates_json TEXT NOT NULL CHECK(json_valid(validation_gates_json)),
+  staleness_rules_json TEXT NOT NULL CHECK(json_valid(staleness_rules_json)),
+  provider_policy_json TEXT NOT NULL CHECK(json_valid(provider_policy_json)),
+  parent_task_id TEXT,
+  imported_from_candidate_id TEXT,
+  task_provenance_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(task_provenance_json)),
+  cost_limit_usd REAL,
+  expected_value REAL NOT NULL DEFAULT 0,
+  context_pack_id TEXT,
+  human_attention_flags_json TEXT NOT NULL CHECK(json_valid(human_attention_flags_json)),
+  blocked_reasons_json TEXT NOT NULL CHECK(json_valid(blocked_reasons_json)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS worker_attempts (
+  worker_attempt_id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
+  lease_id TEXT,
+  worker_id TEXT NOT NULL,
+  adapter TEXT NOT NULL,
+  status TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  output_path TEXT NOT NULL DEFAULT '',
+  error_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(error_json))
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS matter_orchestrators (
+  orchestrator_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL REFERENCES matters(matter_scope) ON DELETE CASCADE,
+  status TEXT NOT NULL,
+  model_decision_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(model_decision_json)),
+  last_tick_at TEXT,
+  current_goal TEXT NOT NULL DEFAULT '',
+  failure_count INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(matter_scope)
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS orchestrator_events (
+  orchestrator_event_id TEXT PRIMARY KEY,
+  orchestrator_id TEXT NOT NULL REFERENCES matter_orchestrators(orchestrator_id) ON DELETE CASCADE,
+  matter_scope TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  payload_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(payload_json)),
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS maintenance_runs (
+  maintenance_run_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL DEFAULT 'global',
+  status TEXT NOT NULL,
+  triggered_by TEXT NOT NULL,
+  trigger_reason TEXT NOT NULL,
+  trigger_event_id TEXT NOT NULL DEFAULT '',
+  isolation_level TEXT NOT NULL DEFAULT 'control_plane_only',
+  started_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  completed_at TEXT,
+  payload_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(payload_json))
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS maintenance_reports (
+  maintenance_report_id TEXT PRIMARY KEY,
+  maintenance_run_id TEXT NOT NULL REFERENCES maintenance_runs(maintenance_run_id) ON DELETE CASCADE,
+  matter_scope TEXT NOT NULL DEFAULT 'global',
+  summary TEXT NOT NULL,
+  diagnostics_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(diagnostics_json)),
+  actions_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(actions_json)),
+  resume_signal_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(resume_signal_json)),
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS leases (
+  lease_id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
+  worker_id TEXT NOT NULL,
+  lease_role TEXT NOT NULL DEFAULT 'worker',
+  status TEXT NOT NULL,
+  fencing_token INTEGER NOT NULL DEFAULT 1,
+  expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT ''
+) STRICT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS leases_one_active_per_task
+ON leases(task_id)
+WHERE status = 'active';
+
+CREATE TABLE IF NOT EXISTS candidate_outputs (
+  candidate_id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
+  lease_id TEXT,
+  worker_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  output_type TEXT NOT NULL,
+  payload_json TEXT NOT NULL CHECK(json_valid(payload_json)),
+  payload_hash TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  quarantined_reason TEXT NOT NULL DEFAULT ''
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS reducer_packets (
+  reducer_packet_id TEXT PRIMARY KEY,
+  candidate_id TEXT NOT NULL REFERENCES candidate_outputs(candidate_id) ON DELETE CASCADE,
+  reducer_lease_id TEXT,
+  decision TEXT NOT NULL,
+  validation_result_id INTEGER REFERENCES validation_results(validation_result_id) ON DELETE SET NULL,
+  canonical_artifact_id TEXT REFERENCES artifacts(artifact_id) ON DELETE SET NULL,
+  dissent_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(dissent_json)),
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS council_runs (
+  council_run_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL,
+  task_id TEXT REFERENCES tasks(task_id) ON DELETE SET NULL,
+  council_type TEXT NOT NULL,
+  status TEXT NOT NULL,
+  reducer_logic TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS council_votes (
+  council_vote_id TEXT PRIMARY KEY,
+  council_run_id TEXT NOT NULL REFERENCES council_runs(council_run_id) ON DELETE CASCADE,
+  role TEXT NOT NULL,
+  candidate_id TEXT REFERENCES candidate_outputs(candidate_id) ON DELETE SET NULL,
+  vote TEXT NOT NULL,
+  rationale TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS context_packs (
+  context_pack_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL,
+  task_id TEXT,
+  pack_type TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  token_budget INTEGER NOT NULL,
+  estimated_tokens INTEGER NOT NULL,
+  cache_hit_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_miss_tokens INTEGER NOT NULL DEFAULT 0,
+  sections_json TEXT NOT NULL CHECK(json_valid(sections_json)),
+  created_at TEXT NOT NULL,
+  UNIQUE(task_id, pack_type, fingerprint)
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS compression_records (
+  compression_id TEXT PRIMARY KEY,
+  source_context_pack_id TEXT NOT NULL REFERENCES context_packs(context_pack_id) ON DELETE CASCADE,
+  target_context_pack_id TEXT REFERENCES context_packs(context_pack_id) ON DELETE SET NULL,
+  method TEXT NOT NULL,
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  summary_hash TEXT NOT NULL,
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS tracked_files (
+  tracked_file_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL,
+  absolute_path TEXT NOT NULL,
+  relative_path TEXT NOT NULL DEFAULT '',
+  sha256 TEXT NOT NULL DEFAULT '',
+  size_bytes INTEGER NOT NULL DEFAULT 0,
+  file_kind TEXT NOT NULL DEFAULT 'unknown',
+  status TEXT NOT NULL DEFAULT 'needs_classification',
+  provenance TEXT NOT NULL DEFAULT '',
+  metadata_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(metadata_json)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(matter_scope, absolute_path)
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS index_rebuilds (
+  index_rebuild_id TEXT PRIMARY KEY,
+  index_name TEXT NOT NULL,
+  matter_scope TEXT NOT NULL,
+  status TEXT NOT NULL,
+  input_fingerprint TEXT NOT NULL DEFAULT '',
+  output_fingerprint TEXT NOT NULL DEFAULT '',
+  details_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(details_json)),
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS search_index_entries (
+  search_index_entry_id TEXT PRIMARY KEY,
+  index_name TEXT NOT NULL,
+  record_type TEXT NOT NULL,
+  record_id TEXT NOT NULL,
+  matter_scope TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  indexed_text TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE(index_name, record_type, record_id, content_hash)
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS legal_memories (
+  memory_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL,
+  type TEXT NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  content TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'candidate',
+  confidence REAL NOT NULL DEFAULT 0 CHECK(confidence >= 0 AND confidence <= 1),
+  source_refs_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(source_refs_json)),
+  last_verified_at TEXT,
+  stale INTEGER NOT NULL DEFAULT 0 CHECK(stale IN (0, 1)),
+  staleness_trigger TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS sessions (
+  session_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL,
+  title TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'active',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS session_messages (
+  session_message_id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+  role TEXT NOT NULL,
+  content_json TEXT NOT NULL CHECK(json_valid(content_json)),
+  context_pack_id TEXT REFERENCES context_packs(context_pack_id) ON DELETE SET NULL,
+  provider_run_id TEXT REFERENCES provider_runs(provider_run_id) ON DELETE SET NULL,
+  candidate_id TEXT REFERENCES candidate_outputs(candidate_id) ON DELETE SET NULL,
+  reducer_packet_id TEXT REFERENCES reducer_packets(reducer_packet_id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS hook_invocations (
+  hook_invocation_id TEXT PRIMARY KEY,
+  hook_event TEXT NOT NULL,
+  matter_scope TEXT NOT NULL,
+  allowed INTEGER NOT NULL CHECK(allowed IN (0, 1)),
+  severity TEXT NOT NULL,
+  message TEXT NOT NULL,
+  details_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(details_json)),
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS provider_runs (
+  provider_run_id TEXT PRIMARY KEY,
+  task_id TEXT,
+  run_id TEXT,
+  stage TEXT NOT NULL DEFAULT '',
+  requested_provider TEXT NOT NULL,
+  requested_model TEXT NOT NULL,
+  actual_provider TEXT NOT NULL,
+  actual_model TEXT NOT NULL,
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_hit_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_miss_tokens INTEGER NOT NULL DEFAULT 0,
+  context_pack_id TEXT,
+  context_fingerprint TEXT NOT NULL DEFAULT '',
+  provider_policy_fingerprint TEXT NOT NULL DEFAULT '',
+  configured_models_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(configured_models_json)),
+  cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+  failover_events_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(failover_events_json)),
+  cache_telemetry_source TEXT NOT NULL DEFAULT 'provider_reported',
+  estimated_cost_usd REAL NOT NULL DEFAULT 0,
+  actual_cost_usd REAL,
+  latency_ms INTEGER NOT NULL DEFAULT 0,
+  retries INTEGER NOT NULL DEFAULT 0,
+  fallback_allowed INTEGER NOT NULL CHECK(fallback_allowed IN (0, 1)),
+  fallback_policy_result TEXT NOT NULL,
+  raw_usage_json TEXT NOT NULL CHECK(json_valid(raw_usage_json)),
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS prompt_cache_observations (
+  prompt_cache_observation_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL,
+  provider_run_id TEXT REFERENCES provider_runs(provider_run_id) ON DELETE SET NULL,
+  task_id TEXT,
+  context_pack_id TEXT,
+  query_source TEXT NOT NULL DEFAULT '',
+  model TEXT NOT NULL DEFAULT '',
+  system_fingerprint TEXT NOT NULL DEFAULT '',
+  tools_fingerprint TEXT NOT NULL DEFAULT '',
+  context_fingerprint TEXT NOT NULL DEFAULT '',
+  policy_fingerprint TEXT NOT NULL DEFAULT '',
+  cache_hit_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_miss_tokens INTEGER NOT NULL DEFAULT 0,
+  possible_cache_break INTEGER NOT NULL DEFAULT 0 CHECK(possible_cache_break IN (0,1)),
+  reason TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS work_runs (
+  work_run_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL,
+  goal TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL,
+  active_profile_id TEXT,
+  started_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  completed_at TEXT,
+  resume_token TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(metadata_json))
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS work_run_steps (
+  work_run_step_id TEXT PRIMARY KEY,
+  work_run_id TEXT NOT NULL REFERENCES work_runs(work_run_id) ON DELETE CASCADE,
+  matter_scope TEXT NOT NULL,
+  step_type TEXT NOT NULL,
+  task_id TEXT,
+  candidate_id TEXT,
+  artifact_id TEXT,
+  context_pack_id TEXT,
+  provider_run_id TEXT,
+  status TEXT NOT NULL,
+  input_fingerprint TEXT NOT NULL DEFAULT '',
+  output_fingerprint TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(metadata_json))
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS work_reuse_records (
+  reuse_record_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL,
+  reused_from_step_id TEXT NOT NULL,
+  reused_by_step_id TEXT,
+  reuse_type TEXT NOT NULL,
+  valid INTEGER NOT NULL CHECK(valid IN (0,1)),
+  invalidation_reason TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS work_step_source_links (
+  work_run_step_id TEXT NOT NULL,
+  matter_scope TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  source_snapshot_id TEXT,
+  source_sha256 TEXT NOT NULL,
+  extraction_artifact_id TEXT,
+  extraction_text_sha256 TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(work_run_step_id, source_id)
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS context_pack_sources (
+  context_pack_id TEXT NOT NULL,
+  matter_scope TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  source_snapshot_id TEXT,
+  source_sha256 TEXT NOT NULL,
+  extraction_artifact_id TEXT,
+  extraction_text_sha256 TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY(context_pack_id, source_id)
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS budgets (
+  budget_id TEXT PRIMARY KEY,
+  scope_type TEXT NOT NULL,
+  scope_id TEXT NOT NULL,
+  limit_usd REAL NOT NULL,
+  hard_stop INTEGER NOT NULL DEFAULT 1 CHECK(hard_stop IN (0, 1)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(scope_type, scope_id)
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS budget_entries (
+  budget_entry_id TEXT PRIMARY KEY,
+  budget_id TEXT NOT NULL REFERENCES budgets(budget_id) ON DELETE CASCADE,
+  provider_run_id TEXT REFERENCES provider_runs(provider_run_id) ON DELETE SET NULL,
+  amount_usd REAL NOT NULL,
+  entry_type TEXT NOT NULL,
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS human_attention (
+  attention_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  matter_scope TEXT NOT NULL DEFAULT 'unknown',
+  target_type TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  severity TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  status TEXT NOT NULL,
+  owner TEXT NOT NULL DEFAULT 'operator',
+  signature TEXT NOT NULL DEFAULT '',
+  superseded_by TEXT,
+  created_at TEXT NOT NULL,
+  plain_question TEXT NOT NULL DEFAULT '',
+  why_needed TEXT NOT NULL DEFAULT '',
+  acceptable_responses TEXT NOT NULL DEFAULT '[]',
+  response_type TEXT,
+  response_statement TEXT,
+  response_artifact_id TEXT,
+  response_caveat TEXT NOT NULL DEFAULT '',
+  routed_lane TEXT NOT NULL DEFAULT 'human_request',
+  continuation_id TEXT REFERENCES continued_commands(continuation_id) ON DELETE SET NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS continued_commands (
+  continuation_id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+  matter_scope TEXT NOT NULL,
+  command TEXT NOT NULL,
+  approval_state TEXT NOT NULL DEFAULT 'pending',
+  parent_continuation_id TEXT,
+  wake_at TEXT NOT NULL,
+  cancellation_token_checked_at TEXT,
+  owner TEXT NOT NULL DEFAULT 'scheduler',
+  provider_permission_scope TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  executed_at TEXT,
+  cancelled_at TEXT,
+  status TEXT NOT NULL DEFAULT 'scheduled',
+  result_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(result_json))
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS run_progress_signatures (
+  signature_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+  signature TEXT NOT NULL,
+  attempt_count INTEGER NOT NULL DEFAULT 1,
+  last_distinct_progress_at TEXT,
+  stop_reason TEXT,
+  created_at TEXT NOT NULL,
+  UNIQUE(run_id, signature)
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS operator_responses (
+  response_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  attention_id INTEGER NOT NULL REFERENCES human_attention(attention_id) ON DELETE CASCADE,
+  matter_scope TEXT NOT NULL,
+  response_type TEXT NOT NULL,
+  statement TEXT NOT NULL DEFAULT '',
+  source_ids TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(source_ids)),
+  artifact_id TEXT REFERENCES artifacts(artifact_id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS error_logs (
+  error_log_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL,
+  target_type TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  error_type TEXT NOT NULL,
+  error_signature TEXT NOT NULL,
+  message TEXT NOT NULL,
+  severity TEXT NOT NULL,
+  escalation_level INTEGER NOT NULL,
+  occurrence_count INTEGER NOT NULL,
+  consecutive_count INTEGER NOT NULL,
+  terminal INTEGER NOT NULL CHECK(terminal IN (0, 1)),
+  payload_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(payload_json)),
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS repair_plans (
+  repair_plan_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL,
+  target_type TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  blocker_signature TEXT NOT NULL,
+  blocker_type TEXT NOT NULL,
+  severity TEXT NOT NULL,
+  status TEXT NOT NULL,
+  owner TEXT NOT NULL DEFAULT 'orchestrator',
+  retry_after TEXT,
+  terminal_reason TEXT NOT NULL DEFAULT '',
+  actions_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(actions_json)),
+  attempts_so_far INTEGER NOT NULL DEFAULT 0,
+  max_attempts INTEGER NOT NULL DEFAULT 3,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(matter_scope, target_type, target_id, blocker_signature)
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS repair_attempts (
+  repair_attempt_id TEXT PRIMARY KEY,
+  repair_plan_id TEXT NOT NULL REFERENCES repair_plans(repair_plan_id) ON DELETE CASCADE,
+  matter_scope TEXT NOT NULL,
+  action_type TEXT NOT NULL,
+  status TEXT NOT NULL,
+  result_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(result_json)),
+  outcome_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(outcome_json)),
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS reducer_review_queue (
+  reducer_review_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL,
+  candidate_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  stage TEXT NOT NULL,
+  task_type TEXT NOT NULL,
+  priority INTEGER NOT NULL DEFAULT 50,
+  status TEXT NOT NULL DEFAULT 'open',
+  reason TEXT NOT NULL,
+  recommended_action TEXT NOT NULL DEFAULT '',
+  blocks_certification_type TEXT NOT NULL DEFAULT '',
+  blocks_final_gate INTEGER NOT NULL DEFAULT 0 CHECK(blocks_final_gate IN (0, 1)),
+  reviewer TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(candidate_id)
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS matter_completion_snapshots (
+  snapshot_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL,
+  done INTEGER NOT NULL CHECK(done IN (0, 1)),
+  safe_to_finalize INTEGER NOT NULL CHECK(safe_to_finalize IN (0, 1)),
+  blocked INTEGER NOT NULL CHECK(blocked IN (0, 1)),
+  primary_next_action_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(primary_next_action_json)),
+  counts_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(counts_json)),
+  report_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(report_json)),
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS final_gate_states (
+  matter_scope TEXT PRIMARY KEY,
+  state TEXT NOT NULL,
+  blocker_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(blocker_json)),
+  next_action_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(next_action_json)),
+  updated_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS provider_health_checks (
+  provider_health_check_id TEXT PRIMARY KEY,
+  matter_scope TEXT NOT NULL,
+  provider_policy_fingerprint TEXT NOT NULL DEFAULT '',
+  requested_provider TEXT NOT NULL DEFAULT '',
+  requested_model TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL,
+  failure_taxonomy TEXT NOT NULL DEFAULT '',
+  details_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(details_json)),
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS external_action_blocks (
+  block_id TEXT PRIMARY KEY,
+  action_type TEXT NOT NULL,
+  requested_by TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  payload_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(payload_json)),
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS migration_reports (
+  migration_report_id TEXT PRIMARY KEY,
+  workspace_path TEXT NOT NULL,
+  dry_run INTEGER NOT NULL CHECK(dry_run IN (0, 1)),
+  summary_json TEXT NOT NULL CHECK(json_valid(summary_json)),
+  created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS ocr_quality (
+  quality_id TEXT PRIMARY KEY,
+  source_id TEXT NOT NULL REFERENCES sources(source_id) ON DELETE CASCADE,
+  source_sha256 TEXT NOT NULL,
+  method TEXT NOT NULL,
+  page_count INTEGER NOT NULL DEFAULT 0,
+  quality_status TEXT NOT NULL DEFAULT 'unknown',
+  confidence REAL NOT NULL DEFAULT 0.0,
+  text_bytes INTEGER NOT NULL DEFAULT 0,
+  warnings_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(warnings_json)),
+  page_quality_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(page_quality_json)),
+  ocr_engine TEXT,
+  rendered_image_hash TEXT,
+  signature_pages TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(signature_pages)),
+  form_fields_detected INTEGER NOT NULL DEFAULT 0 CHECK(form_fields_detected IN (0, 1)),
+  needs_visual_ocr INTEGER NOT NULL DEFAULT 0 CHECK(needs_visual_ocr IN (0, 1)),
+  has_handwriting INTEGER NOT NULL DEFAULT 0 CHECK(has_handwriting IN (0, 1)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(source_id, source_sha256, method)
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS events_type_idx ON events(event_type, created_at);
+CREATE INDEX IF NOT EXISTS tasks_status_stage_idx ON tasks(status, stage);
+CREATE INDEX IF NOT EXISTS tasks_scope_stage_idx ON tasks(matter_scope, stage, status);
+CREATE INDEX IF NOT EXISTS artifacts_trust_idx ON artifacts(trust_status, stale);
+CREATE INDEX IF NOT EXISTS artifacts_type_stage_idx ON artifacts(artifact_type, stage);
+CREATE INDEX IF NOT EXISTS sources_hash_idx ON sources(sha256);
+CREATE INDEX IF NOT EXISTS repair_plans_scope_status_idx ON repair_plans(matter_scope, status, severity, updated_at);
+CREATE INDEX IF NOT EXISTS repair_attempts_plan_idx ON repair_attempts(repair_plan_id, created_at);
+CREATE INDEX IF NOT EXISTS reducer_review_queue_scope_status_idx ON reducer_review_queue(matter_scope, status, priority, updated_at);
+CREATE INDEX IF NOT EXISTS matter_completion_snapshots_scope_idx
+ON matter_completion_snapshots(matter_scope, created_at);
+CREATE INDEX IF NOT EXISTS provider_health_checks_scope_policy_idx
+ON provider_health_checks(matter_scope, provider_policy_fingerprint, created_at);
+CREATE INDEX IF NOT EXISTS certifications_subject_idx
+ON certifications(subject_type, subject_id, certification_type, status);
+CREATE INDEX IF NOT EXISTS provider_runs_task_idx ON provider_runs(task_id, created_at);
+CREATE INDEX IF NOT EXISTS prompt_cache_observations_scope_idx ON prompt_cache_observations(matter_scope, created_at);
+CREATE INDEX IF NOT EXISTS matter_orchestrators_scope_idx ON matter_orchestrators(matter_scope, status);
+CREATE INDEX IF NOT EXISTS orchestrator_events_scope_idx ON orchestrator_events(matter_scope, event_type, created_at);
+CREATE INDEX IF NOT EXISTS maintenance_runs_scope_idx ON maintenance_runs(matter_scope, status, updated_at);
+CREATE INDEX IF NOT EXISTS maintenance_reports_scope_idx ON maintenance_reports(matter_scope, created_at);
+CREATE INDEX IF NOT EXISTS work_runs_scope_idx ON work_runs(matter_scope, status, updated_at);
+CREATE UNIQUE INDEX IF NOT EXISTS work_runs_resume_token_uq ON work_runs(resume_token);
+CREATE INDEX IF NOT EXISTS work_run_steps_scope_idx ON work_run_steps(matter_scope, status, created_at);
+CREATE INDEX IF NOT EXISTS work_reuse_records_scope_idx ON work_reuse_records(matter_scope, valid, created_at);
+CREATE INDEX IF NOT EXISTS work_step_source_links_source_idx ON work_step_source_links(matter_scope, source_id);
+CREATE INDEX IF NOT EXISTS context_pack_sources_source_idx ON context_pack_sources(matter_scope, source_id);
+CREATE INDEX IF NOT EXISTS budget_entries_budget_idx ON budget_entries(budget_id, created_at);
+CREATE INDEX IF NOT EXISTS error_logs_target_idx ON error_logs(target_type, target_id, created_at);
+CREATE INDEX IF NOT EXISTS error_logs_signature_idx ON error_logs(error_signature, created_at);
+CREATE INDEX IF NOT EXISTS citation_spans_target_idx ON citation_spans(target_type, target_id);
+CREATE INDEX IF NOT EXISTS citation_support_results_candidate_idx
+ON citation_support_results(matter_scope, candidate_id, created_at);
+CREATE INDEX IF NOT EXISTS citation_support_results_target_idx
+ON citation_support_results(target_type, target_id);
+CREATE INDEX IF NOT EXISTS source_chunks_source_idx
+ON source_chunks(matter_scope, source_id, source_snapshot_id);
+CREATE INDEX IF NOT EXISTS source_chunks_hash_idx ON source_chunks(text_hash);
+CREATE INDEX IF NOT EXISTS candidate_outputs_task_idx ON candidate_outputs(task_id, status);
+CREATE INDEX IF NOT EXISTS tracked_files_status_idx ON tracked_files(status, file_kind);
+CREATE INDEX IF NOT EXISTS search_index_entries_lookup_idx ON search_index_entries(index_name, record_type, record_id);
+CREATE INDEX IF NOT EXISTS search_index_entries_scope_lookup_idx ON search_index_entries(index_name, matter_scope, record_type, record_id);
+CREATE INDEX IF NOT EXISTS legal_memories_scope_type_idx ON legal_memories(matter_scope, type, status, stale);
+CREATE INDEX IF NOT EXISTS sessions_scope_status_idx ON sessions(matter_scope, status, updated_at);
+CREATE INDEX IF NOT EXISTS session_messages_session_idx ON session_messages(session_id, created_at);
+CREATE INDEX IF NOT EXISTS hook_invocations_event_idx ON hook_invocations(hook_event, matter_scope, created_at);
+CREATE INDEX IF NOT EXISTS tasks_scope_type_status_idx ON tasks(matter_scope, task_type, status);
+CREATE INDEX IF NOT EXISTS continued_commands_run_status_idx ON continued_commands(run_id, status);
+CREATE INDEX IF NOT EXISTS artifacts_scope_stale_idx ON artifacts(matter_scope, stale, updated_at);
+CREATE INDEX IF NOT EXISTS events_scope_type_created_idx ON events(matter_scope, event_type, created_at);
+CREATE INDEX IF NOT EXISTS repair_plans_target_idx ON repair_plans(matter_scope, target_type, target_id, status);
+CREATE INDEX IF NOT EXISTS leases_active_role_idx ON leases(status, lease_role) WHERE status = 'active';
+"""

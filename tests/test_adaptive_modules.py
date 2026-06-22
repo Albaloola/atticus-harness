@@ -1,0 +1,775 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from collections.abc import Mapping
+from typing import cast
+
+import pytest
+
+from atticus.agents.context_sharing import build_cache_safe_context
+from atticus.agents.coordinator import plan_adaptive_work
+from atticus.agents.maintenance import maintenance_report, maintenance_status, maintenance_tick, request_maintenance
+from atticus.agents.orchestrator import (
+    orchestrator_plan_repair,
+    orchestrator_tick,
+    record_operator_signal,
+    report_worker_failure_to_orchestrator,
+)
+from atticus.agents.subagents import SubagentSpec, create_subagent_task
+from atticus.core.matter_profiles import (
+    apply_matter_profile_adaptation,
+    create_default_matter_profile,
+    propose_matter_profile_adaptation,
+    reset_matter_profile_to_default,
+)
+from atticus.core.policies import LegalStage, TaskStatus
+from atticus.core.tasks import TaskSpec
+from atticus.db import repo
+from atticus.providers.cache_observability import detect_prompt_cache_break, fingerprint_provider_policy
+from atticus.providers.model_decision import ModelDecision
+from atticus.retrieval.work_reuse import build_followup_context, explain_reuse_decision
+from atticus.scheduler.lease import acquire_lease
+from atticus.scheduler.planner import select_runnable_tasks
+from atticus.work_runs import resume_work_run, start_work_run, summarize_reusable_work
+
+
+def init_db(tmp_path: Path) -> Path:
+    db_path = tmp_path / "atticus.sqlite3"
+    repo.initialize_database(db_path)
+    return db_path
+
+
+def _decision(tier: str = "flash_worker") -> ModelDecision:
+    return ModelDecision(
+        provider="openrouter",
+        model="deepseek/deepseek-v4-flash" if tier == "flash_worker" else "deepseek/deepseek-v4-pro",
+        runtime="openrouter",
+        profile_id="deepseek_flash_or" if tier == "flash_worker" else "deepseek_pro_or",
+        decision_reason="test decision",
+        decision_tier=tier,
+        fallback_allowed=False,
+        required_human_review=False,
+        policy_fingerprint="policy",
+        input_fingerprint="input",
+    )
+
+
+def test_matter_profile_module_proposes_applies_resets_and_rejects_unsafe_changes(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        default_id = create_default_matter_profile(conn, "alpha")
+        proposal = propose_matter_profile_adaptation(conn, "alpha", "inventory and extract sources", {})
+        applied = apply_matter_profile_adaptation(conn, "alpha", proposal.as_dict(), write=True)
+        beta_id = create_default_matter_profile(conn, "beta")
+        reset = reset_matter_profile_to_default(conn, "alpha", write=True)
+
+        alpha = repo.get_active_matter_profile(conn, matter_scope="alpha")
+        beta = repo.get_active_matter_profile(conn, matter_scope="beta")
+
+        unsafe = proposal.as_dict()
+        stages = cast(list[dict[str, object]], unsafe["stages"])
+        stages[8]["gate_policy"] = {"human_review_required": False}
+        with pytest.raises(ValueError, match="human review"):
+            apply_matter_profile_adaptation(conn, "alpha", unsafe, write=False)
+        unsafe_missing_gates = proposal.as_dict()
+        missing_gate_stages = cast(list[dict[str, object]], unsafe_missing_gates["stages"])
+        missing_gate_stages[8] = {"stage": "S8", "enabled": True, "gate_policy": {"human_review_required": True}}
+        with pytest.raises(ValueError, match="mandatory safety gates"):
+            apply_matter_profile_adaptation(conn, "alpha", unsafe_missing_gates, write=False)
+
+    assert applied["matter_profile_id"] != default_id
+    assert beta is not None and beta["matter_profile_id"] == beta_id
+    assert alpha is not None and alpha["matter_profile_id"] == reset["matter_profile_id"]
+    assert alpha["matter_scope"] == "alpha"
+    assert beta["matter_scope"] == "beta"
+
+
+def test_orchestrator_failure_repair_and_tick_are_matter_scoped(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(conn, TaskSpec(task_id="alpha-task", title="Alpha", task_type="source_inventory", matter_scope="alpha"))
+        repo.add_task(conn, TaskSpec(task_id="beta-task", title="Beta", task_type="source_inventory", matter_scope="beta"))
+
+        dry = orchestrator_tick(conn, "alpha", 1, dry_run=True)
+        event_id = report_worker_failure_to_orchestrator(conn, "alpha-task", "citation support missing")
+        repair = orchestrator_plan_repair(conn, "alpha", event_id)
+        write_tick = orchestrator_tick(conn, "alpha", 5, dry_run=False)
+        alpha_leases = conn.execute("SELECT COUNT(*) AS n FROM leases l JOIN tasks t ON t.task_id = l.task_id WHERE t.matter_scope = 'alpha'").fetchone()
+        beta_leases = conn.execute("SELECT COUNT(*) AS n FROM leases l JOIN tasks t ON t.task_id = l.task_id WHERE t.matter_scope = 'beta'").fetchone()
+
+    assert dry["runnable_task_ids"] == ["alpha-task"]
+    assert any(action["type"] == "verifier_task" for action in cast(list[dict[str, object]], repair["proposed_actions"]))
+    assert write_tick["leased"][0]["task_id"] == "alpha-task"
+    assert int(str(alpha_leases["n"])) == 1
+    assert int(str(beta_leases["n"])) == 0
+
+
+def test_scheduler_gate_block_signals_orchestrator_and_dedupes_attention(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="blocked-source-task",
+                title="Blocked source",
+                task_type="extract",
+                matter_scope="alpha",
+                source_dependencies=["missing-source"],
+            ),
+        )
+
+        assert select_runnable_tasks(conn, capacity=5) == []
+        assert select_runnable_tasks(conn, capacity=5) == []
+        event = cast(
+            dict[str, object],
+            conn.execute(
+                """
+                SELECT event_type, payload_json
+                FROM orchestrator_events
+                WHERE matter_scope = 'alpha'
+                ORDER BY created_at DESC
+                LIMIT 1
+                """
+            ).fetchone(),
+        )
+        attention_count = conn.execute(
+            """
+            SELECT COUNT(*) AS n
+            FROM human_attention
+            WHERE target_id = 'blocked-source-task' AND status = 'open'
+            """
+        ).fetchone()
+        tick = orchestrator_tick(conn, "alpha", 5, dry_run=True)
+        orchestrator = repo.get_matter_orchestrator(conn, matter_scope="alpha")
+
+    payload = cast(dict[str, object], json.loads(str(event["payload_json"])))
+    repairs = cast(list[dict[str, object]], tick["blocked_repairs"])
+    assert event["event_type"] == "orchestrator.task_blocked"
+    assert payload["escalation_target"] == "worker_self_repair"
+    assert payload["retry_policy"] == "no silent infinite retry"
+    assert attention_count is not None and int(str(attention_count["n"])) == 1
+    assert orchestrator is not None and orchestrator["status"] == "repair_required"
+    assert repairs and repairs[0]["proposed_actions"][0]["type"] == "context_rebuild"
+
+
+def test_repeated_worker_failures_escalate_every_five_then_require_user_intervention(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(conn, TaskSpec(task_id="loop-task", title="Loop", task_type="extract", matter_scope="alpha"))
+
+        event_ids = [
+            report_worker_failure_to_orchestrator(conn, "loop-task", "citation support missing")
+            for _ in range(15)
+        ]
+
+        worker_payloads = [
+            json.loads(
+                str(
+                    conn.execute(
+                        "SELECT payload_json FROM orchestrator_events WHERE orchestrator_event_id = ?",
+                        (event_id,),
+                    ).fetchone()["payload_json"]
+                )
+            )
+            for event_id in event_ids
+        ]
+        terminal = conn.execute(
+            """
+            SELECT payload_json
+            FROM orchestrator_events
+            WHERE event_type = 'orchestrator.repair_limit_reached'
+              AND json_extract(payload_json, '$.task_id') = 'loop-task'
+            """
+        ).fetchone()
+        master_event = conn.execute(
+            """
+            SELECT COUNT(*) AS n
+            FROM events
+            WHERE event_type = 'master_orchestrator.user_intervention_required'
+              AND matter_scope = 'alpha'
+            """
+        ).fetchone()
+        loop_escalations = conn.execute(
+            """
+            SELECT COUNT(*) AS n
+            FROM events
+            WHERE event_type = 'loop_guard.escalated'
+              AND matter_scope = 'alpha'
+            """
+        ).fetchone()
+        matter_loop_escalations = conn.execute(
+            """
+            SELECT COUNT(*) AS n
+            FROM events
+            WHERE event_type = 'matter_orchestrator.loop_guard_escalated'
+              AND matter_scope = 'alpha'
+            """
+        ).fetchone()
+        master_loop_escalations = conn.execute(
+            """
+            SELECT COUNT(*) AS n
+            FROM events
+            WHERE event_type = 'master_orchestrator.loop_guard_escalated'
+              AND matter_scope = 'alpha'
+            """
+        ).fetchone()
+        error_logs = conn.execute(
+            """
+            SELECT COUNT(*) AS n
+            FROM error_logs
+            WHERE target_id = 'loop-task'
+            """
+        ).fetchone()
+        terminal_error_log = conn.execute(
+            """
+            SELECT consecutive_count, escalation_level, terminal
+            FROM error_logs
+            WHERE target_id = 'loop-task'
+            ORDER BY created_at DESC, rowid DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        task = conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'loop-task'").fetchone()
+        attention = conn.execute(
+            """
+            SELECT severity, reason
+            FROM human_attention
+            WHERE target_id = 'loop-task' AND severity = 'blocker'
+            ORDER BY attention_id DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        orchestrator = repo.get_matter_orchestrator(conn, matter_scope="alpha")
+        runnable = select_runnable_tasks(conn, capacity=5)
+        maintenance_run = conn.execute(
+            """
+            SELECT status, triggered_by, trigger_reason, trigger_event_id
+            FROM maintenance_runs
+            WHERE matter_scope = 'alpha'
+            ORDER BY started_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
+
+    terminal_payload = json.loads(str(terminal["payload_json"])) if terminal is not None else {}
+    assert worker_payloads[0]["escalation_target"] == "worker_self_repair"
+    assert worker_payloads[4]["escalation_target"] == "matter_orchestrator_repair"
+    assert worker_payloads[9]["escalation_target"] == "master_orchestrator_attention"
+    assert worker_payloads[14]["escalation_target"] == "user_intervention_required"
+    assert worker_payloads[14]["retry_allowed"] is False
+    assert worker_payloads[14]["terminal"] is True
+    assert terminal_payload["requires_user_intervention"] is True
+    assert terminal_payload["signal_count"] == 15
+    assert int(str(master_event["n"])) == 1
+    assert int(str(loop_escalations["n"])) == 3
+    assert int(str(matter_loop_escalations["n"])) == 1
+    assert int(str(master_loop_escalations["n"])) == 2
+    assert int(str(error_logs["n"])) == 15
+    assert int(str(terminal_error_log["consecutive_count"])) == 15
+    assert int(str(terminal_error_log["escalation_level"])) == 4
+    assert int(str(terminal_error_log["terminal"])) == 1
+    assert task["status"] == str(TaskStatus.BLOCKED)
+    assert "orchestrator repair limit reached" in str(task["blocked_reasons_json"])
+    assert attention is not None and attention["severity"] == "blocker"
+    assert "user intervention required" in str(attention["reason"])
+    assert orchestrator is not None and orchestrator["status"] == "user_intervention_required"
+    assert runnable == []
+    assert maintenance_run is not None
+    assert maintenance_run["status"] == "pending"
+    assert maintenance_run["triggered_by"] == "master_orchestrator"
+    assert "repair limit reached" in str(maintenance_run["trigger_reason"])
+    assert str(maintenance_run["trigger_event_id"]).startswith("orchevt-")
+
+
+def test_loop_guard_counts_consecutive_matching_failures_not_unrelated_noise(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(conn, TaskSpec(task_id="reset-loop-task", title="Reset loop", task_type="extract", matter_scope="alpha"))
+
+        for _ in range(4):
+            _ = report_worker_failure_to_orchestrator(conn, "reset-loop-task", "same provider timeout")
+        _ = report_worker_failure_to_orchestrator(conn, "reset-loop-task", "different citation failure")
+        reset_event = report_worker_failure_to_orchestrator(conn, "reset-loop-task", "same provider timeout")
+        for _ in range(4):
+            fifth_after_reset = report_worker_failure_to_orchestrator(conn, "reset-loop-task", "same provider timeout")
+
+        reset_payload = json.loads(
+            str(conn.execute("SELECT payload_json FROM orchestrator_events WHERE orchestrator_event_id = ?", (reset_event,)).fetchone()["payload_json"])
+        )
+        fifth_payload = json.loads(
+            str(conn.execute("SELECT payload_json FROM orchestrator_events WHERE orchestrator_event_id = ?", (fifth_after_reset,)).fetchone()["payload_json"])
+        )
+
+    assert reset_payload["consecutive_count"] == 1
+    assert reset_payload["occurrence_count"] == 5
+    assert reset_payload["escalation_target"] == "worker_self_repair"
+    assert fifth_payload["consecutive_count"] == 5
+    assert fifth_payload["escalation_target"] == "matter_orchestrator_repair"
+
+
+def test_orchestrator_tick_stops_reproposing_repairs_after_hard_limit(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="blocked-loop-task",
+                title="Blocked loop",
+                task_type="extract",
+                matter_scope="alpha",
+                source_dependencies=["missing-source"],
+            ),
+        )
+        assert select_runnable_tasks(conn, capacity=5) == []
+
+        ticks = [orchestrator_tick(conn, "alpha", 5, dry_run=False) for _ in range(14)]
+        terminal_tick = orchestrator_tick(conn, "alpha", 5, dry_run=True)
+        post_terminal_write_tick = orchestrator_tick(conn, "alpha", 5, dry_run=False)
+        repair_proposals = conn.execute(
+            """
+            SELECT COUNT(*) AS n
+            FROM orchestrator_events
+            WHERE event_type = 'orchestrator.repair_proposed'
+              AND json_extract(payload_json, '$.task_id') = 'blocked-loop-task'
+            """
+        ).fetchone()
+        terminal_events = conn.execute(
+            """
+            SELECT COUNT(*) AS n
+            FROM orchestrator_events
+            WHERE event_type = 'orchestrator.repair_limit_reached'
+              AND json_extract(payload_json, '$.task_id') = 'blocked-loop-task'
+            """
+        ).fetchone()
+        error_logs = conn.execute(
+            """
+            SELECT COUNT(*) AS n
+            FROM error_logs
+            WHERE target_id = 'blocked-loop-task'
+            """
+        ).fetchone()
+        loop_escalations = conn.execute(
+            """
+            SELECT COUNT(*) AS n
+            FROM events
+            WHERE event_type = 'loop_guard.escalated'
+              AND matter_scope = 'alpha'
+            """
+        ).fetchone()
+
+    assert cast(list[dict[str, object]], ticks[0]["blocked_repairs"])
+    assert cast(list[dict[str, object]], ticks[3]["blocked_repairs"])
+    assert cast(list[dict[str, object]], ticks[8]["blocked_repairs"])
+    assert int(str(repair_proposals["n"])) == 14
+    assert int(str(terminal_events["n"])) == 1
+    assert int(str(error_logs["n"])) == 15
+    assert int(str(loop_escalations["n"])) == 3
+    assert cast(list[dict[str, object]], terminal_tick["blocked_repairs"]) == []
+    assert cast(list[dict[str, object]], post_terminal_write_tick["blocked_repairs"]) == []
+    terminal_blocks = cast(list[dict[str, object]], terminal_tick["terminal_blocks"])
+    assert terminal_blocks and terminal_blocks[0]["task_id"] == "blocked-loop-task"
+    assert terminal_blocks[0]["status"] == "user_intervention_required"
+
+
+def test_maintenance_tick_writes_report_notifies_user_and_master(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(conn, TaskSpec(task_id="maint-task", title="Maint", task_type="source_inventory", matter_scope="alpha"))
+        for _ in range(15):
+            _ = report_worker_failure_to_orchestrator(conn, "maint-task", "same terminal failure")
+        status_before = maintenance_status(conn, matter_scope="alpha")
+        run_id = str(cast(list[dict[str, object]], status_before["runs"])[0]["maintenance_run_id"])
+
+        result = maintenance_tick(conn, matter_scope="alpha", maintenance_run_id=run_id, write=True)
+        report = maintenance_report(conn, maintenance_run_id=run_id)
+        master_completed = conn.execute(
+            """
+            SELECT COUNT(*) AS n
+            FROM events
+            WHERE event_type = 'master_orchestrator.maintenance_completed'
+              AND matter_scope = 'alpha'
+            """
+        ).fetchone()
+        user_attention = conn.execute(
+            """
+            SELECT COUNT(*) AS n
+            FROM human_attention
+            WHERE matter_scope = 'alpha'
+              AND target_type = 'matter'
+              AND target_id = 'alpha'
+              AND reason LIKE 'maintenance report ready:%'
+            """
+        ).fetchone()
+        run = conn.execute("SELECT status, completed_at FROM maintenance_runs WHERE maintenance_run_id = ?", (run_id,)).fetchone()
+
+    assert result["dry_run"] is False
+    assert result["maintenance_report_id"] == report["maintenance_report_id"]
+    assert result["resume_signal"]["status"] == "blocked_by_user_intervention"
+    assert "maintenance inspected" in str(report["summary"])
+    assert int(str(master_completed["n"])) == 1
+    assert int(str(user_attention["n"])) == 1
+    assert run["status"] == "completed"
+    assert run["completed_at"]
+
+
+def test_maintenance_tick_closes_stale_system_attention_for_requeued_tasks(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="requeued-after-provider-fix",
+                title="Requeued after provider fix",
+                task_type="source_inventory",
+                matter_scope="alpha",
+                status=TaskStatus.QUEUED,
+            ),
+        )
+        stale_attention = repo.record_human_attention(
+            conn,
+            matter_scope="alpha",
+            target_type="task",
+            target_id="requeued-after-provider-fix",
+            severity="blocker",
+            reason="free loop worker failed: OpenRouter provider call failed after dispatch: OpenRouter HTTP 401",
+        )
+        stale_quarantine_attention = repo.record_human_attention(
+            conn,
+            matter_scope="alpha",
+            target_type="task",
+            target_id="requeued-after-provider-fix",
+            severity="blocker",
+            reason="worker output quarantined: citations[0].quoted_text_hash must be a sha256 hex digest when present",
+        )
+        stale_cert_attention = repo.record_human_attention(
+            conn,
+            matter_scope="alpha",
+            target_type="task",
+            target_id="requeued-after-provider-fix",
+            severity="blocker",
+            reason="completion certification production_mapping withheld: validation failed after reduction",
+        )
+        operator_attention = repo.record_human_attention(
+            conn,
+            matter_scope="alpha",
+            target_type="task",
+            target_id="requeued-after-provider-fix",
+            severity="blocker",
+            reason="operator directive: review this before drafting",
+        )
+        request = request_maintenance(conn, matter_scope="alpha", reason="cleanup stale provider blockers", write=True)
+
+        result = maintenance_tick(conn, matter_scope="alpha", maintenance_run_id=str(request["maintenance_run_id"]), write=True)
+        stale = conn.execute("SELECT status FROM human_attention WHERE attention_id = ?", (stale_attention,)).fetchone()
+        stale_quarantine = conn.execute("SELECT status FROM human_attention WHERE attention_id = ?", (stale_quarantine_attention,)).fetchone()
+        stale_cert = conn.execute("SELECT status FROM human_attention WHERE attention_id = ?", (stale_cert_attention,)).fetchone()
+        operator = conn.execute("SELECT status FROM human_attention WHERE attention_id = ?", (operator_attention,)).fetchone()
+
+    assert any(action["type"] == "resolve_stale_system_task_attention" for action in cast(list[dict[str, object]], result["applied_actions"]))
+    assert stale["status"] == "closed"
+    assert stale_quarantine["status"] == "closed"
+    assert stale_cert["status"] == "closed"
+    assert operator["status"] == "open"
+
+
+def test_maintenance_tick_dedupes_open_attention_by_signature(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="duplicate-attention-task",
+                title="Duplicate attention",
+                task_type="source_inventory",
+                matter_scope="alpha",
+                status=TaskStatus.BLOCKED,
+            ),
+        )
+        first = repo.record_human_attention(
+            conn,
+            matter_scope="alpha",
+            target_type="task",
+            target_id="duplicate-attention-task",
+            severity="blocker",
+            reason="same blocker older wording",
+            signature="blocker:duplicate",
+        )
+        second = repo.record_human_attention(
+            conn,
+            matter_scope="alpha",
+            target_type="task",
+            target_id="duplicate-attention-task",
+            severity="blocker",
+            reason="same blocker newer wording",
+            signature="blocker:duplicate",
+        )
+        beta = repo.record_human_attention(
+            conn,
+            matter_scope="beta",
+            target_type="matter",
+            target_id="beta",
+            severity="blocker",
+            reason="same signature different matter",
+            signature="blocker:duplicate",
+        )
+        request = request_maintenance(conn, matter_scope="alpha", reason="dedupe attention", write=True)
+
+        result = maintenance_tick(conn, matter_scope="alpha", maintenance_run_id=str(request["maintenance_run_id"]), write=True)
+        rows = {
+            int(row["attention_id"]): dict(cast(Mapping[str, object], row))
+            for row in conn.execute("SELECT attention_id, status, superseded_by FROM human_attention").fetchall()
+        }
+
+    assert any(action["type"] == "dedupe_open_human_attention" and action["changed"] == 1 for action in cast(list[dict[str, object]], result["applied_actions"]))
+    assert rows[first]["status"] == "superseded"
+    assert rows[first]["superseded_by"] == str(second)
+    assert rows[second]["status"] == "open"
+    assert rows[beta]["status"] == "open"
+
+
+def test_maintenance_can_expire_stale_leases_and_emit_resume_signal(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(conn, TaskSpec(task_id="stale-lease-task", title="Stale", task_type="source_inventory", matter_scope="alpha"))
+        repo.add_task(conn, TaskSpec(task_id="beta-stale-lease-task", title="Beta stale", task_type="source_inventory", matter_scope="beta"))
+        lease_id = acquire_lease(conn, task_id="stale-lease-task", worker_id="stale-worker", seconds=-1)
+        beta_lease_id = acquire_lease(conn, task_id="beta-stale-lease-task", worker_id="beta-stale-worker", seconds=-1)
+        _ = repo.upsert_matter_orchestrator(conn, matter_scope="alpha", status="maintenance_required")
+        request = request_maintenance(conn, matter_scope="alpha", reason="stale lease maintenance", write=True)
+
+        result = maintenance_tick(conn, matter_scope="alpha", maintenance_run_id=str(request["maintenance_run_id"]), write=True)
+        lease = conn.execute("SELECT status FROM leases WHERE lease_id = ?", (lease_id,)).fetchone()
+        beta_lease = conn.execute("SELECT status FROM leases WHERE lease_id = ?", (beta_lease_id,)).fetchone()
+        orchestrator = repo.get_matter_orchestrator(conn, matter_scope="alpha")
+
+    assert result["resume_signal"]["status"] == "ready_to_resume"
+    assert any(action["type"] == "expire_stale_leases" for action in cast(list[dict[str, object]], result["applied_actions"]))
+    assert lease["status"] == "expired"
+    assert beta_lease["status"] == "active"
+    assert orchestrator is not None and orchestrator["status"] == "repair_required"
+
+
+def test_operator_signal_is_routed_once_by_orchestrator_tick(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(conn, TaskSpec(task_id="alpha-task", title="Alpha", task_type="source_inventory", matter_scope="alpha"))
+
+        dry = record_operator_signal(
+            conn,
+            "alpha",
+            "directive",
+            "Prioritize bank records before draft work",
+            target_task_id="alpha-task",
+            priority="high",
+            write=False,
+        )
+        assert dry["dry_run"] is True
+        assert dry["would_create_orchestrator"] is True
+        assert conn.execute("SELECT COUNT(*) AS n FROM orchestrator_events").fetchone()["n"] == 0
+
+        signal = record_operator_signal(
+            conn,
+            "alpha",
+            "directive",
+            "Prioritize bank records before draft work",
+            target_task_id="alpha-task",
+            priority="high",
+            write=True,
+        )
+        dry_tick = orchestrator_tick(conn, "alpha", 0, dry_run=True)
+        write_tick = orchestrator_tick(conn, "alpha", 0, dry_run=False)
+        second_write_tick = orchestrator_tick(conn, "alpha", 0, dry_run=False)
+        routed_count = conn.execute(
+            """
+            SELECT COUNT(*) AS n
+            FROM orchestrator_events
+            WHERE matter_scope = 'alpha' AND event_type = 'orchestrator.operator_signal_routed'
+            """
+        ).fetchone()
+        master_count = conn.execute(
+            """
+            SELECT COUNT(*) AS n
+            FROM events
+            WHERE matter_scope = 'alpha' AND event_type IN (
+                'master_orchestrator.operator_signal_received',
+                'master_orchestrator.operator_signal_routed'
+            )
+            """
+        ).fetchone()
+        attention = conn.execute(
+            """
+            SELECT target_type, target_id, severity, reason
+            FROM human_attention
+            WHERE matter_scope = 'alpha'
+            """
+        ).fetchone()
+
+    pending = cast(list[dict[str, object]], dry_tick["operator_signals"])
+    routed = cast(list[dict[str, object]], write_tick["routed_operator_signals"])
+    second_routed = cast(list[dict[str, object]], second_write_tick["routed_operator_signals"])
+    assert signal["dry_run"] is False
+    assert pending and pending[0]["operator_signal_event_id"] == signal["orchestrator_event_id"]
+    assert routed and routed[0]["operator_signal_event_id"] == signal["orchestrator_event_id"]
+    assert second_routed == []
+    assert int(str(routed_count["n"])) == 1
+    assert int(str(master_count["n"])) == 2
+    assert attention["target_type"] == "task"
+    assert attention["target_id"] == "alpha-task"
+    assert attention["severity"] == "warning"
+    assert "operator directive" in str(attention["reason"])
+
+
+def test_operator_signal_rejects_wrong_matter_task(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(conn, TaskSpec(task_id="beta-task", title="Beta", task_type="source_inventory", matter_scope="beta"))
+        with pytest.raises(ValueError, match="belongs to matter beta"):
+            record_operator_signal(conn, "alpha", "attention", "Wrong matter", target_task_id="beta-task", write=True)
+
+
+def test_s8_draft_does_not_wait_on_hostile_review_before_draft_exists(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="draft-after-foundation",
+                title="Draft after foundation",
+                task_type="draft_preparation",
+                matter_scope="alpha",
+                stage=LegalStage.S8_DRAFT_PREPARATION,
+            ),
+        )
+        for gate in ("chronology_citations", "authority_map"):
+            validation_id = repo.record_validation(
+                conn,
+                target_type="matter",
+                target_id="alpha",
+                gate_name=gate,
+                passed=True,
+                details={"test": "foundation satisfied"},
+                matter_scope="alpha",
+            )
+            _ = repo.add_certification(
+                conn,
+                subject_type="matter",
+                subject_id="alpha",
+                certification_type=gate,
+                validator="test",
+                validation_result_id=validation_id,
+            )
+
+        runnable = select_runnable_tasks(conn, capacity=5)
+        task = cast(dict[str, object], conn.execute("SELECT blocked_reasons_json FROM tasks WHERE task_id = 'draft-after-foundation'").fetchone())
+
+    assert [row["task_id"] for row in runnable] == ["draft-after-foundation"]
+    assert "hostile_review" not in str(task["blocked_reasons_json"])
+
+
+def test_cache_context_subagent_and_followup_reuse_surfaces(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    sections = [
+        {"name": "stable_prefix", "content": "atticus"},
+        {"name": "matter_posture", "content": {"matter_scope": "alpha"}},
+        {"name": "required_output_schema", "content": {"schema": "worker_result_packet.v2"}},
+        {"name": "available_tools", "content": ["read"]},
+        {"name": "task_contract", "content": {"directive": "differs"}},
+    ]
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(conn, TaskSpec(task_id="parent", title="Parent", task_type="source_inventory", matter_scope="alpha"))
+        alpha_source = repo.add_source(conn, source_id="alpha-source", matter_scope="alpha", path="/alpha.pdf", sha256="a" * 64)
+        _ = repo.add_source(conn, source_id="beta-source", matter_scope="beta", path="/beta.pdf", sha256="b" * 64)
+        context_a = build_cache_safe_context(sections, model_decision=_decision().__dict__)
+        context_b = build_cache_safe_context([*sections[:-1], {"name": "task_contract", "content": {"directive": "other"}}], model_decision=_decision().__dict__)
+        spec = SubagentSpec(
+            role="extractor",
+            task_type="extraction_qa",
+            matter_scope="alpha",
+            parent_task_id="parent",
+            model_decision=_decision(),
+            allowed_source_ids=(alpha_source,),
+            allowed_artifact_ids=(),
+            tools=("read",),
+            max_turns=1,
+            async_allowed=False,
+            cache_sharing_group_id="grp",
+        )
+        created = create_subagent_task(conn, spec, directive="check extraction", write=True)
+        bad_spec = SubagentSpec(**{**spec.as_dict(), "allowed_source_ids": ("beta-source",), "model_decision": _decision()})
+        with pytest.raises(ValueError, match="outside matter"):
+            create_subagent_task(conn, bad_spec, directive="bad", write=False)
+        pro_without_decision = SubagentSpec(
+            **{
+                **spec.as_dict(),
+                "model_decision": ModelDecision(
+                    provider="openrouter",
+                    model="deepseek/deepseek-v4-pro",
+                    runtime="openrouter",
+                    profile_id="deepseek_flash_or",
+                    decision_reason="bad manual model",
+                    decision_tier="flash_worker",
+                    fallback_allowed=False,
+                    required_human_review=False,
+                    policy_fingerprint="policy",
+                    input_fingerprint="input",
+                ),
+            }
+        )
+        with pytest.raises(ValueError, match="decision layer selected Pro"):
+            create_subagent_task(conn, pro_without_decision, directive="bad pro", write=False)
+        recursive_spec = SubagentSpec(**{**spec.as_dict(), "parent_task_id": str(created["task"]["task_id"]), "model_decision": _decision()})
+        with pytest.raises(ValueError, match="recursive subagent"):
+            create_subagent_task(conn, recursive_spec, directive="recursive", write=False)
+
+        run = start_work_run(conn, "alpha", "follow up on source")
+        step_id = repo.record_work_run_step(
+            conn,
+            work_run_id=str(run["work_run_id"]),
+            step_type="source_inventory",
+            status="complete",
+            input_fingerprint="source-goal",
+        )
+        _ = repo.record_work_reuse(conn, matter_scope="alpha", reused_from_step_id=step_id)
+        reusable = summarize_reusable_work(conn, "alpha", "source")
+        followup = build_followup_context(conn, "alpha", "source")
+        explanation = explain_reuse_decision(
+            conn,
+            "alpha",
+            [{"candidate_id": "candidate-only", "status": "candidate", "trusted_as_proof": False}],
+        )
+        resumed = resume_work_run(conn, str(run["resume_token"]))
+
+    assert context_a.stable_fingerprint == context_b.stable_fingerprint
+    assert created["task"]["candidate_only"] is True
+    assert reusable["reusable_steps"]
+    assert followup["rules"][2].startswith("candidate output")
+    candidate_explanation = cast(list[dict[str, object]], explanation["reuse_explanations"])[0]
+    assert candidate_explanation["reuse_allowed"] is False
+    assert candidate_explanation["orientation_allowed"] is True
+    assert resumed["ok"] is True
+
+
+def test_cache_break_detection_and_adaptive_plan_are_explicit(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    previous = {
+        "model": "deepseek/deepseek-v4-flash",
+        "system_fingerprint": "s",
+        "tools_fingerprint": "t",
+        "context_fingerprint": "c",
+        "policy_fingerprint": "p",
+        "cache_hit_tokens": 100,
+    }
+    current = {**previous, "cache_hit_tokens": 0}
+
+    with repo.db_connection(db_path) as conn:
+        source_plan = plan_adaptive_work(conn, matter_scope="alpha", goal="source inventory and extraction")
+        plan = plan_adaptive_work(conn, matter_scope="alpha", goal="Draft a complaint", prior_work_state={"contradiction_count": 1})
+
+    assert fingerprint_provider_policy({"model": "x"}) == fingerprint_provider_policy({"model": "x"})
+    assert detect_prompt_cache_break(previous, current)["reason"].startswith("cache hit drop with unchanged")
+    assert source_plan.selected_stages == ("S0", "S1")
+    assert [task.task_type for task in source_plan.tasks] == ["source_inventory", "extraction_qa"]
+    assert "S8" in plan.selected_stages
+    assert "hostile_review" in plan.required_gates
+    assert any(decision.decision_tier == "pro_orchestrator" for decision in plan.model_decisions)

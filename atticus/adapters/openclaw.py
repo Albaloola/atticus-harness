@@ -1,0 +1,19 @@
+"""OpenClaw execution adapter boundary.
+
+OpenClaw is intentionally an adapter, not the owner of Atticus harness state.
+This module does not resume OpenClaw or start legal workers.
+"""
+
+from __future__ import annotations
+
+from typing_extensions import override
+
+from atticus.adapters.base import AdapterBlocked, ExecutionAdapter
+
+
+class OpenClawAdapter(ExecutionAdapter):
+    name: str = "openclaw"
+
+    @override
+    def launch(self, *_args: object, **_kwargs: object) -> None:
+        raise AdapterBlocked("OpenClaw launch is blocked in the foundation; explicit work-order execution is deferred")

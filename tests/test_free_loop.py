@@ -1,0 +1,905 @@
+from __future__ import annotations
+
+from collections.abc import Mapping
+import json
+from pathlib import Path
+import sqlite3
+from typing import cast
+
+import pytest
+
+from atticus.cli import main as cli_main
+from atticus.core.policies import LegalStage, TaskStatus
+from atticus.core.tasks import TaskSpec
+from atticus.db import repo
+from atticus.db.schema import SCHEMA_VERSION
+from atticus.scheduler import free_loop as free_loop_module
+from atticus.scheduler.free_loop import run_free_loop_once
+from atticus.scheduler.lease import acquire_lease, complete_lease
+from atticus.status.completion import FINAL_LEGAL_DRAFT_CERTIFICATIONS
+from atticus.workers.outputs import record_worker_result
+from atticus.workers.result_parser import RESULT_PACKET_SCHEMA_VERSION
+
+
+def init_db(tmp_path: Path) -> Path:
+    db_path = tmp_path / "atticus.sqlite3"
+    repo.initialize_database(db_path)
+    return db_path
+
+
+def _scalar_int(conn: sqlite3.Connection, sql: str) -> int:
+    row = conn.execute(sql).fetchone()
+    assert row is not None
+    value = row[0]
+    assert value is not None
+    return int(str(value))
+
+
+def _packet(task_id: str) -> dict[str, object]:
+    return {
+        "schema_version": RESULT_PACKET_SCHEMA_VERSION,
+        "task_id": task_id,
+        "summary": "foundation shard complete",
+        "findings": [
+            {
+                "finding_id": "finding-1",
+                "text": "indexed source inventory shard",
+                "finding_type": "drafting_note",
+                "citation_ids": [],
+                "confidence": 0.5,
+                "reasoning_status": "uncertain",
+            }
+        ],
+        "citations": [],
+        "proposed_artifacts": [
+            {
+                "path": f"canonical/{task_id}.json",
+                "artifact_type": "foundation_note",
+                "stage": str(LegalStage.S0_SOURCE_INVENTORY),
+                "title": f"Reduced {task_id}",
+                "content": "{}",
+            }
+        ],
+        "proposed_tasks": [
+            {
+                "task_id": "followup-source-shard",
+                "title": "Follow up source shard",
+                "task_type": "source_inventory",
+                "stage": str(LegalStage.S0_SOURCE_INVENTORY),
+                "matter_scope": "atticus",
+                "instructions": "Follow up the source inventory shard.",
+                "provider_policy": {
+                    "provider": "openrouter",
+                    "model": "deepseek/deepseek-v4-flash",
+                    "allow_fallback": False,
+                    "estimated_cost_usd": 0.0,
+                },
+                "expected_value": 5.0,
+            }
+        ],
+        "uncertainties": [],
+        "contradictions": [],
+        "risk_flags": [],
+        "redaction_flags": [],
+        "external_action_requests": [],
+    }
+
+
+def _certify_matter(conn: sqlite3.Connection, matter_scope: str, certification_type: str) -> None:
+    validation_id = repo.record_validation(
+        conn,
+        matter_scope=matter_scope,
+        target_type="matter",
+        target_id=matter_scope,
+        gate_name=certification_type,
+        passed=True,
+        details={"test": True},
+    )
+    repo.add_certification(
+        conn,
+        subject_type="matter",
+        subject_id=matter_scope,
+        certification_type=certification_type,
+        validator="test",
+        validation_result_id=validation_id,
+        evidence={"test": True},
+    )
+
+
+def test_free_loop_once_reduces_pending_candidates_and_imports_proposed_tasks(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="seed-source-shard",
+                title="Seed source shard",
+                task_type="source_inventory",
+                stage=LegalStage.S0_SOURCE_INVENTORY,
+            ),
+        )
+        lease_id = acquire_lease(conn, task_id="seed-source-shard", worker_id="worker-01", dry_run=False)
+        candidate_id = record_worker_result(
+            conn,
+            task_id="seed-source-shard",
+            lease_id=lease_id,
+            worker_id="worker-01",
+            payload=_packet("seed-source-shard"),
+        )
+
+        result = run_free_loop_once(conn, output_dir=tmp_path / "out", capacity=0, execute_workers=False)
+
+        candidate = cast(Mapping[str, object], conn.execute("SELECT status FROM candidate_outputs WHERE candidate_id = ?", (candidate_id,)).fetchone())
+        seed_task = cast(Mapping[str, object], conn.execute("SELECT status FROM tasks WHERE task_id = 'seed-source-shard'").fetchone())
+        followup = cast(Mapping[str, object] | None, conn.execute("SELECT * FROM tasks WHERE task_id = 'followup-source-shard'").fetchone())
+        provider_runs = _scalar_int(conn, "SELECT COUNT(*) FROM provider_runs")
+
+    assert result["reduced_candidates"] == [candidate_id]
+    assert result["imported_tasks"] == ["followup-source-shard"]
+    assert candidate["status"] == "reduced"
+    assert seed_task["status"] == str(TaskStatus.COMPLETE)
+    assert followup is not None
+    assert followup["status"] == str(TaskStatus.QUEUED)
+    assert provider_runs == 0
+
+
+def test_free_loop_no_progress_with_missing_certification_surfaces_next_action(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    matter_scope = "napier-accommodation-arrears"
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="napier-final-quality",
+                title="Napier final quality",
+                task_type="final_quality_gate",
+                stage=LegalStage.S9_FINAL_QUALITY_GATE,
+                matter_scope=matter_scope,
+                status=TaskStatus.COMPLETE,
+            ),
+        )
+        for certification_type in FINAL_LEGAL_DRAFT_CERTIFICATIONS:
+            if certification_type != "final_quality_gate":
+                _certify_matter(conn, matter_scope, certification_type)
+
+        result = run_free_loop_once(
+            conn,
+            output_dir=tmp_path / "out",
+            capacity=0,
+            execute_workers=False,
+            matter_scope=matter_scope,
+        )
+        event = conn.execute(
+            """
+            SELECT payload_json
+            FROM events
+            WHERE event_type = 'supervisor.no_progress_detected'
+            ORDER BY event_id DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        repair_plan = conn.execute(
+            "SELECT blocker_type FROM repair_plans WHERE matter_scope = ? AND blocker_type = 'missing_certification' LIMIT 1",
+            (matter_scope,),
+        ).fetchone()
+        attention = conn.execute(
+            """
+            SELECT reason
+            FROM human_attention
+            WHERE matter_scope = ? AND target_type = 'matter' AND target_id = ? AND status = 'open'
+            LIMIT 1
+            """,
+            (matter_scope, matter_scope),
+        ).fetchone()
+
+    invariant = cast(Mapping[str, object], result["no_silent_idle"])
+    assert invariant["ok"] is True
+    assert invariant["reason"] == "progress_made"
+    assert result["repair_progress"] is True
+    assert result["created_repair_task_ids"]
+    assert event is None
+    assert repair_plan is not None
+    assert attention is None
+
+
+def test_free_loop_no_silent_idle_does_not_fire_when_matter_done(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    matter_scope = "napier-accommodation-arrears"
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="napier-final-quality-done",
+                title="Napier final quality done",
+                task_type="final_quality_gate",
+                stage=LegalStage.S9_FINAL_QUALITY_GATE,
+                matter_scope=matter_scope,
+                status=TaskStatus.COMPLETE,
+            ),
+        )
+        for certification_type in FINAL_LEGAL_DRAFT_CERTIFICATIONS:
+            _certify_matter(conn, matter_scope, certification_type)
+
+        result = run_free_loop_once(
+            conn,
+            output_dir=tmp_path / "out",
+            capacity=0,
+            execute_workers=False,
+            matter_scope=matter_scope,
+        )
+        event_count = _scalar_int(conn, "SELECT COUNT(*) FROM events WHERE event_type = 'supervisor.no_progress_detected'")
+
+    invariant = cast(Mapping[str, object], result["no_silent_idle"])
+    assert invariant["ok"] is True
+    assert invariant["reason"] == "matter_complete"
+    assert event_count == 0
+
+
+def test_free_loop_requeues_transient_openrouter_json_failure_when_live_enabled(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    reason = (
+        "OpenRouter provider call failed after dispatch: "
+        "OpenRouter response did not contain a JSON message: Unterminated string"
+    )
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="json-transient",
+                title="JSON transient",
+                task_type="source_inventory",
+                provider_policy={
+                    "provider": "openrouter",
+                    "model": "deepseek/deepseek-v4-flash",
+                    "allow_fallback": False,
+                    "estimated_cost_usd": 0.01,
+                },
+                status=TaskStatus.BLOCKED,
+            ),
+        )
+        repo.update_task_blocked(conn, "json-transient", [reason])
+
+        result = run_free_loop_once(
+            conn,
+            output_dir=tmp_path / "out",
+            capacity=1,
+            execute_workers=False,
+            runtime="openrouter",
+            allow_live=True,
+            env={"ATTICUS_ENABLE_LIVE_OPENROUTER": "1"},
+        )
+        task = cast(Mapping[str, object], conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'json-transient'").fetchone())
+
+    assert result["leased_tasks"] == ["json-transient"]
+    assert task["status"] == str(TaskStatus.LEASED)
+    assert json.loads(str(task["blocked_reasons_json"])) == []
+
+
+def test_free_loop_does_not_requeue_openrouter_auth_failure_as_transient(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    reason = "OpenRouter provider call failed after dispatch: OpenRouter HTTP 401: unauthorized"
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="auth-terminal",
+                title="Auth terminal",
+                task_type="source_inventory",
+                provider_policy={
+                    "provider": "openrouter",
+                    "model": "deepseek/deepseek-v4-flash",
+                    "allow_fallback": False,
+                    "estimated_cost_usd": 0.01,
+                },
+                status=TaskStatus.BLOCKED,
+            ),
+        )
+        repo.update_task_blocked(conn, "auth-terminal", [reason])
+
+        result = run_free_loop_once(
+            conn,
+            output_dir=tmp_path / "out",
+            capacity=1,
+            execute_workers=False,
+            runtime="openrouter",
+            allow_live=True,
+            env={"ATTICUS_ENABLE_LIVE_OPENROUTER": "1"},
+        )
+        task = cast(Mapping[str, object], conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'auth-terminal'").fetchone())
+
+    assert result["leased_tasks"] == []
+    assert task["status"] == str(TaskStatus.BLOCKED)
+    assert json.loads(str(task["blocked_reasons_json"])) == [reason]
+
+
+def test_free_loop_once_skips_high_stage_auto_reduction(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="draft-auto-reduce",
+                title="Draft auto reduce",
+                task_type="draft_preparation",
+                matter_scope="alpha",
+                stage=LegalStage.S8_DRAFT_PREPARATION,
+            ),
+        )
+        candidate_id = repo.record_candidate_output(
+            conn,
+            task_id="draft-auto-reduce",
+            lease_id=None,
+            worker_id="worker-01",
+            output_type="worker_result_packet",
+            payload=_packet("draft-auto-reduce"),
+        )
+        _ = conn.execute("UPDATE tasks SET status = ? WHERE task_id = 'draft-auto-reduce'", (TaskStatus.REDUCER_PENDING,))
+
+        result = run_free_loop_once(conn, output_dir=tmp_path / "out", capacity=0, execute_workers=False)
+
+        candidate = cast(Mapping[str, object], conn.execute("SELECT status FROM candidate_outputs WHERE candidate_id = ?", (candidate_id,)).fetchone())
+        task = cast(Mapping[str, object], conn.execute("SELECT status FROM tasks WHERE task_id = 'draft-auto-reduce'").fetchone())
+        attention = cast(Mapping[str, object], conn.execute("SELECT matter_scope, target_type, target_id, reason FROM human_attention WHERE target_id = ?", (candidate_id,)).fetchone())
+
+    assert result["reduced_candidates"] == []
+    assert result["skipped_reductions"] == [
+        {
+            "candidate_id": candidate_id,
+            "task_id": "draft-auto-reduce",
+            "reason": "free loop auto-reduction is disabled for high-risk legal stage S8; manual reducer review required",
+        }
+    ]
+    assert candidate["status"] == "candidate"
+    assert task["status"] == str(TaskStatus.REDUCER_PENDING)
+    assert attention["matter_scope"] == "alpha"
+    assert attention["target_type"] == "candidate"
+    assert "manual reducer review required" in str(attention["reason"])
+
+
+def test_free_loop_once_executes_local_capacity_and_leaves_reducer_pending_for_next_tick(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="local-source-shard",
+                title="Local source shard",
+                task_type="source_inventory",
+                stage=LegalStage.S0_SOURCE_INVENTORY,
+                provider_policy={"provider": "local", "model": "stub", "estimated_cost_usd": 0.0},
+            ),
+        )
+
+        result = run_free_loop_once(conn, output_dir=tmp_path / "out", capacity=1, execute_workers=True, runtime="local")
+
+        task = cast(Mapping[str, object], conn.execute("SELECT status FROM tasks WHERE task_id = 'local-source-shard'").fetchone())
+        candidates = _scalar_int(conn, "SELECT COUNT(*) FROM candidate_outputs WHERE task_id = 'local-source-shard' AND status = 'candidate'")
+        active_leases = _scalar_int(conn, "SELECT COUNT(*) FROM leases WHERE status = 'active'")
+
+    assert result["leased_tasks"] == ["local-source-shard"]
+    assert result["executed_tasks"] == ["local-source-shard"]
+    assert task["status"] == str(TaskStatus.REDUCER_PENDING)
+    assert candidates == 1
+    assert active_leases == 0
+
+
+def test_free_loop_once_codex_runtime_fails_closed_without_provider_fallback(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="codex-source-shard",
+                title="Codex source shard",
+                task_type="source_inventory",
+                stage=LegalStage.S0_SOURCE_INVENTORY,
+                provider_policy={
+                    "provider": "openai-codex",
+                    "model": "gpt-5.5",
+                    "allow_fallback": False,
+                    "estimated_cost_usd": 0.0,
+                },
+            ),
+        )
+
+        result = run_free_loop_once(conn, output_dir=tmp_path / "out", capacity=1, execute_workers=True, runtime="codex")
+
+        task = cast(Mapping[str, object], conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'codex-source-shard'").fetchone())
+        active_leases = _scalar_int(conn, "SELECT COUNT(*) FROM leases WHERE status = 'active'")
+        failed_leases = _scalar_int(conn, "SELECT COUNT(*) FROM leases WHERE status = 'failed'")
+        provider_runs = _scalar_int(conn, "SELECT COUNT(*) FROM provider_runs")
+        candidates = _scalar_int(conn, "SELECT COUNT(*) FROM candidate_outputs")
+
+    assert result["leased_tasks"] == ["codex-source-shard"]
+    assert result["executed_tasks"] == []
+    assert result["worker_errors"]
+    assert task["status"] == str(TaskStatus.BLOCKED)
+    assert "ATTICUS_ENABLE_LIVE_CODEX" in str(task["blocked_reasons_json"])
+    assert active_leases == 0
+    assert failed_leases == 1
+    assert provider_runs == 0
+    assert candidates == 0
+
+
+def test_free_loop_once_closes_active_lease_if_worker_crashes_before_cleanup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    db_path = init_db(tmp_path)
+    captured: dict[str, object] = {}
+
+    def fake_execute_codex_work_order(
+        conn: sqlite3.Connection,
+        *,
+        task_id: str,
+        lease_id: str,
+        worker_id: str,
+        output_dir: Path,
+        env: Mapping[str, str] | None,
+        allow_live: bool,
+        timeout_seconds: float,
+        reasoning_effort: str,
+    ) -> None:
+        del conn, output_dir, env, allow_live
+        captured.update(
+            {
+                "task_id": task_id,
+                "lease_id": lease_id,
+                "worker_id": worker_id,
+                "timeout_seconds": timeout_seconds,
+                "reasoning_effort": reasoning_effort,
+            }
+        )
+        with repo.db_connection(db_path, read_only=True) as observer:
+            visible_lease = observer.execute(
+                "SELECT status FROM leases WHERE lease_id = ? AND task_id = ?",
+                (lease_id, task_id),
+            ).fetchone()
+        assert visible_lease is not None
+        assert visible_lease["status"] == "active"
+        raise RuntimeError("simulated worker crash before cleanup")
+
+    monkeypatch.setattr(free_loop_module, "execute_codex_work_order", fake_execute_codex_work_order)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="codex-crash",
+                title="Codex crash",
+                task_type="source_inventory",
+                stage=LegalStage.S0_SOURCE_INVENTORY,
+                provider_policy={
+                    "provider": "openai-codex",
+                    "model": "gpt-5.5",
+                    "allow_fallback": False,
+                    "estimated_cost_usd": 0.0,
+                },
+            ),
+        )
+
+        result = run_free_loop_once(
+            conn,
+            output_dir=tmp_path / "out",
+            capacity=1,
+            execute_workers=True,
+            runtime="codex",
+            env={"ATTICUS_ENABLE_LIVE_CODEX": "1"},
+            allow_live=True,
+            codex_timeout_seconds=12.5,
+            codex_reasoning_effort="medium",
+        )
+
+        task = cast(Mapping[str, object], conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'codex-crash'").fetchone())
+        active_leases = _scalar_int(conn, "SELECT COUNT(*) FROM leases WHERE status = 'active'")
+        failed_leases = _scalar_int(conn, "SELECT COUNT(*) FROM leases WHERE status = 'failed'")
+        orchestrator_events = _scalar_int(
+            conn,
+            "SELECT COUNT(*) FROM orchestrator_events WHERE event_type = 'orchestrator.worker_failed' AND matter_scope = 'atticus'",
+        )
+
+    assert result["worker_errors"] == [{"task_id": "codex-crash", "error": "simulated worker crash before cleanup"}]
+    assert captured["timeout_seconds"] == 12.5
+    assert captured["reasoning_effort"] == "medium"
+    assert task["status"] == str(TaskStatus.BLOCKED)
+    assert "simulated worker crash before cleanup" in str(task["blocked_reasons_json"])
+    assert active_leases == 0
+    assert failed_leases == 1
+    assert orchestrator_events == 1
+
+
+def test_run_free_loop_cli_returns_nonzero_on_worker_errors(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="codex-no-live",
+                title="Codex no live",
+                task_type="source_inventory",
+                stage=LegalStage.S0_SOURCE_INVENTORY,
+                provider_policy={
+                    "provider": "openai-codex",
+                    "model": "gpt-5.5",
+                    "allow_fallback": False,
+                    "estimated_cost_usd": 0.0,
+                },
+            ),
+        )
+
+    code = cli_main(
+        [
+            "run-free-loop",
+            "--db",
+            str(db_path),
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--capacity",
+            "1",
+            "--max-ticks",
+            "1",
+            "--runtime",
+            "codex",
+        ]
+    )
+    stdout = capsys.readouterr().out
+    payload_raw = json.loads(stdout)
+    assert isinstance(payload_raw, Mapping)
+    payload = cast(Mapping[str, object], payload_raw)
+    ticks = cast(list[Mapping[str, object]], payload["ticks"])
+    worker_errors = cast(list[Mapping[str, object]], ticks[0]["worker_errors"])
+
+    assert code == 2
+    assert payload["ok"] is False
+    assert ticks[0]["ok"] is False
+    assert worker_errors[0]["task_id"] == "codex-no-live"
+
+
+def test_run_free_loop_cli_openrouter_without_live_gate_does_not_dispatch(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="openrouter-no-live",
+                title="OpenRouter no live",
+                task_type="source_inventory",
+                stage=LegalStage.S0_SOURCE_INVENTORY,
+                provider_policy={
+                    "provider": "openrouter",
+                    "model": "deepseek/deepseek-v4-flash",
+                    "allow_fallback": False,
+                    "estimated_cost_usd": 0.0,
+                },
+            ),
+        )
+
+    code = cli_main(
+        [
+            "run-free-loop",
+            "--db",
+            str(db_path),
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--capacity",
+            "1",
+            "--max-ticks",
+            "1",
+            "--runtime",
+            "openrouter",
+        ]
+    )
+    stdout = capsys.readouterr().out
+    payload_raw = json.loads(stdout)
+    assert isinstance(payload_raw, Mapping)
+    payload = cast(Mapping[str, object], payload_raw)
+    ticks = cast(list[Mapping[str, object]], payload["ticks"])
+    worker_errors = cast(list[Mapping[str, object]], ticks[0]["worker_errors"])
+
+    with repo.db_connection(db_path) as conn:
+        provider_runs = _scalar_int(conn, "SELECT COUNT(*) FROM provider_runs")
+        candidates = _scalar_int(conn, "SELECT COUNT(*) FROM candidate_outputs")
+        active_leases = _scalar_int(conn, "SELECT COUNT(*) FROM leases WHERE status = 'active'")
+        failed_leases = _scalar_int(conn, "SELECT COUNT(*) FROM leases WHERE status = 'failed'")
+        task = cast(Mapping[str, object], conn.execute("SELECT status, blocked_reasons_json FROM tasks WHERE task_id = 'openrouter-no-live'").fetchone())
+
+    assert code in (0, 2)
+    assert payload["ok"] is False
+    assert len(worker_errors) > 0
+    assert provider_runs == 0
+    assert candidates == 0
+    assert active_leases == 0
+    assert failed_leases == 1
+    assert task["status"] == str(TaskStatus.BLOCKED)
+    blocked_reasons = json.loads(task["blocked_reasons_json"])
+    assert any("allow_live=True" in reason for reason in blocked_reasons)
+
+
+def test_openrouter_preflight_groups_by_provider_policy_and_leases_only_passing_group(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    db_path = init_db(tmp_path)
+    probes: list[str] = []
+    executed: list[str] = []
+
+    def fake_probe(provider_policy: Mapping[str, object], *, env: Mapping[str, str]) -> dict[str, object]:
+        del env
+        model = str(provider_policy.get("model") or "")
+        probes.append(model)
+        if model.endswith("flash"):
+            return {"ok": True}
+        return {"ok": False, "reason": "simulated bad policy", "provider_policy_result": "simulated_bad_policy"}
+
+    def fake_execute_openrouter_work_order(
+        conn: sqlite3.Connection,
+        *,
+        task_id: str,
+        lease_id: str,
+        worker_id: str,
+        output_dir: Path,
+        env: Mapping[str, str] | None,
+        allow_live: bool,
+    ) -> None:
+        del worker_id, output_dir, env, allow_live
+        executed.append(task_id)
+        complete_lease(conn, lease_id=lease_id, task_status=TaskStatus.COMPLETE)
+
+    monkeypatch.setattr(free_loop_module, "probe_live_openrouter", fake_probe)
+    monkeypatch.setattr(free_loop_module, "execute_openrouter_work_order", fake_execute_openrouter_work_order)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="flash-ok",
+                title="Flash OK",
+                task_type="source_inventory",
+                provider_policy={
+                    "provider": "openrouter",
+                    "model": "deepseek/deepseek-v4-flash",
+                    "allow_fallback": False,
+                    "estimated_cost_usd": 0.01,
+                },
+            ),
+        )
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="pro-bad",
+                title="Pro bad",
+                task_type="source_inventory",
+                provider_policy={
+                    "provider": "openrouter",
+                    "model": "deepseek/deepseek-v4-pro",
+                    "allow_fallback": False,
+                    "estimated_cost_usd": 0.02,
+                },
+            ),
+        )
+
+        result = run_free_loop_once(
+            conn,
+            output_dir=tmp_path / "out",
+            capacity=2,
+            execute_workers=True,
+            runtime="openrouter",
+            allow_live=True,
+            env={"ATTICUS_ENABLE_LIVE_OPENROUTER": "1"},
+        )
+        lease_rows = conn.execute("SELECT task_id, status FROM leases ORDER BY task_id").fetchall()
+
+    assert sorted(probes) == ["deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-pro"]
+    assert result["leased_tasks"] == ["flash-ok"]
+    assert executed == ["flash-ok"]
+    preflight_groups = sorted(cast(list[Mapping[str, object]], result["preflight_groups"]), key=lambda group: str(group["model"]))
+    assert [group["model"] for group in preflight_groups] == ["deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-pro"]
+    assert [group["ok"] for group in preflight_groups] == [True, False]
+    assert preflight_groups[0]["task_ids"] == ["flash-ok"]
+    assert preflight_groups[1]["task_ids"] == ["pro-bad"]
+    assert cast(list[Mapping[str, object]], result["worker_errors"])[0]["task_id"] == "pro-bad"
+    assert [(row["task_id"], row["status"]) for row in lease_rows] == [("flash-ok", "completed")]
+
+
+def test_run_free_loop_cli_self_migrates_stale_v5_db_before_failure_logging(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="stale-v5-openrouter-no-live",
+                title="Stale v5 OpenRouter no live",
+                task_type="source_inventory",
+                stage=LegalStage.S0_SOURCE_INVENTORY,
+                provider_policy={
+                    "provider": "openrouter",
+                    "model": "deepseek/deepseek-v4-flash",
+                    "allow_fallback": False,
+                    "estimated_cost_usd": 0.0,
+                },
+            ),
+        )
+
+    raw = sqlite3.connect(db_path)
+    try:
+        _ = raw.execute("DROP TABLE error_logs")
+        _ = raw.execute("DROP TABLE maintenance_reports")
+        _ = raw.execute("DROP TABLE maintenance_runs")
+        _ = raw.execute("UPDATE schema_meta SET value = '5' WHERE key = 'schema_version'")
+        raw.commit()
+    finally:
+        raw.close()
+
+    code = cli_main(
+        [
+            "run-free-loop",
+            "--db",
+            str(db_path),
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--capacity",
+            "1",
+            "--max-ticks",
+            "1",
+            "--runtime",
+            "openrouter",
+        ]
+    )
+    stdout = capsys.readouterr().out
+    payload_raw = json.loads(stdout)
+    assert isinstance(payload_raw, Mapping)
+    payload = cast(Mapping[str, object], payload_raw)
+
+    with repo.db_connection(db_path, read_only=True) as conn:
+        schema_version = conn.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()
+        error_logs = _scalar_int(conn, "SELECT COUNT(*) FROM error_logs WHERE error_type = 'provider_dispatch_failure'")
+        maintenance_tables = _scalar_int(
+            conn,
+            """
+            SELECT COUNT(*)
+            FROM sqlite_master
+            WHERE type = 'table' AND name IN ('maintenance_runs', 'maintenance_reports')
+            """,
+        )
+
+    assert code == 2
+    assert payload["ok"] is False
+    assert schema_version is not None and schema_version["value"] == str(SCHEMA_VERSION)
+    assert error_logs >= 1
+    assert maintenance_tables == 2
+
+
+def test_worker_failure_signal_self_migrates_already_open_stale_connection(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="stale-direct-failure",
+                title="Stale direct failure",
+                task_type="source_inventory",
+                stage=LegalStage.S0_SOURCE_INVENTORY,
+            ),
+        )
+
+    raw = sqlite3.connect(db_path)
+    try:
+        _ = raw.execute("DROP TABLE error_logs")
+        _ = raw.execute("DROP TABLE orchestrator_events")
+        _ = raw.execute("DROP TABLE matter_orchestrators")
+        _ = raw.execute("UPDATE schema_meta SET value = '5' WHERE key = 'schema_version'")
+        raw.commit()
+    finally:
+        raw.close()
+
+    conn = repo.connect(db_path)
+    try:
+        event_id = repo.record_orchestrator_worker_failure(
+            conn,
+            task_id="stale-direct-failure",
+            failure_reason="simulated stale direct connection failure",
+            matter_scope="atticus",
+        )
+        conn.commit()
+        schema_version = conn.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()
+        error_logs = _scalar_int(conn, "SELECT COUNT(*) FROM error_logs WHERE target_id = 'stale-direct-failure'")
+        orchestrator_events_row = conn.execute(
+            "SELECT COUNT(*) AS n FROM orchestrator_events WHERE orchestrator_event_id = ?",
+            (event_id,),
+        ).fetchone()
+        assert orchestrator_events_row is not None
+        orchestrator_events = int(str(orchestrator_events_row["n"]))
+    finally:
+        conn.close()
+
+    assert event_id.startswith("orchevt-")
+    assert schema_version is not None and schema_version["value"] == str(SCHEMA_VERSION)
+    assert error_logs == 1
+    assert orchestrator_events == 1
+
+
+def test_no_progress_with_reported_worker_error_still_surfaces_resume_decision(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    matter_scope = "napier-accommodation-arrears"
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="napier-final-quality-error",
+                title="Napier final quality",
+                task_type="final_quality_gate",
+                stage=LegalStage.S9_FINAL_QUALITY_GATE,
+                matter_scope=matter_scope,
+                status=TaskStatus.COMPLETE,
+            ),
+        )
+        for certification_type in FINAL_LEGAL_DRAFT_CERTIFICATIONS:
+            if certification_type != "final_quality_gate":
+                _certify_matter(conn, matter_scope, certification_type)
+
+        from atticus.scheduler.supervisor_invariants import evaluate_no_silent_idle
+
+        invariant = evaluate_no_silent_idle(
+            conn,
+            matter_scope,
+            {"worker_errors": [{"task_id": "worker-error", "error": "simulated deterministic failure"}]},
+            write=True,
+        )
+
+    assert invariant["reason"] == "tick_reported_blocker_or_error"
+    assert cast(Mapping[str, object], invariant["next_action"])["type"] == "missing_certification"
+    decision = cast(Mapping[str, object], invariant["blocker_decision"])
+    assert decision["decision"] == "next_action"
+    assert decision["owner"] == "orchestrator"
+    assert decision["resume_command"]
+
+
+def test_repeated_no_progress_identical_incomplete_ticks_escalate_to_human(tmp_path: Path):
+    db_path = init_db(tmp_path)
+    matter_scope = "napier-accommodation-arrears"
+    with repo.db_connection(db_path) as conn:
+        repo.add_task(
+            conn,
+            TaskSpec(
+                task_id="napier-final-quality-loop",
+                title="Napier final quality",
+                task_type="final_quality_gate",
+                stage=LegalStage.S9_FINAL_QUALITY_GATE,
+                matter_scope=matter_scope,
+                status=TaskStatus.COMPLETE,
+            ),
+        )
+        for certification_type in FINAL_LEGAL_DRAFT_CERTIFICATIONS:
+            if certification_type != "final_quality_gate":
+                _certify_matter(conn, matter_scope, certification_type)
+
+        from atticus.scheduler.supervisor_invariants import evaluate_no_silent_idle
+
+        invariant = {}
+        for _ in range(15):
+            invariant = evaluate_no_silent_idle(conn, matter_scope, {}, write=True)
+        terminal_log = conn.execute(
+            """
+            SELECT terminal, payload_json
+            FROM error_logs
+            WHERE matter_scope = ? AND target_type = 'matter' AND target_id = ?
+              AND error_type = 'supervisor_no_progress'
+            ORDER BY created_at DESC, rowid DESC
+            LIMIT 1
+            """,
+            (matter_scope, matter_scope),
+        ).fetchone()
+        attention = conn.execute(
+            """
+            SELECT reason
+            FROM human_attention
+            WHERE matter_scope = ? AND target_type = 'matter' AND target_id = ?
+              AND status = 'open' AND reason LIKE 'supervisor no-progress repair limit reached%'
+            LIMIT 1
+            """,
+            (matter_scope, matter_scope),
+        ).fetchone()
+
+    assert invariant["reason"] == "no_progress_with_incomplete_matter"
+    assert terminal_log is not None
+    assert int(terminal_log["terminal"]) == 1
+    assert json.loads(str(terminal_log["payload_json"]))["requires_user_intervention"] is True
+    assert attention is not None
